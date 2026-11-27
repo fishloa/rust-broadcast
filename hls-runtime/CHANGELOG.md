@@ -9,6 +9,37 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The client reports the playlist defects it used to accept in silence:
+  `broadcast_hls`'s parse diagnostics (`DanglingSegmentTags` as `Degraded` — the
+  segment it would have described is lost — and `InvalidProgramDateTime` /
+  `DateRangeWithoutStartDate` as `Informational`), each reported once per
+  (kind, tag text) so a live reload of the same malformed tag is one report.
+- A playlist delta that could not be merged into the held view is reported
+  (`MetadataSkipped`) before the full reload it forces.
+- A reload whose window jumps over Media Sequence Numbers is reported
+  (`MediaUnitDropped`, naming the first lost number) — nothing requested those
+  segments before.
+- `HlsClientConfig::segment_duration_tolerance`: when a caller sets one, a
+  segment whose demuxed media span disagrees with its `EXTINF` beyond it is
+  reported (`MediaUnitDamaged`, with the track and media time). `None` (the
+  default) never compares, so the library chooses no tolerance of its own.
+- `HlsClient::skip_resource_due_to(id, SkipReason)`/`SkipReason` and the new
+  `HlsClient::skip_resource` report: a segment or part the caller gives up on
+  is published as `MediaUnitDropped` naming the reason (404, 410, timeout,
+  unusable) and the Media Sequence Number.
+
+### Changed
+
+- `HlsClient::skip_resource` returns `Result<()>`: a `DamagePolicy` that fails
+  on the report stops the client with `Error::Damage` instead of the loss
+  being ignored.
+- `broadcast-client`'s HLS source maps a policy refusal to
+  `EventKind::DamageRefused` (publishing the report first) and passes the fetch
+  status through as the `SkipReason`, rather than retrying onto the same
+  damage.
+
+### Added
+
 - `Output::Damage(broadcast_core::damage::Damage)`: the one report of content
   the reader skipped, altered, resynchronised past or truncated, delivered in
   order with the outputs around it. Each degradation the MP4/TS reader only

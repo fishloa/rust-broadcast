@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ErrorKind::DamageRefused` after the report itself.
 - The RTP/UDP path reports what its reorder buffer and the TS demuxer gave up
   on, and the SRT path reports every packet run the delivery engine dropped.
+- The HLS source forwards the client's playlist, delta, media-sequence and
+  segment-duration reports, passes the fetch status through as the skip reason
+  when it gives up on a segment (404, 410, timeout), and maps a policy refusal
+  to a fatal `ErrorKind::DamageRefused` after publishing the report, instead
+  of retrying onto the same damage.
 
 ### Added
 

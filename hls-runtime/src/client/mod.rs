@@ -56,6 +56,6 @@ mod output;
 mod url;
 
 pub use action::{Action, BlockingReload, KeyId, PlaylistRequest, ResourceId};
-pub use engine::{HlsClient, HlsClientConfig, choose_variant};
+pub use engine::{HlsClient, HlsClientConfig, SkipReason, choose_variant};
 pub use error::{Error, Result};
 pub use output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};

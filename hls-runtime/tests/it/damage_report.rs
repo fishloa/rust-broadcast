@@ -143,3 +143,214 @@ fn a_clean_pull_reports_nothing() {
         "a clean playlist produces no report: {damage:?}"
     );
 }
+
+// ── Playlist, delta, gap, duration and fetch-loss reports ──────────────
+
+fn simple_playlist(msn: u64, last: u64, extra: &str) -> String {
+    let mut text = format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{msn}\n{extra}"
+    );
+    for n in msn..=last {
+        text.push_str(&format!("#EXTINF:2.000000,\nindex{n}.ts\n"));
+    }
+    text
+}
+
+fn reports(client: &mut HlsClient) -> Vec<broadcast_core::damage::Damage> {
+    let mut out = Vec::new();
+    for output in std::iter::from_fn(|| client.next_output()) {
+        if let Output::Damage(report) = output {
+            out.push(report);
+        }
+    }
+    out
+}
+
+#[test]
+fn a_dangling_segment_tag_is_reported_once_across_reloads() {
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    drain(&mut client);
+    // `EXTINF` with no URI line: the segment it would have described is lost.
+    let text = format!("{}\n#EXTINF:2.0,\n", simple_playlist(0, 1, ""));
+    client.on_playlist(text.as_bytes()).expect("playlist");
+    let first = reports(&mut client);
+    assert_eq!(first.len(), 1, "the dangling tag is reported: {first:?}");
+    assert_eq!(
+        first[0].kind(),
+        broadcast_core::damage::DamageKind::MetadataSkipped
+    );
+    assert_eq!(
+        first[0].severity(),
+        broadcast_core::damage::Severity::Degraded,
+        "a segment is lost, not just metadata"
+    );
+
+    // The same malformed tag on the next reload is the same loss: one report,
+    // not one per reload.
+    client.on_playlist(text.as_bytes()).expect("reload");
+    assert!(
+        reports(&mut client).is_empty(),
+        "a repeat of the same diagnostic is not re-reported"
+    );
+}
+
+#[test]
+fn a_bad_program_date_time_is_reported_as_information() {
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    drain(&mut client);
+    let text = simple_playlist(0, 1, "#EXT-X-PROGRAM-DATE-TIME:not-a-timestamp\n");
+    client.on_playlist(text.as_bytes()).expect("playlist");
+    let reported = reports(&mut client);
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(
+        reported[0].severity(),
+        broadcast_core::damage::Severity::Informational,
+        "only join timing loses its anchor"
+    );
+}
+
+#[test]
+fn an_unmergeable_delta_is_reported_before_the_full_reload() {
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    drain(&mut client);
+    // A delta with no baseline to splice it into: the reload it stands for is
+    // lost and a full playlist is requested instead.
+    let delta = simple_playlist(
+        3,
+        4,
+        "#EXT-X-SERVER-CONTROL:CAN-SKIP-UNTIL=12.0\n#EXT-X-SKIP:SKIPPED-SEGMENTS=3\n",
+    );
+    let error = client
+        .on_playlist(delta.as_bytes())
+        .expect_err("an unmergeable delta asks for a full reload");
+    assert!(
+        matches!(error, Error::DeltaNotMergeable { .. }),
+        "{error:?}"
+    );
+    let reported = reports(&mut client);
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(
+        reported[0].kind(),
+        broadcast_core::damage::DamageKind::MetadataSkipped
+    );
+    assert_eq!(reported[0].what(), "HLS delta update");
+    assert!(
+        drain(&mut client)
+            .iter()
+            .any(|action| matches!(action, Action::FetchPlaylist(request) if !request.skip)),
+        "the fallback is a full reload"
+    );
+}
+
+#[test]
+fn a_media_sequence_gap_is_reported_with_the_first_lost_number() {
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    drain(&mut client);
+    client
+        .on_playlist(simple_playlist(0, 1, "").as_bytes())
+        .expect("first window");
+    reports(&mut client);
+    // The window jumps from 0..=1 to 5..=6: numbers 2, 3 and 4 are never
+    // requested by anything.
+    client
+        .on_playlist(simple_playlist(5, 6, "").as_bytes())
+        .expect("second window");
+    let reported = reports(&mut client);
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(
+        reported[0].kind(),
+        broadcast_core::damage::DamageKind::MediaUnitDropped
+    );
+    assert_eq!(reported[0].what(), "HLS media sequence");
+    assert_eq!(
+        reported[0].location().ordinal(),
+        Some(2),
+        "the report names the first lost sequence number"
+    );
+}
+
+#[test]
+fn an_extinf_that_disagrees_with_the_media_is_reported_only_with_a_tolerance() {
+    fn rewritten(multiplier: &str) -> String {
+        let text = String::from_utf8(playlist()).expect("utf8");
+        text.replace("#EXTINF:1.000000,", multiplier)
+    }
+
+    // No tolerance: the client never compares, so nothing is reported.
+    let mut client = start(broadcast_core::damage::DamagePolicy::new());
+    let mut damage = Vec::new();
+    absorb(&mut client, &mut damage);
+    client
+        .on_resource(segment(0), &test_fixtures::read(FIRST))
+        .expect("first segment");
+    absorb(&mut client, &mut damage);
+    let mut rewritten_client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    drain(&mut rewritten_client);
+    rewritten_client
+        .on_playlist(rewritten("#EXTINF:40.000000,").as_bytes())
+        .expect("playlist");
+    drain(&mut rewritten_client);
+    assert!(
+        reports(&mut rewritten_client).is_empty(),
+        "without a caller tolerance nothing is compared"
+    );
+
+    // With a 100 ms tolerance the 1 s segment that claims 40 s is reported.
+    let mut tolerant = HlsClient::new(
+        HlsClientConfig::new(Url::parse(URL).expect("URL"))
+            .with_segment_duration_tolerance(Some(core::time::Duration::from_millis(100))),
+    );
+    drain(&mut tolerant);
+    tolerant
+        .on_playlist(rewritten("#EXTINF:40.000000,").as_bytes())
+        .expect("playlist");
+    drain(&mut tolerant);
+    tolerant
+        .on_resource(segment(0), &test_fixtures::read(FIRST))
+        .expect("first segment");
+    reports(&mut tolerant);
+    tolerant
+        .on_resource(segment(1), &test_fixtures::read(SECOND))
+        .expect("second segment");
+    let reported = reports(&mut tolerant);
+    assert_eq!(reported.len(), 1, "the drifted segment is reported once");
+    assert_eq!(
+        reported[0].kind(),
+        broadcast_core::damage::DamageKind::MediaUnitDamaged
+    );
+    assert_eq!(reported[0].what(), "HLS segment duration");
+    assert_eq!(reported[0].location().ordinal(), Some(1));
+    assert!(reported[0].location().media_time().is_some());
+}
+
+#[test]
+fn a_segment_given_up_on_is_reported_with_its_reason() {
+    let mut client = start(broadcast_core::damage::DamagePolicy::new());
+    drain(&mut client);
+    client
+        .skip_resource_due_to(segment(0), hls_runtime::client::SkipReason::NotFound)
+        .expect("the report is published");
+    let reported = reports(&mut client);
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(
+        reported[0].kind(),
+        broadcast_core::damage::DamageKind::MediaUnitDropped
+    );
+    assert_eq!(reported[0].what(), "HLS segment (not found)");
+    assert_eq!(reported[0].location().ordinal(), Some(0));
+}
+
+#[test]
+fn a_given_up_segment_stops_a_failing_policy() {
+    let mut client = start(
+        broadcast_core::damage::DamagePolicy::new()
+            .fail_on(broadcast_core::damage::Severity::Degraded),
+    );
+    let error = client
+        .skip_resource_due_to(segment(0), hls_runtime::client::SkipReason::TimedOut)
+        .expect_err("the policy stops the pull");
+    let Error::Damage(error) = error else {
+        panic!("expected the policy stop, got {error}");
+    };
+    assert_eq!(error.damage().what(), "HLS segment (timed out)");
+}
