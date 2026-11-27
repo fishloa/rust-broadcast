@@ -119,6 +119,7 @@ extern crate alloc;
 pub mod ac3;
 pub mod ac4;
 pub mod audio_boxes;
+pub mod audio_elements;
 pub mod av1;
 pub mod avc_config;
 pub mod avc_parameter_set;
@@ -181,6 +182,12 @@ pub use audio_boxes::{
     DownMixInstructionsBox, FormatOrdering, LABL, LUDT, LabelBox, LoudnessBaseBox, LoudnessBox,
     LoudnessEntry, LoudnessKind, LoudnessMeasurement, SpeakerPosition, TLOU, TrackLoudnessInfo,
 };
+pub use audio_elements::{
+    AEDB, AELM, AEPP, AEPR, AESB, AESD, ARDI, AudioElementBox, AudioElementChild,
+    AudioElementDescriptionBox, AudioElementPosInteractivityPolarBox,
+    AudioElementProminenceInteractivityBox, AudioElementSelectionBox,
+    AudioElementSelectionDescriptionBox, AudioRenderingIndication, AudioRenderingIndicationBox,
+};
 pub use av1::{AV01_FOURCC, AV1C_FOURCC, Av1ConfigurationBox, Av1SampleEntry};
 pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use avc_parameter_set::{AVCP_SAMPLE_ENTRY, AVCParameterSample, AVCParameterSampleEntry};
@@ -218,9 +225,10 @@ pub use image::{
     OperatingPointSelectorProperty, PixelInformationProperty, RelativeLocationProperty,
 };
 pub use index_boxes::{
-    LEVA, LevelAssignmentBox, LevelAssignmentEntry, LevelAssignmentType, PDIN,
-    ProgressiveDownloadEntry, ProgressiveDownloadInfoBox, SSIX, SubsegmentIndexBox,
-    SubsegmentIndexEntry, SubsegmentRange, TREP, TrackExtensionPropertiesBox,
+    ASSP, AlternativeStartupEntry, AlternativeStartupSequencePropertiesBox, LEVA,
+    LevelAssignmentBox, LevelAssignmentEntry, LevelAssignmentType, PDIN, ProgressiveDownloadEntry,
+    ProgressiveDownloadInfoBox, SSIX, SubsegmentIndexBox, SubsegmentIndexEntry, SubsegmentRange,
+    TREP, TrackExtensionPropertiesBox,
 };
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, AudioSampleEntryV1, ChunkLargeOffsetBox, ChunkOffsetBox,
@@ -308,6 +316,7 @@ pub use track_desc::{
 };
 pub use track_id::TrackId;
 pub use track_reference::{AVCP_REFERENCE_TYPE, TrackReferenceBox, TrackReferenceTypeBox};
+pub use visual_ext::{AMVE, AmbientViewingEnvironmentBox, CCLV, ContentColourVolumeBox};
 pub use vp9::{VP09_FOURCC, VPCC_FOURCC, Vp9ConfigurationBox, Vp9SampleEntry};
 pub use vvc_config::{
     VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,

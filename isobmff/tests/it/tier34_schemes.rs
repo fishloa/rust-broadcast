@@ -13,7 +13,7 @@ use isobmff::scheme::{
 };
 use isobmff::{Reader, ReaderConfig, Step};
 
-fn boxed(fourcc: [u8; 4], body: &[u8]) -> Vec<u8> {
+pub(crate) fn boxed(fourcc: [u8; 4], body: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + body.len());
     out.extend_from_slice(&((8 + body.len()) as u32).to_be_bytes());
     out.extend_from_slice(&fourcc);
@@ -21,7 +21,7 @@ fn boxed(fourcc: [u8; 4], body: &[u8]) -> Vec<u8> {
     out
 }
 
-fn full(version: u8, flags: u32, body: &[u8]) -> Vec<u8> {
+pub(crate) fn full(version: u8, flags: u32, body: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(4 + body.len());
     out.push(version);
     out.extend_from_slice(&flags.to_be_bytes()[1..]);
@@ -184,7 +184,7 @@ fn empty_table(fourcc: [u8; 4], body: &[u8]) -> Vec<u8> {
 
 /// A one-track file whose sample entry is `fourcc` with `children` after the
 /// SampleEntry base, and whose sample table is empty.
-fn file_with_sample_entry(fourcc: [u8; 4], fixed: usize, children: &[u8]) -> Vec<u8> {
+pub(crate) fn file_with_sample_entry(fourcc: [u8; 4], fixed: usize, children: &[u8]) -> Vec<u8> {
     let ftyp = boxed(
         *b"ftyp",
         &[b"iso5".as_slice(), &[0, 0, 2, 0], b"iso6"].concat(),
@@ -225,7 +225,7 @@ fn file_with_sample_entry(fourcc: [u8; 4], fixed: usize, children: &[u8]) -> Vec
     [ftyp, moov].concat()
 }
 
-fn drive(bytes: &[u8]) -> Vec<isobmff::TrackInfo> {
+pub(crate) fn drive(bytes: &[u8]) -> Vec<isobmff::TrackInfo> {
     let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(bytes.len() as u64)));
     let mut tracks = Vec::new();
     loop {

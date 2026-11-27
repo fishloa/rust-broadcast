@@ -20,9 +20,7 @@ use isobmff::coverage::TYPED_BOXES;
 const UNTYPED_TIER_3: &[&str] = &[];
 
 /// Tier 4: newer signalling.
-const UNTYPED_TIER_4: &[&str] = &[
-    "aedb", "aelm", "aepp", "aepr", "aesb", "aesd", "amve", "ardi", "assp", "cclv",
-];
+const UNTYPED_TIER_4: &[&str] = &[];
 
 /// Tier 5: legacy delivery and hint tracks (lowest value).
 const UNTYPED_TIER_5: &[&str] = &[

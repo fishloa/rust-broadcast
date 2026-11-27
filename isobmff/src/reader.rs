@@ -487,6 +487,31 @@ impl SampleEntryInfo {
             .and_then(|bytes| crate::scheme::CompleteTrackInfoBox::parse(bytes).ok())
     }
 
+    /// The ambient viewing environment (`amve`, §12.1.9) this visual sample
+    /// description carries, when it carries one.
+    #[must_use]
+    pub fn ambient_viewing_environment(
+        &self,
+    ) -> Option<crate::visual_ext::AmbientViewingEnvironmentBox> {
+        self.entry_body(b"amve")
+            .and_then(|body| crate::visual_ext::AmbientViewingEnvironmentBox::parse(body).ok())
+    }
+
+    /// The content colour volume (`cclv`, §12.1.8) this visual sample
+    /// description carries, when it carries one.
+    #[must_use]
+    pub fn content_colour_volume(&self) -> Option<crate::visual_ext::ContentColourVolumeBox> {
+        self.entry_body(b"cclv")
+            .and_then(|body| crate::visual_ext::ContentColourVolumeBox::parse(body).ok())
+    }
+
+    /// One child box of the entry's payload, by four-CC.
+    fn entry_body(&self, fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&[u8]> {
+        self.entry_child(fourcc)
+            .and_then(|bytes| parse_box(bytes).ok())
+            .map(|(item, _)| item.body)
+    }
+
     /// One child box of the entry, by four-CC, from the entry's own bytes.
     ///
     /// The children start after the SampleEntry fixed part, whose length

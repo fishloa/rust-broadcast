@@ -55,7 +55,10 @@ use crate::hdr_boxes::{
 };
 use crate::hevc_config::HEVCConfigurationBox;
 use crate::item::{BrandProperty, HandlerProperty};
-use crate::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
+use crate::visual_ext::{
+    AMVE, AmbientViewingEnvironmentBox, CCLV, CleanApertureBox, ColourInformationBox,
+    ContentColourVolumeBox, PixelAspectRatioBox,
+};
 
 /// Four-CC of the Image Spatial Extents property (23008-12 6.5.3).
 pub const ISPE: [u8; BOX_TYPE_SIZE] = *b"ispe";
@@ -1410,6 +1413,10 @@ pub enum ItemProperty {
     Hdlp(HandlerProperty),
     /// `scrb`: a scramble scheme (§13.4.8).
     Scrb(crate::scheme::ScrambleSchemeInfoBox),
+    /// `amve`: the ambient viewing environment (§12.1.9).
+    Amve(AmbientViewingEnvironmentBox),
+    /// `cclv`: the content colour volume (§12.1.8).
+    Cclv(ContentColourVolumeBox),
     /// Any property this crate does not model, preserved box and all.
     Opaque(OpaqueBox),
 }
@@ -1439,6 +1446,8 @@ impl ItemProperty {
             Self::Brnd(_) => crate::item::BRND,
             Self::Hdlp(_) => crate::item::HDLP,
             Self::Scrb(_) => crate::scheme::SCRB,
+            Self::Amve(_) => AMVE,
+            Self::Cclv(_) => CCLV,
             Self::Opaque(opaque) => opaque.box_type,
         }
     }
@@ -1525,6 +1534,8 @@ impl ItemProperty {
             b"scrb" => Ok(Self::Scrb(crate::scheme::ScrambleSchemeInfoBox::parse(
                 item.bytes,
             )?)),
+            b"amve" => Ok(Self::Amve(AmbientViewingEnvironmentBox::parse(body)?)),
+            b"cclv" => Ok(Self::Cclv(ContentColourVolumeBox::parse(body)?)),
             _ => {
                 let mut opaque = OpaqueBox::new(item.four_cc(), item.payload().to_vec());
                 opaque.to_end = item.to_end();
@@ -1573,6 +1584,8 @@ impl Serialize for ItemProperty {
             Self::Brnd(value) => value.serialized_len(),
             Self::Hdlp(value) => value.serialized_len(),
             Self::Scrb(value) => value.serialized_len(),
+            Self::Amve(value) => box_len(BOX_HEADER_MIN_SIZE + value.serialized_len()),
+            Self::Cclv(value) => box_len(BOX_HEADER_MIN_SIZE + value.serialized_len()),
             Self::Opaque(value) => value.serialized_len(),
         }
     }
@@ -1599,6 +1612,8 @@ impl Serialize for ItemProperty {
             Self::Brnd(value) => value.serialize_into(buf),
             Self::Hdlp(value) => value.serialize_into(buf),
             Self::Scrb(value) => value.serialize_into(buf),
+            Self::Amve(value) => Self::write_body_box(buf, &AMVE, value.serialized_len(), value),
+            Self::Cclv(value) => Self::write_body_box(buf, &CCLV, value.serialized_len(), value),
             Self::Opaque(value) => value.serialize_into(buf),
         }
     }

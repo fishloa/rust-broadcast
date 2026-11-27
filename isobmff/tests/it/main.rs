@@ -30,6 +30,7 @@ mod tier1_fixtures;
 mod tier34_boxes;
 mod tier34_fixtures;
 mod tier34_schemes;
+mod tier34_signalling;
 mod timing;
 mod timing_groups;
 mod trait_round_trip;

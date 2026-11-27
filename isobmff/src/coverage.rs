@@ -160,6 +160,14 @@ leaf! {
     p_vvhd: b"vvhd", crate::init_segment::VolumetricVisualMediaHeaderBox, &MINIMAL_BODY;
     p_csch: b"csch", crate::scheme::CompatibleSchemeTypeBox, &MINIMAL_BODY;
     p_spki: b"spki", crate::scheme::SamplePackingInformationBox, &MINIMAL_BODY;
+    p_ardi: b"ardi", crate::audio_elements::AudioRenderingIndicationBox, &MINIMAL_BODY;
+    p_aelm: b"aelm", crate::audio_elements::AudioElementBox, &[];
+    p_aedb: b"aedb", crate::audio_elements::AudioElementDescriptionBox, &MINIMAL_BODY;
+    p_aepp: b"aepp", crate::audio_elements::AudioElementPosInteractivityPolarBox, &MINIMAL_BODY;
+    p_aepr: b"aepr", crate::audio_elements::AudioElementProminenceInteractivityBox, &MINIMAL_BODY;
+    p_aesb: b"aesb", crate::audio_elements::AudioElementSelectionBox, &[];
+    p_aesd: b"aesd", crate::audio_elements::AudioElementSelectionDescriptionBox, &MINIMAL_BODY;
+    p_assp: b"assp", crate::index_boxes::AlternativeStartupSequencePropertiesBox, &MINIMAL_BODY;
     p_brnd: b"brnd", crate::item::BrandProperty, &MINIMAL_BODY;
     p_grpl: b"grpl", crate::item::GroupsListBox, &[];
     p_idat: b"idat", crate::item::ItemDataBox, &MINIMAL_BODY;
@@ -281,6 +289,14 @@ fn p_traf() -> Result<()> {
     let body = boxed(*b"tfhd", &MINIMAL_BODY);
     let mut budget = crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
     crate::movie_fragment::TrackFragmentBox::parse_body_budgeted(&body, &mut budget).map(|_| ())
+}
+
+fn p_amve() -> Result<()> {
+    crate::visual_ext::AmbientViewingEnvironmentBox::parse(&MINIMAL_BODY[..8]).map(|_| ())
+}
+
+fn p_cclv() -> Result<()> {
+    crate::visual_ext::ContentColourVolumeBox::parse(&MINIMAL_BODY).map(|_| ())
 }
 
 fn p_etyp() -> Result<()> {
@@ -443,6 +459,16 @@ typed! {
         p_rinf: b"rinf", "rinf", "RestrictedSchemeInfoBox";
         p_cinf: b"cinf", "cinf", "CompleteTrackInfoBox";
         p_scrb: b"scrb", "scrb", "ScrambleSchemeInfoBox";
+        p_ardi: b"ardi", "ardi", "AudioRenderingIndicationBox";
+        p_aelm: b"aelm", "aelm", "AudioElementBox";
+        p_aedb: b"aedb", "aedb", "AudioElementDescriptionBox";
+        p_aepp: b"aepp", "aepp", "AudioElementPosInteractivityPolarBox";
+        p_aepr: b"aepr", "aepr", "AudioElementProminenceInteractivityBox";
+        p_aesb: b"aesb", "aesb", "AudioElementSelectionBox";
+        p_aesd: b"aesd", "aesd", "AudioElementSelectionDescriptionBox";
+        p_assp: b"assp", "assp", "AlternativeStartupSequencePropertiesBox";
+        p_amve: b"amve", "amve", "AmbientViewingEnvironmentBox";
+        p_cclv: b"cclv", "cclv", "ContentColourVolumeBox";
 }
 
 #[cfg(test)]
