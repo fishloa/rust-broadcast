@@ -34,6 +34,7 @@ pub mod codec_config_ext;
 pub mod dts_core;
 mod error;
 pub mod facts;
+pub mod findings;
 #[cfg(feature = "mpeg2")]
 pub mod h262;
 #[cfg(all(feature = "hevc", feature = "isobmff"))]
@@ -87,6 +88,7 @@ pub use codec_config_ext::avc_config_from_sps_pps;
 #[cfg(feature = "dts")]
 pub use dts_core::{DTS_CORE_SYNC_WORD, DtsCoreFrame, DtsCoreFrameInfo, split_dts_core_frames};
 pub use error::{Error, Result};
+pub use findings::{Findings, ParseFinding};
 #[cfg(feature = "mpeg2")]
 pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
 #[cfg(all(feature = "hevc", feature = "isobmff"))]

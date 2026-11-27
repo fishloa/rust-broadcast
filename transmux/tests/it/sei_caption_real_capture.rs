@@ -70,7 +70,12 @@ fn real_capture_sei_extraction() {
     let mut caption_aus = 0usize;
     let mut first_cc_data: Option<Vec<u8>> = None;
     for sample in &video.samples {
-        let cc = caption_cc_data(NalCodec::Avc, &sample.data, true);
+        let cc = caption_cc_data(
+            NalCodec::Avc,
+            &sample.data,
+            true,
+            &mut broadcast_bitstream::Findings::new(),
+        );
         if !cc.is_empty() {
             caption_aus += 1;
             if first_cc_data.is_none() {

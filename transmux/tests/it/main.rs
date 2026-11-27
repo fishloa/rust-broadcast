@@ -337,4 +337,6 @@ mod webm_timestamp_scale;
 mod xml;
 mod xml_escaping;
 
+mod bitstream_damage;
 mod cli_stream;
+mod demux_timeline_break;

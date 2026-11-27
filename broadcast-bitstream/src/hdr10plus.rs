@@ -31,6 +31,7 @@
 use crate::annexb::iter_annexb_nals;
 use crate::bitreader::{bit_error, write_bits_checked};
 use crate::error::{Error, Result};
+use crate::findings::{Findings, ParseFinding};
 use crate::nal::{
     HEVC_NAL_HEADER_LEN, HEVC_PREFIX_SEI_NUT, NalCodec, hevc_prefix_sei_nal, nal_unit_type,
     sei_messages,
@@ -1111,13 +1112,13 @@ impl Hdr10PlusMetadata {
     /// The `user_data_registered_itu_t_t35` payloads (unescaped) of an HEVC
     /// prefix SEI NAL unit (2-byte NAL header included) that carry the HDR10+
     /// T.35 header.
-    pub fn hevc_sei_nal_payloads(nal: &[u8]) -> Vec<Vec<u8>> {
+    pub fn hevc_sei_nal_payloads(nal: &[u8], findings: &mut Findings) -> Vec<Vec<u8>> {
         if nal.len() <= HEVC_NAL_HEADER_LEN
             || nal_unit_type(NalCodec::Hevc, nal) != Some(HEVC_PREFIX_SEI_NUT)
         {
             return Vec::new();
         }
-        sei_messages(&nal[HEVC_NAL_HEADER_LEN..])
+        sei_messages(&nal[HEVC_NAL_HEADER_LEN..], findings)
             .into_iter()
             .filter(|(t, p)| {
                 *t == SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35 && Self::has_t35_header(p)
@@ -1127,17 +1128,24 @@ impl Hdr10PlusMetadata {
     }
 
     /// Parse the HDR10+ message of an HEVC prefix SEI NAL unit; `None` when the
-    /// NAL unit carries no HDR10+ T.35 header.
-    pub fn from_hevc_sei_nal(nal: &[u8]) -> Option<Result<Self>> {
-        Self::hevc_sei_nal_payloads(nal)
+    /// NAL unit carries no HDR10+ T.35 header. A message that does not parse is
+    /// recorded in `findings` instead of being returned as an error.
+    pub fn from_hevc_sei_nal(nal: &[u8], findings: &mut Findings) -> Option<Self> {
+        let payload = Self::hevc_sei_nal_payloads(nal, findings)
             .into_iter()
-            .next()
-            .map(|p| Self::parse(&p))
+            .next()?;
+        match Self::parse(&payload) {
+            Ok(metadata) => Some(metadata),
+            Err(_) => {
+                findings.push(ParseFinding::hdr_metadata(HEVC_NAL_HEADER_LEN));
+                None
+            }
+        }
     }
 
     /// Whether an HEVC prefix SEI NAL unit carries the HDR10+ T.35 header.
     pub fn hevc_sei_nal_carries_hdr10plus(nal: &[u8]) -> bool {
-        !Self::hevc_sei_nal_payloads(nal).is_empty()
+        !Self::hevc_sei_nal_payloads(nal, &mut Findings::new()).is_empty()
     }
 
     /// Whether an Annex B access unit holds an HDR10+ prefix SEI NAL unit.
@@ -1411,32 +1419,37 @@ mod tests {
     fn hevc_sei_nal_payloads_keeps_only_prefixed_t35_messages() {
         let prefix =
             hevc_prefix_sei_nal(&[(SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35, &T35_HEADER_V1)]);
-        let payloads = Hdr10PlusMetadata::hevc_sei_nal_payloads(&prefix);
+        let payloads = Hdr10PlusMetadata::hevc_sei_nal_payloads(&prefix, &mut Findings::new());
         assert_eq!(payloads.len(), 1);
         assert_eq!(payloads[0], T35_HEADER_V1);
 
         let mut suffix = prefix.clone();
         suffix[0] = HEVC_SUFFIX_SEI_NUT << 1;
         assert!(
-            Hdr10PlusMetadata::hevc_sei_nal_payloads(&suffix).is_empty(),
+            Hdr10PlusMetadata::hevc_sei_nal_payloads(&suffix, &mut Findings::new()).is_empty(),
             "a suffix SEI NAL is not a prefix SEI"
         );
 
         let other_type = hevc_prefix_sei_nal(&[(6, &[0u8; 4])]);
         assert!(
-            Hdr10PlusMetadata::hevc_sei_nal_payloads(&other_type).is_empty(),
+            Hdr10PlusMetadata::hevc_sei_nal_payloads(&other_type, &mut Findings::new()).is_empty(),
             "a non-T.35 payloadType is not HDR10+"
         );
 
         let t35_without_header =
             hevc_prefix_sei_nal(&[(SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35, &[0u8; 4])]);
         assert!(
-            Hdr10PlusMetadata::hevc_sei_nal_payloads(&t35_without_header).is_empty(),
+            Hdr10PlusMetadata::hevc_sei_nal_payloads(&t35_without_header, &mut Findings::new())
+                .is_empty(),
             "a T.35 message without the HDR10+ header is not HDR10+"
         );
 
         assert!(
-            Hdr10PlusMetadata::hevc_sei_nal_payloads(&[HEVC_PREFIX_SEI_NUT << 1, 1]).is_empty(),
+            Hdr10PlusMetadata::hevc_sei_nal_payloads(
+                &[HEVC_PREFIX_SEI_NUT << 1, 1],
+                &mut Findings::new(),
+            )
+            .is_empty(),
             "a bare 2-byte NAL has no SEI body"
         );
     }

@@ -201,6 +201,7 @@ pub const TABLE: &[Crate] = &[
             "MpegAudioVersion",
             "NalCodec",
             "OverlapProcessOption",
+            "ParseFinding",
             "PicStruct",
             "SamplingFrequencyIndex",
             "SourceScanType",
@@ -208,7 +209,7 @@ pub const TABLE: &[Crate] = &[
             "VideoFormat",
             "VideoScan",
         ]),
-        min_enums: Some(20),
+        min_enums: Some(21),
     },
     Crate {
         name: "broadcast-codec",

@@ -160,7 +160,13 @@ fn init_segment_round_trips_through_the_fmp4_demuxer() {
         .config
         .arrays
         .retain(|a| a.nal_unit_type != broadcast_bitstream::nal::HEVC_PREFIX_SEI_NUT);
-    assert!(HdrStaticMetadata::from_hevc_record(&config.config).is_none());
+    assert!(
+        HdrStaticMetadata::from_hevc_record(
+            &config.config,
+            &mut broadcast_bitstream::Findings::new()
+        )
+        .is_none()
+    );
     let init = build_init_segment(&[boxes_only], timescale(1000)).expect("init");
     let media =
         test_harness::collect::media_from_mp4(&init, test_harness::collect::CollectMode::Seekable)

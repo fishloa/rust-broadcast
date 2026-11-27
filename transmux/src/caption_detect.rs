@@ -143,6 +143,7 @@ pub struct CaptionDetector {
     seen: BTreeSet<DetectedCaption>,
     line21: Cea608Decoder,
     dtvcc: Cea708Decoder,
+    findings: broadcast_bitstream::Findings,
 }
 
 impl CaptionDetector {
@@ -160,15 +161,17 @@ impl CaptionDetector {
             seen: BTreeSet::new(),
             line21: Cea608Decoder::new(),
             dtvcc: Cea708Decoder::new(),
+            findings: broadcast_bitstream::Findings::new(),
         })
     }
 
     /// Examine one video sample's data (length-prefixed NALs for AVC/HEVC, the
     /// elementary-stream picture for MPEG-2). Returns `true` when a caption
-    /// stream not seen before was found.
+    /// stream not seen before was found. Anything the caption SEI walk could
+    /// not parse is kept for [`take_findings`](Self::take_findings).
     pub fn observe(&mut self, sample_data: &[u8]) -> bool {
         let cc_bytes = match self.carriage {
-            Carriage::Sei(codec) => caption_cc_data(codec, sample_data, true),
+            Carriage::Sei(codec) => caption_cc_data(codec, sample_data, true, &mut self.findings),
             Carriage::Mpeg2UserData => mpeg2_cc_data(sample_data),
         };
         if cc_bytes.is_empty() {
@@ -185,6 +188,12 @@ impl CaptionDetector {
             rest = rest.get(consumed..).unwrap_or(&[]);
         }
         self.seen.len() > before
+    }
+
+    /// The caption SEI structures the walk could not parse since the last
+    /// call.
+    pub fn take_findings(&mut self) -> broadcast_bitstream::Findings {
+        core::mem::take(&mut self.findings)
     }
 
     /// Every caption stream seen so far, in a stable order.
@@ -282,6 +291,7 @@ mod tests {
             seen: BTreeSet::new(),
             line21: Cea608Decoder::new(),
             dtvcc: Cea708Decoder::new(),
+            findings: broadcast_bitstream::Findings::new(),
         }
     }
 

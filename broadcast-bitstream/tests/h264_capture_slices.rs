@@ -218,7 +218,11 @@ fn the_picture_classifier_agrees_with_the_slice_headers() {
     {
         accumulated.extend_from_slice(es);
     }
-    for au in broadcast_bitstream::split_access_units(NalCodec::Avc, &accumulated) {
+    for au in broadcast_bitstream::split_access_units(
+        NalCodec::Avc,
+        &accumulated,
+        &mut broadcast_bitstream::Findings::new(),
+    ) {
         let nals: Vec<&[u8]> = iter_annexb_nals(&au).collect();
         match params.classify_nals(nals.iter().copied()) {
             AvcPicture::Frame => a_units += 1,

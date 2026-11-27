@@ -36,7 +36,10 @@ fn every_sei_in_the_stream_round_trips_byte_exact() {
     let nals = hdr10plus_sei_nals(&es);
     assert_eq!(nals.len(), FRAMES);
     for (i, nal) in nals.iter().enumerate() {
-        let payloads = Hdr10PlusMetadata::hevc_sei_nal_payloads(nal);
+        let payloads = Hdr10PlusMetadata::hevc_sei_nal_payloads(
+            nal,
+            &mut broadcast_bitstream::Findings::new(),
+        );
         assert_eq!(payloads.len(), 1, "SEI {i}");
         let meta =
             Hdr10PlusMetadata::parse(&payloads[0]).unwrap_or_else(|e| panic!("SEI {i}: {e}"));
@@ -51,7 +54,8 @@ fn every_sei_in_the_stream_round_trips_byte_exact() {
 fn first_sei_decodes_to_the_values_ffprobe_reports() {
     let Some(es) = fixture_es() else { return };
     let nal = &hdr10plus_sei_nals(&es)[0];
-    let meta = Hdr10PlusMetadata::from_hevc_sei_nal(nal).unwrap().unwrap();
+    let meta = Hdr10PlusMetadata::from_hevc_sei_nal(nal, &mut broadcast_bitstream::Findings::new())
+        .unwrap();
     assert_eq!(meta.application_version(), 1);
     assert_eq!(meta.num_windows(), 1);
     assert_eq!(meta.targeted_system_display_maximum_luminance(), 0);
@@ -91,9 +95,11 @@ fn first_sei_decodes_to_the_values_ffprobe_reports() {
 #[test]
 fn the_stream_violates_table_1_and_is_still_accepted() {
     let Some(es) = fixture_es() else { return };
-    let meta = Hdr10PlusMetadata::from_hevc_sei_nal(&hdr10plus_sei_nals(&es)[0])
-        .unwrap()
-        .unwrap();
+    let meta = Hdr10PlusMetadata::from_hevc_sei_nal(
+        &hdr10plus_sei_nals(&es)[0],
+        &mut broadcast_bitstream::Findings::new(),
+    )
+    .unwrap();
     let d = meta.primary_window().distribution_max_rgb();
     assert_eq!((d[1].percentage(), d[2].percentage()), (5, 10));
     assert_ne!(d[1].percentile(), 0);
@@ -136,7 +142,8 @@ fn round_trip(meta: &Hdr10PlusMetadata) -> Hdr10PlusMetadata {
     assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     let nal = meta.to_hevc_prefix_sei_nal().unwrap();
     assert_eq!(
-        Hdr10PlusMetadata::from_hevc_sei_nal(&nal).unwrap().unwrap(),
+        Hdr10PlusMetadata::from_hevc_sei_nal(&nal, &mut broadcast_bitstream::Findings::new())
+            .unwrap(),
         *meta
     );
     parsed

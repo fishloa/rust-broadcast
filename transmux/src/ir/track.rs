@@ -111,7 +111,10 @@ impl TrackSpec {
     ) -> Self {
         let display = DisplayGeometry::from_codec_config(&config);
         let hdr = match &config {
-            CodecConfig::Hevc { config, .. } => HdrStaticMetadata::from_hevc_record(&config.config),
+            CodecConfig::Hevc { config, .. } => HdrStaticMetadata::from_hevc_record(
+                &config.config,
+                &mut broadcast_bitstream::Findings::new(),
+            ),
             _ => None,
         };
         Self {

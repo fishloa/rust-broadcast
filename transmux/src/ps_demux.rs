@@ -426,6 +426,15 @@ impl StreamingPsDemux {
                 _ => {}
             }
         }
+        let mut findings = broadcast_bitstream::Findings::new();
+        for stream in &mut self.state.streams {
+            findings.absorb(stream.take_findings());
+        }
+        for finding in findings.into_vec() {
+            self.state
+                .events
+                .push_back(DemuxEvent::damage(Damage::from(finding)));
+        }
         Ok(())
     }
 }
@@ -589,6 +598,7 @@ impl DemuxState {
                     substream_id: PRIVATE1_SUBSTREAM_ID_NONE,
                 };
                 let index = self.stream_index(key);
+                self.streams[index].findings_base = position;
                 self.streams[index].push_video(pes.payload, pts, dts, &self.limits)?;
                 self.try_announce();
                 Ok(())
@@ -743,6 +753,10 @@ struct Stream {
     ac3_next_dts: Option<i64>,
     ac3_anchor_wire90: i128,
     ac3_ticks_since_anchor: i64,
+    /// Structures a bitstream parser skipped on this stream's bytes.
+    findings: broadcast_bitstream::Findings,
+    /// Input position of the PES whose bytes produced the current findings.
+    findings_base: u64,
 }
 
 impl Stream {
@@ -766,7 +780,14 @@ impl Stream {
             ac3_next_dts: None,
             ac3_anchor_wire90: 0,
             ac3_ticks_since_anchor: 0,
+            findings: broadcast_bitstream::Findings::new(),
+            findings_base: 0,
         }
+    }
+
+    /// Take what the codec splitters on this stream skipped.
+    fn take_findings(&mut self) -> broadcast_bitstream::Findings {
+        core::mem::take(&mut self.findings)
     }
 
     /// A container-level resync lost the bytes between the last delivered
@@ -897,7 +918,11 @@ impl Stream {
             return self.collect_video_units(limits);
         }
         match &mut self.body {
-            Body::H264(state) => state.push(payload)?,
+            Body::H264(state) => {
+                state.push(payload)?;
+                let findings = core::mem::take(&mut state.findings);
+                self.findings.absorb(findings);
+            }
             Body::Mpeg2(state) => state.push(payload),
             _ => return Ok(()),
         }
@@ -1359,6 +1384,8 @@ struct H264State {
     cursor: Option<u64>,
     /// Bytes from the ES start kept until the first start code is found.
     pre_scan: Vec<u8>,
+    /// Access units the splitter could not delimit.
+    findings: broadcast_bitstream::Findings,
 }
 
 impl H264State {
@@ -1371,11 +1398,20 @@ impl H264State {
         if cursor.is_none() {
             pre_scan.extend_from_slice(probe);
         }
-        Ok(Self {
+        let mut state = Self {
             splitter,
             cursor,
             pre_scan,
-        })
+            findings: broadcast_bitstream::Findings::new(),
+        };
+        state.absorb_findings();
+        Ok(state)
+    }
+
+    /// Move what the splitter skipped into this stream's findings.
+    fn absorb_findings(&mut self) {
+        let findings = self.splitter.take_findings();
+        self.findings.absorb(findings);
     }
 
     fn reanchor(&mut self, offset: u64) {
@@ -1387,6 +1423,7 @@ impl H264State {
 
     fn push(&mut self, payload: &[u8]) -> Result<()> {
         self.splitter.push(payload)?;
+        self.absorb_findings();
         if self.cursor.is_none() {
             self.pre_scan.extend_from_slice(payload);
             if let Some(offset) = first_nal_start(&self.pre_scan) {
@@ -1406,6 +1443,7 @@ impl H264State {
 
     fn finish(&mut self) {
         self.splitter.finish();
+        self.absorb_findings();
     }
 }
 
@@ -1930,7 +1968,11 @@ mod interpolate_tests {
     fn ac3_stream(stamp90: u64) -> (Stream, Vec<(usize, usize)>) {
         let data = std::fs::read(test_fixtures::path(AC3_FIXTURE))
             .expect("real AC-3 elementary stream fixture");
-        let frames = broadcast_bitstream::ac3_syncframe::split_ac3_syncframe_ranges(&data, true);
+        let frames = broadcast_bitstream::ac3_syncframe::split_ac3_syncframe_ranges(
+            &data,
+            true,
+            &mut broadcast_bitstream::Findings::new(),
+        );
         assert!(frames.len() >= 3, "fixture carries several syncframes");
         let info = Ac3SyncframeInfo::from_es(&data).expect("AC-3 syncframe info");
         let mut stream = Stream::new(Codec::Ac3, Body::Ac3(Ac3State::new()));
@@ -2138,7 +2180,10 @@ mod private1_tests {
     fn a_complete_frame_before_the_first_access_unit_is_not_emitted() {
         let es = std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.a0.ac3"))
             .expect("real AC-3 elementary stream fixture");
-        let frames = broadcast_bitstream::ac3_syncframe::split_ac3_syncframes(&es);
+        let frames = broadcast_bitstream::ac3_syncframe::split_ac3_syncframes(
+            &es,
+            &mut broadcast_bitstream::Findings::new(),
+        );
         assert!(frames.len() >= 2, "fixture carries several syncframes");
         let (first, second) = (frames[0], frames[1]);
 

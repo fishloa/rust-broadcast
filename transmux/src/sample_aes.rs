@@ -411,7 +411,10 @@ fn eac3_transform(
     frame: &[u8],
     encrypt: bool,
 ) -> Result<Vec<u8>> {
-    let ranges = broadcast_bitstream::ac3_syncframe::split_eac3_syncframe_ranges(frame);
+    let ranges = broadcast_bitstream::ac3_syncframe::split_eac3_syncframe_ranges(
+        frame,
+        &mut broadcast_bitstream::Findings::new(),
+    );
     if ranges.is_empty() {
         return Err(Error::InvalidInput(
             "E-AC-3 frame does not start with a valid syncframe",
@@ -1108,7 +1111,10 @@ mod tests {
         else {
             panic!("eac3 fixture missing");
         };
-        let ranges = broadcast_bitstream::ac3_syncframe::split_eac3_syncframe_ranges(&clear);
+        let ranges = broadcast_bitstream::ac3_syncframe::split_eac3_syncframe_ranges(
+            &clear,
+            &mut broadcast_bitstream::Findings::new(),
+        );
         let (s, e) = ranges[0];
         let one = &clear[s..e];
         let via_frame = eac3_encrypt_frame(&NIST_KEY, &NIST_IV, one).expect("encrypt one");
