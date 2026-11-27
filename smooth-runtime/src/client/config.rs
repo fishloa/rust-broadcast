@@ -95,6 +95,10 @@ impl fmt::Debug for QualitySelector {
 pub struct SmoothClientConfig {
     /// The manifest URL the first [`Action`](super::Action) fetches.
     pub manifest_url: Url,
+    /// What each damage report means: `Report` (the default for everything)
+    /// publishes it as [`Output::Damage`](super::Output::Damage) and keeps
+    /// playing; `Fail` ends the session with the same report.
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
     /// Live join point, in fragments behind the newest.
     pub live_join_fragments: usize,
     /// Consecutive failures of one fragment before it is skipped (live) or the session ends (static); default 5.
@@ -163,6 +167,7 @@ impl Default for SmoothClientConfig {
     fn default() -> Self {
         Self {
             manifest_url: DEFAULT_MANIFEST_URL.clone(),
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
             live_join_fragments: DEFAULT_LIVE_JOIN_FRAGMENTS,
             max_fragment_failures: DEFAULT_MAX_FRAGMENT_FAILURES,
             max_manifest_failures: DEFAULT_MAX_MANIFEST_FAILURES,
@@ -184,6 +189,16 @@ impl Default for SmoothClientConfig {
 }
 
 impl SmoothClientConfig {
+    /// Set [`Self::damage_policy`].
+    #[must_use]
+    pub fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
+
     /// Set [`Self::live_join_fragments`].
     #[must_use]
     pub fn with_live_join_fragments(mut self, live_join_fragments: usize) -> Self {

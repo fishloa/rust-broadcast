@@ -4,6 +4,18 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `Output::Damage(broadcast_core::damage::Damage)`: the one report of content
+  the reader skipped, altered or truncated, delivered in order with the
+  outputs around it. Each degradation the MP4 reader only describes is
+  converted to that report (coalesced by kind per segment, with the count kept
+  by `FragmentDamaged`), and a report the reader publishes is forwarded
+  verbatim. `DashClientConfig::damage_policy` (with `with_damage_policy`)
+  decides what a report means: `Report` for everything by default, or `Fail`,
+  which ends the presentation with `Fatal(FatalKind::Damage)` carrying the same
+  report.
+
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.

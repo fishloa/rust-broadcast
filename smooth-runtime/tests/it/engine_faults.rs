@@ -307,6 +307,56 @@ fn a_damaged_fragment_is_dropped_and_the_next_one_still_demuxes() {
     assert!(host.has(is_ended), "playback continued past the damage");
     assert_eq!(host.count_requests(THIRD_VIDEO), 1);
     assert_eq!(video_dts(&host), expected);
+
+    // The player is told what it lost: one damage report for the damaged
+    // fragment, in order with the samples that continue past it.
+    let reports: Vec<&broadcast_core::damage::Damage> = host
+        .outputs()
+        .iter()
+        .filter_map(|o| match o {
+            Output::Damage(damage) => Some(damage),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reports.len(), 1, "{reports:?}");
+    assert_eq!(
+        reports[0].kind(),
+        broadcast_core::damage::DamageKind::MediaUnitDropped
+    );
+    assert_eq!(
+        reports[0].severity(),
+        broadcast_core::damage::Severity::Degraded
+    );
+}
+
+/// The same damage, with `Fail`: the session stops there with the report.
+#[test]
+fn the_fail_policy_ends_the_damaged_fragment_session_with_the_same_report() {
+    let mut damaged = fixture(&format!("av/{SECOND_VIDEO}"));
+    damaged[SAMPLE_COUNT].copy_from_slice(&0x00ff_ffffu32.to_be_bytes());
+    let config = SmoothClientConfig::default().with_damage_policy(
+        broadcast_core::damage::DamagePolicy::new()
+            .fail_on(broadcast_core::damage::Severity::Degraded),
+    );
+    let mut host = av_host(config);
+    host.route(SECOND_VIDEO, vec![Reply::Body(damaged)]);
+    host.run_until(|o| o.iter().any(is_fatal));
+    let fatal = host
+        .outputs()
+        .iter()
+        .find_map(|o| match o {
+            Output::Fatal(SmoothError::Damage(error)) => Some(error.damage().clone()),
+            _ => None,
+        })
+        .expect("the policy stop carries the report");
+    assert_eq!(
+        fatal.kind(),
+        broadcast_core::damage::DamageKind::MediaUnitDropped
+    );
+    assert!(
+        !host.has(|o| matches!(o, Output::Damage(_))),
+        "a refused report is not published too"
+    );
 }
 
 fn av_manifest_with_audio_chunks(chunks: &str) -> Vec<u8> {

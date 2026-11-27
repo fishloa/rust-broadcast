@@ -225,6 +225,12 @@ pub enum Output {
         /// How many fragments were skipped.
         skipped: usize,
     },
+    /// Content the reader skipped, altered, resynchronised past or truncated —
+    /// the one [`broadcast_core::damage::Damage`] report, delivered in order
+    /// with the outputs around it. What it means is the caller's
+    /// [`DashClientConfig::damage_policy`](crate::client::DashClientConfig::damage_policy);
+    /// with `Fail` the presentation ends with `Fatal(FatalKind::Damage)`.
+    Damage(broadcast_core::damage::Damage),
     /// A non-fatal observation.
     Notice(Notice),
     /// The UTC clock has its first anchor, or its source changed (23009-1

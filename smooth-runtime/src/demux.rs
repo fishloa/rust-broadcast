@@ -30,23 +30,30 @@ pub(crate) struct SegmentDemux {
     stage: Mp4Demux,
     specs: Vec<(TrackId, TrackSpec)>,
     poisoned: Option<transmux::Error>,
+    /// Reports the reader published while the init segment was read; they
+    /// belong to the first media segment's output.
+    init_damage: Vec<broadcast_core::damage::Damage>,
 }
 
 /// The tracks and samples one fed segment produced.
 pub(crate) struct DemuxedSegment {
     pub(crate) tracks: Vec<Track>,
     pub(crate) damaged: bool,
+    /// Every damage report the reader published for this segment, in order.
+    pub(crate) damage: Vec<broadcast_core::damage::Damage>,
 }
 
 impl SegmentDemux {
     /// A stage fed `init` once, as one unit. Every later [`Self::segment`]
     /// call feeds one media segment under that init.
     pub(crate) fn new(init: &[u8]) -> Result<Self, transmux::Error> {
+        let (stage, init_damage) = Self::open_with_damage(init)?;
         Ok(Self {
             init: init.to_vec(),
-            stage: Self::open(init)?,
+            stage,
             specs: Vec::new(),
             poisoned: None,
+            init_damage,
         })
     }
 
@@ -79,11 +86,24 @@ impl SegmentDemux {
     }
 
     fn open(init: &[u8]) -> Result<Mp4Demux, transmux::Error> {
+        Self::open_with_damage(init).map(|(stage, _)| stage)
+    }
+
+    /// Like [`Self::open`], but keeps the damage the reader reported while it
+    /// read the init instead of discarding it.
+    fn open_with_damage(
+        init: &[u8],
+    ) -> Result<(Mp4Demux, Vec<broadcast_core::damage::Damage>), transmux::Error> {
         let mut stage = Mp4Demux::sequential(Mp4DemuxConfig::default());
         stage.feed(Mp4Input::Next(init), Timestamp::ZERO)?;
         stage.feed(Mp4Input::SegmentEnd, Timestamp::ZERO)?;
-        while stage.poll().is_some() {}
-        Ok(stage)
+        let mut damage = Vec::new();
+        while let Some(event) = stage.poll() {
+            if let DemuxEvent::Damage(report) = event {
+                damage.push(report);
+            }
+        }
+        Ok((stage, damage))
     }
 
     fn restart(&mut self) {
@@ -99,6 +119,7 @@ impl SegmentDemux {
     fn collect(&mut self) -> DemuxedSegment {
         let mut samples: Vec<(TrackId, Vec<Sample>)> = Vec::new();
         let mut damaged = false;
+        let mut damage = core::mem::take(&mut self.init_damage);
         while let Some(event) = self.stage.poll() {
             match event {
                 DemuxEvent::TrackAdded(spec) => match self.position(spec.track_id) {
@@ -117,10 +138,25 @@ impl SegmentDemux {
                     None => samples.push((track_id, vec![sample])),
                 },
                 DemuxEvent::InputDegraded {
-                    kind:
-                        InputDegradation::MalformedUnit { .. } | InputDegradation::TruncatedUnit { .. },
+                    track,
+                    kind,
+                    provenance,
                     ..
-                } => damaged = true,
+                } => {
+                    if matches!(
+                        kind,
+                        InputDegradation::MalformedUnit { .. }
+                            | InputDegradation::TruncatedUnit { .. }
+                    ) {
+                        damaged = true;
+                    }
+                    // One report per way a fragment was damaged.
+                    let report = kind.to_damage(track, None, provenance);
+                    if !damage.iter().any(|kept| kept.kind() == report.kind()) {
+                        damage.push(report);
+                    }
+                }
+                DemuxEvent::Damage(report) => damage.push(report),
                 _ => {}
             }
         }
@@ -136,7 +172,11 @@ impl SegmentDemux {
                 Track::new(spec.clone(), taken)
             })
             .collect();
-        DemuxedSegment { tracks, damaged }
+        DemuxedSegment {
+            tracks,
+            damaged,
+            damage,
+        }
     }
 
     fn position(&self, id: TrackId) -> Option<usize> {

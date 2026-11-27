@@ -40,6 +40,24 @@ pub const READERS: &[Reader] = &[
         status: Status::Converted,
         reports: &["Event"],
     },
+    // Lane dm3: the segment-pull clients forward every report their MP4/TS
+    // reader publishes and convert each degradation the reader only describes
+    // into the same report, coalesced by kind per resource.
+    Reader {
+        name: "hls-runtime",
+        status: Status::Converted,
+        reports: &["Output"],
+    },
+    Reader {
+        name: "dash-runtime",
+        status: Status::Converted,
+        reports: &["Output"],
+    },
+    Reader {
+        name: "smooth-runtime",
+        status: Status::Converted,
+        reports: &["Output"],
+    },
     // Lane dm3: the RTSP client resynchronises past junk between interleaved
     // frames and reports it, plus the responses and headers it had to skip,
     // as `ClientEvent::Damage`; a dropped media section converts to a report.

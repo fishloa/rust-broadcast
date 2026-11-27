@@ -7,6 +7,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `Output::Damage(broadcast_core::damage::Damage)`: the one report of content
+  the reader skipped, altered, resynchronised past or truncated, delivered in
+  order with the outputs around it. Each degradation the MP4/TS reader only
+  describes is converted to that report (coalesced by kind per resource, with
+  the count kept by `FragmentDamaged`), and a report the reader publishes is
+  forwarded verbatim. `HlsClientConfig::damage_policy` (with
+  `with_damage_policy`) decides what a report means: `Report` for everything by
+  default, or `Fail`, which stops the pull with `Error::Damage` carrying the
+  same report.
+
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.

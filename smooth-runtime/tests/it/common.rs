@@ -200,6 +200,10 @@ impl Host {
             .collect()
     }
 
+    pub fn outputs(&self) -> &[Output] {
+        &self.outputs
+    }
+
     pub fn has(&self, f: impl Fn(&Output) -> bool) -> bool {
         self.outputs.iter().any(f)
     }

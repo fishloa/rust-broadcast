@@ -10,6 +10,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug, Error, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
+    /// The caller's damage policy refused a report: the client stops and
+    /// returns the same report inside this error.
+    #[error(transparent)]
+    Damage(#[from] broadcast_core::damage::DamageError),
+
     /// The playlist bytes fed to [`crate::client::HlsClient::on_playlist`]
     /// are not valid UTF-8 (RFC 8216 §4.1 playlists are UTF-8 text).
     #[error("playlist is not valid UTF-8: {0}")]

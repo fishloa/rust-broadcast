@@ -106,6 +106,14 @@ pub enum Output {
     /// A gap in the timeline: samples were skipped or the live window moved past
     /// the last fragment.
     Discontinuity,
+    /// Content the reader skipped, altered, resynchronised past or truncated —
+    /// the one [`broadcast_core::damage::Damage`] report, in order with the
+    /// samples around it. What it means is the caller's
+    /// [`SmoothClientConfig::damage_policy`](crate::SmoothClientConfig::damage_policy);
+    /// with `Fail` the session ends with
+    /// [`Output::Fatal`]`(`[`SmoothError::Damage`](crate::SmoothError::Damage)`)`
+    /// carrying the same report.
+    Damage(broadcast_core::damage::Damage),
     /// Carried on without something.
     Dropped(Dropped),
     /// A static presentation played to its end.

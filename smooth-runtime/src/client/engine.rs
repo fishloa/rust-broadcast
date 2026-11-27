@@ -95,6 +95,8 @@ pub struct SmoothClient {
     next_request: u64,
     actions: VecDeque<Action>,
     outputs: VecDeque<Output>,
+    /// What each damage report means for this session.
+    damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 impl SmoothClient {
@@ -115,8 +117,10 @@ impl SmoothClient {
             Ok(retry) => (retry, None),
             Err(error) => (Self::plain_schedule(), Some(error)),
         };
+        let damage_policy = config.damage_policy.clone();
         let mut client = Self {
             config,
+            damage_policy,
             streams: Vec::new(),
             started: false,
             announced: false,
@@ -746,7 +750,14 @@ impl SmoothClient {
         let Some(track) = self.streams[si].track else {
             return;
         };
-        match self.streams[si].fragment_samples(body, start) {
+        let result = self.streams[si].fragment_samples(body, start);
+        let damage = self.streams[si].take_damage();
+        for report in damage {
+            if !self.publish_damage(report) {
+                return;
+            }
+        }
+        match result {
             Ok(samples) => {
                 for sample in samples {
                     self.outputs.push_back(Output::Sample { track, sample });
@@ -756,6 +767,21 @@ impl SmoothClient {
                 stream: StreamId(si),
                 status: None,
             })),
+        }
+    }
+
+    /// Hand one report to the caller's policy. Returns `false` when the
+    /// policy refused it: the session ends with the same report.
+    fn publish_damage(&mut self, damage: broadcast_core::damage::Damage) -> bool {
+        match self.damage_policy.admit(damage) {
+            Ok(damage) => {
+                self.outputs.push_back(Output::Damage(damage));
+                true
+            }
+            Err(error) => {
+                self.fail(SmoothError::Damage(error));
+                false
+            }
         }
     }
 

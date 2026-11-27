@@ -467,6 +467,8 @@ pub struct HlsClient {
     /// Caller-supplied ceiling on one PID's in-progress PES buffer in the
     /// classic-TS demuxer; `None` is unlimited.
     max_pes_unit_bytes: Option<NonZeroUsize>,
+    /// What each damage report means for this client.
+    damage_policy: broadcast_core::damage::DamagePolicy,
     master: Option<MasterSelection>,
 
     pending_actions: VecDeque<Action>,
@@ -637,6 +639,11 @@ pub struct HlsClientConfig {
     /// classic-TS demuxer; `None` (the default) is unlimited. A caller whose
     /// segments arrive over a network supplies one.
     pub max_pes_unit_bytes: Option<NonZeroUsize>,
+    /// What each damage report means: `Report` (the default for everything)
+    /// publishes it as [`Output::Damage`] and keeps playing; `Fail` stops the
+    /// client at the report and returns [`crate::client::Error::Damage`]
+    /// carrying it.
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 impl HlsClientConfig {
@@ -648,6 +655,7 @@ impl HlsClientConfig {
             playlist_base: None,
             limits: Limits::default(),
             max_pes_unit_bytes: None,
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
         }
     }
 
@@ -669,6 +677,16 @@ impl HlsClientConfig {
     #[must_use]
     pub fn with_variant_policy(mut self, variant_policy: VariantPolicy) -> Self {
         self.variant_policy = variant_policy;
+        self
+    }
+
+    /// Set what each damage report means (see [`HlsClientConfig::damage_policy`]).
+    #[must_use]
+    pub fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.damage_policy = damage_policy;
         self
     }
 
@@ -698,6 +716,7 @@ impl HlsClient {
             variant_policy: config.variant_policy,
             limits: config.limits,
             max_pes_unit_bytes: config.max_pes_unit_bytes,
+            damage_policy: config.damage_policy,
             master: None,
             pending_actions,
             pending_errors: VecDeque::new(),
@@ -834,6 +853,18 @@ impl HlsClient {
         let wait = self.next_wait()?;
         let anchor = *self.wait_anchor.get_or_insert(now);
         Some(anchor.saturating_add(wait))
+    }
+
+    /// Hand one report to the caller's policy: publish it, or stop feeding
+    /// with the same report inside [`Error::Damage`].
+    fn publish_damage(&mut self, damage: broadcast_core::damage::Damage) -> Result<()> {
+        match self.damage_policy.admit(damage) {
+            Ok(damage) => {
+                self.pending_outputs.push_back(Output::Damage(damage));
+                Ok(())
+            }
+            Err(error) => Err(Error::Damage(error)),
+        }
     }
 
     /// Drain the next [`Output`] event, if any.
@@ -2372,7 +2403,7 @@ impl HlsClient {
             self.restart_demux(slot);
             return Err(Error::Demux { id, source });
         }
-        let (specs, damaged, abandoned, samples) = {
+        let (specs, damaged, abandoned, samples, damage_reports) = {
             let state = self
                 .inits
                 .get_mut(&slot)
@@ -2385,6 +2416,7 @@ impl HlsClient {
             }
             let mut samples: BTreeMap<TrackId, Vec<Sample>> = BTreeMap::new();
             let mut damaged = 0usize;
+            let mut damage_reports: Vec<broadcast_core::damage::Damage> = Vec::new();
             let mut abandoned: Vec<(Option<TrackId>, AbandonReason)> = Vec::new();
             for event in events {
                 match event {
@@ -2418,17 +2450,43 @@ impl HlsClient {
                         samples.entry(track_id).or_default().push(sample);
                     }
                     DemuxEvent::InputDegraded {
-                        kind: InputDegradation::MalformedUnit { .. },
+                        track,
+                        kind,
+                        provenance,
                         ..
-                    } => damaged = damaged.saturating_add(1),
+                    } => {
+                        if matches!(
+                            kind,
+                            InputDegradation::MalformedUnit { .. }
+                                | InputDegradation::TruncatedUnit { .. }
+                        ) {
+                            damaged = damaged.saturating_add(1);
+                        }
+                        // One report per way the resource was damaged: a
+                        // segment with a thousand broken units is one report,
+                        // located at the first.
+                        let report = kind.to_damage(track, None, provenance);
+                        if !damage_reports
+                            .iter()
+                            .any(|kept| kept.kind() == report.kind())
+                        {
+                            damage_reports.push(report);
+                        }
+                    }
+                    // The one report the reader publishes, forwarded as it
+                    // arrived so its location, track and cause survive.
+                    DemuxEvent::Damage(damage) => damage_reports.push(damage),
                     _ => {}
                 }
             }
             let mut specs = state.specs.clone();
             specs.sort_by_key(|spec| spec.track_id);
             samples.retain(|track_id, _| specs.iter().any(|spec| spec.track_id == *track_id));
-            (specs, damaged, abandoned, samples)
+            (specs, damaged, abandoned, samples, damage_reports)
         };
+        for damage in damage_reports {
+            self.publish_damage(damage)?;
+        }
         if damaged > 0 {
             self.pending_outputs.push_back(Output::FragmentDamaged {
                 id,
@@ -2564,6 +2622,7 @@ impl HlsClient {
         };
         let mut per_track: BTreeMap<TrackId, Vec<Sample>> = BTreeMap::new();
         let mut events: Vec<DemuxEvent> = Vec::new();
+        let mut damage_reports: Vec<broadcast_core::damage::Damage> = Vec::new();
         while let Some(event) = demux.poll_event() {
             match event {
                 DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
@@ -2592,8 +2651,28 @@ impl HlsClient {
                 {
                     events.push(event);
                 }
+                DemuxEvent::InputDegraded {
+                    track,
+                    kind,
+                    provenance,
+                    ..
+                } => {
+                    let report = kind.to_damage(track, None, provenance);
+                    if !damage_reports
+                        .iter()
+                        .any(|kept| kept.kind() == report.kind())
+                    {
+                        damage_reports.push(report);
+                    }
+                }
+                // The TS reader's own report: a resynchronisation, a dropped
+                // PES unit, a truncated tail, a continuity gap.
+                DemuxEvent::Damage(damage) => damage_reports.push(damage),
                 _ => {}
             }
+        }
+        for damage in damage_reports {
+            self.publish_damage(damage)?;
         }
         if !self.ts_specs.is_empty() {
             let specs: Vec<TrackSpec> = self.ts_specs.values().cloned().collect();

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Output::Damage(broadcast_core::damage::Damage)`: the one report of content
+  the reader skipped, altered or truncated, delivered in order before the
+  samples around it, including the damage the reader reported while the
+  synthetic init was read. `SmoothClientConfig::damage_policy` (with
+  `with_damage_policy`) decides what a report means: `Report` for everything by
+  default, or `Fail`, which ends the session with `Fatal(SmoothError::Damage)`
+  carrying the same report.
+
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.

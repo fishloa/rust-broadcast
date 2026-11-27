@@ -7,6 +7,7 @@ mod avg_bandwidth;
 mod client_decisions;
 mod client_state;
 mod closed_captions;
+mod damage_report;
 #[path = "support/dummy_avc_config.rs"]
 mod dummy_avc_config;
 mod engine_limits;

@@ -261,6 +261,8 @@ pub struct DashClient {
     inits: BTreeMap<InitKey, InitEntry>,
     rep_loc: BTreeMap<RepId, (usize, usize, usize)>,
     outputs: VecDeque<Output>,
+    /// What each damage report means for this presentation.
+    damage_policy: broadcast_core::damage::DamagePolicy,
     announced_tracks: Option<String>,
     prev: Option<PrevPeriod>,
     any_started: bool,
@@ -359,6 +361,10 @@ pub struct DashClientConfig {
     pub dash: DashConfig,
     /// Bounds on what the client pulls.
     pub limits: PullLimits,
+    /// What each damage report means: `Report` (the default for everything)
+    /// publishes it as [`Output::Damage`] and keeps playing; `Fail` ends the
+    /// presentation with `Fatal(FatalKind::Damage)` carrying the same report.
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 impl DashClientConfig {
@@ -369,6 +375,7 @@ impl DashClientConfig {
             mpd_url,
             dash: DashConfig::default(),
             limits: PullLimits::default(),
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
         }
     }
 
@@ -385,6 +392,16 @@ impl DashClientConfig {
         self.limits = limits;
         self
     }
+
+    /// Set what each damage report means (see [`DashClientConfig::damage_policy`]).
+    #[must_use]
+    pub fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
 }
 
 impl DashClient {
@@ -395,6 +412,7 @@ impl DashClient {
             mpd_url,
             dash,
             limits,
+            damage_policy,
         } = config;
         let doc_url = Some(mpd_url.clone());
         let mpd_query = mpd_url.query().map(str::to_owned);
@@ -424,6 +442,7 @@ impl DashClient {
             inits: BTreeMap::new(),
             rep_loc: BTreeMap::new(),
             outputs: VecDeque::new(),
+            damage_policy,
             announced_tracks: None,
             prev: None,
             any_started: false,
@@ -517,6 +536,15 @@ impl DashClient {
             Err(Error::Stopped)
         } else {
             Ok(())
+        }
+    }
+
+    /// Hand one report to the caller's policy: publish it, or end the
+    /// presentation with it when the policy says `Fail`.
+    fn publish_damage(&mut self, damage: broadcast_core::damage::Damage) {
+        match self.damage_policy.admit(damage) {
+            Ok(damage) => self.outputs.push_back(Output::Damage(damage)),
+            Err(error) => self.go_fatal(FatalKind::Damage(error)),
         }
     }
 
@@ -2031,6 +2059,9 @@ impl DashClient {
             let pos = u32::try_from(pos).ok()?;
             (pos < count).then(|| TrackId::new(base.saturating_add(pos)))
         };
+        for damage in staged.damage {
+            self.publish_damage(damage);
+        }
         if staged.damaged > 0
             && let Some(id) = id
         {
