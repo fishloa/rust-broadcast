@@ -167,6 +167,14 @@ pub trait MediaMuxer {
     /// # Errors
     /// The muxer's own error.
     fn flush(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError>;
+
+    /// The source timeline broke before the next sample: frame the transport's
+    /// own in-stream marker (a TS `discontinuity_indicator`, an RTMP timestamp
+    /// rebase) and return every wire message that completes.
+    ///
+    /// # Errors
+    /// The muxer's own error.
+    fn discontinuity(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError>;
 }
 
 /// The per-connection MPEG-2 TS muxer a TS push transport feeds one sample at
@@ -235,6 +243,15 @@ impl MediaMuxer for TsPushMux {
     fn flush(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError> {
         self.stage
             .feed(MuxInput::Flush, Timestamp::ZERO)
+            .map_err(MuxError::Package)?;
+        Ok(self.take_ready())
+    }
+
+    /// Mark the next packet of every carried PID with the adaptation field's
+    /// `discontinuity_indicator` (ISO/IEC 13818-1 §2.4.3.5).
+    fn discontinuity(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        self.stage
+            .feed(MuxInput::Discontinuity { track: None }, Timestamp::ZERO)
             .map_err(MuxError::Package)?;
         Ok(self.take_ready())
     }

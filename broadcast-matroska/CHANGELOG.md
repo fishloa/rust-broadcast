@@ -6,6 +6,18 @@ All notable changes to this crate are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `matroska::statistics`: the typed view of the de-facto tag names a real file
+  carries, `Tag::statistics()` and `Tags::statistics_for_track()` over
+  `DURATION`, `NUMBER_OF_FRAMES`, `NUMBER_OF_BYTES`, `BPS`, `ENCODER`,
+  `ENCODER_SETTINGS` and the `_STATISTICS_*` names mkvmerge writes: a duration
+  in nanoseconds, a count, a bitrate, a text, and a `_STATISTICS_WRITING_DATE_UTC`
+  as a `CivilDateTime`. A value that does not match its documented form is a
+  `MalformedTag` finding and the tag still reads. `Targets::track_uids()`,
+  `Targets::target_type_value()` and `Targets::target_type()` expose the
+  target a tag applies to.
+
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.
@@ -28,6 +40,9 @@ All notable changes to this crate are documented here. The format follows
 
 ### Added
 
+- `writer::Writer::cut_cluster`: ends the open `Cluster` at a caller-known
+  boundary (a container-level timeline discontinuity), flushing held Blocks
+  first so the next one opens a new `Cluster`.
 - `reader::TrackInfo::codec_delay_ns`: the track's `CodecDelay` (RFC 9559
   §5.1.4.1.6), which Opus uses to state its pre-skip. The writer does not emit
   it yet.

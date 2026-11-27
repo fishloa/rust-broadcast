@@ -46,6 +46,18 @@
 //! ([`crate::rtp_stream::RtpStreamDepacketiser`]) reassembles fragments by
 //! concatenation and may reasonably copy (issue #777).
 //!
+//! # Timeline discontinuity
+//!
+//! A [`MuxInput::Discontinuity`] is expressed, never dropped. RTP carries no
+//! container-level discontinuity marker: the sequence numbers keep counting
+//! (RFC 3550 §5.1 requires a monotonic increment, not a reset), and the
+//! timestamp reports the jump as given — the sender's media clock may step and
+//! RFC 3550 §5.1 leaves the increment between access units unconstrained. The
+//! only per-format signal left is the marker bit: for audio it means "first
+//! packet of a talkspurt" (RFC 3551 §4.1), so the first packet of each
+//! affected audio access unit after the break sets it; for H.264 it means
+//! "last packet of the access unit" (RFC 6184 §5.1), so a break adds none.
+//!
 //! This module does **not** validate sequence-number continuity —
 //! [`crate::rtp_stream`]'s stateful
 //! [`crate::rtp_stream::RtpStreamDepacketiser`] does that (loss/
@@ -302,6 +314,11 @@ struct RtpTrackState {
     /// The running sum of preceding durations — the timestamp fallback for a
     /// sample with no `pts`.
     ticks: u64,
+    /// A [`MuxInput::Discontinuity`] announced a timeline break before this
+    /// track's next access unit: an audio packet opens a talkspurt and
+    /// carries the marker bit (RFC 3551 §4.1); a video access unit's marker
+    /// already means "last packet of the access unit" and gets no extra one.
+    mark_talkspurt: bool,
 }
 
 #[cfg(feature = "rtp")]
@@ -338,7 +355,8 @@ impl RtpTrackState {
 /// clock ([`VIDEO_CLOCK_TIMESCALE`]); AAC → `AAC-hbr` packets on the audio
 /// sample-rate clock. All packets of one access unit share a timestamp and the
 /// marker bit is set on the last. The stage holds one access unit's packets at
-/// a time.
+/// a time. A timeline break sets the marker on the first audio packet after it
+/// (see the module's "Timeline discontinuity" section).
 ///
 /// [`MuxInput::Track`] announcements assign the session's dynamic payload
 /// types; the SDP media section for a track's format is
@@ -492,6 +510,7 @@ impl RtpPacketiserStage {
             seq,
             first_pts: None,
             ticks: 0,
+            mark_talkspurt: false,
         });
         if let Some(packet) = stap {
             self.out.push_back(MuxOutput::Bytes(packet.as_contiguous()));
@@ -506,6 +525,10 @@ impl RtpPacketiserStage {
         sample: &Sample,
         timestamp: u32,
     ) -> Result<Vec<RtpPacket>> {
+        // RFC 3551 §4.1 gives the marker bit the "first packet of a
+        // talkspurt" meaning for audio; RFC 6184 §5.1 makes it "last packet
+        // of an access unit" for H.264, so a break adds nothing here.
+        self.tracks[index].mark_talkspurt = false;
         let pt = self.tracks[index].pt;
         let mut packets = Vec::new();
         push_video_nals(
@@ -552,6 +575,7 @@ impl RtpPacketiserStage {
             }));
         }
         let clock = self.tracks[index].spec.timescale;
+        let talkspurt = core::mem::take(&mut self.tracks[index].mark_talkspurt);
         let timestamp = self.tracks[index].timestamp(sample, clock);
         let mut packets = Vec::new();
         let au_headers_len_bits = (AAC_AU_HEADER_LEN * u8::BITS as usize) as u16;
@@ -562,7 +586,8 @@ impl RtpPacketiserStage {
             let end = (start + per_packet).min(au.len());
             let is_last = f == num_frags - 1;
             let seq = self.tracks[index].seq.next();
-            let rtp_hdr = rtp_header(pt, is_last, seq, timestamp, self.ssrc);
+            let marker = is_last || (talkspurt && f == 0);
+            let rtp_hdr = rtp_header(pt, marker, seq, timestamp, self.ssrc);
             let frag = &au[start..end];
             let mut buf = bytes::BytesMut::with_capacity(
                 rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN + frag.len(),
@@ -592,7 +617,15 @@ impl Stage for RtpPacketiserStage {
         let (track, sample) = match input {
             MuxInput::Track(spec) => return self.announce(*spec),
             MuxInput::Sample { track, sample } => (track, sample),
-            MuxInput::Discontinuity { .. } | MuxInput::Flush => return Ok(()),
+            MuxInput::Discontinuity { track } => {
+                for state in &mut self.tracks {
+                    if track.is_none_or(|broken| state.spec.track_id == broken) {
+                        state.mark_talkspurt = true;
+                    }
+                }
+                return Ok(());
+            }
+            MuxInput::Flush => return Ok(()),
             MuxInput::TrackRemoved { .. } => {
                 return Err(Error::UnsupportedFeature(
                     "rtp: a track removed mid-stream is not re-signalled in SDP",

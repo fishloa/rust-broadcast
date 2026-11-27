@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use media_plane::trunk::{SampleCursorItem, Trunk, TrunkConfig};
+use media_plane::trunk::{Trunk, TrunkConfig};
 use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
@@ -27,6 +27,8 @@ use test_harness::big_media::{BigFmp4Options, BigMp4Options, write_big_fmp4, wri
 mod http;
 #[path = "support/listener.rs"]
 mod listener;
+#[path = "support/trunk_drain.rs"]
+pub mod trunk_drain;
 
 #[global_allocator]
 static A: test_alloc::ProcessPeak = test_alloc::ProcessPeak::new();
@@ -95,36 +97,15 @@ async fn play(path: &Path, max_loops: Option<u32>) -> Playout {
     A.reset();
     let baseline = A.live();
     let handle = tokio::spawn(FileReader::new(config).run());
-    let mut delivered = 0u64;
-    let mut missed = 0u64;
-    let mut finished = false;
-    loop {
-        while let Some(item) = cursor.poll() {
-            match item {
-                SampleCursorItem::Timed { .. } => delivered += 1,
-                // A live trunk never backpressures its writer, so an unpaced
-                // reader may lawfully outrun this cursor: the ring tells the
-                // cursor what it evicted, and the caller accounts for it.
-                SampleCursorItem::Lagged { skipped } => missed += skipped,
-                _ => {}
-            }
-        }
-        if finished {
-            break;
-        }
-        finished = handle.is_finished();
-        if !finished {
-            tokio::task::yield_now().await;
-        }
-    }
+    let drained = trunk_drain::drain(&mut cursor, || handle.is_finished(), |_, _| {}).await;
     handle
         .await
         .expect("the reader task must not panic")
         .expect("the generated MP4 must play cleanly");
     Playout {
         peak: A.peak().saturating_sub(baseline),
-        delivered,
-        missed,
+        delivered: drained.delivered(),
+        missed: drained.missed(),
     }
 }
 
@@ -157,39 +138,24 @@ async fn collect(path: &Path, max_loops: Option<u32>) -> Vec<Digest> {
         .with_max_loops(max_loops);
     let handle = tokio::spawn(FileReader::new(config).run());
     let mut out = Vec::new();
-    let mut finished = false;
-    loop {
-        while let Some(item) = cursor.poll() {
-            match item {
-                SampleCursorItem::Timed {
-                    track_id, sample, ..
-                } => {
-                    if let Some(timing) = sample.timing {
-                        out.push((
-                            track_id.value(),
-                            timing.pts().unwrap_or(0),
-                            timing.dts().unwrap_or(0),
-                            timing.duration(),
-                            sample.flags.is_sync,
-                            sample.data.to_vec(),
-                        ));
-                    }
-                }
-                SampleCursorItem::Lagged { skipped } => panic!(
-                    "the digest playout must see every sample, but the {COLLECT_RING}-sample ring \
-                     evicted {skipped} of them"
-                ),
-                _ => {}
+    let drained = trunk_drain::drain(
+        &mut cursor,
+        || handle.is_finished(),
+        |track_id, sample| {
+            if let Some(timing) = sample.timing {
+                out.push((
+                    track_id.value(),
+                    timing.pts().unwrap_or(0),
+                    timing.dts().unwrap_or(0),
+                    timing.duration(),
+                    sample.flags.is_sync,
+                    sample.data.to_vec(),
+                ));
             }
-        }
-        if finished {
-            break;
-        }
-        finished = handle.is_finished();
-        if !finished {
-            tokio::task::yield_now().await;
-        }
-    }
+        },
+    )
+    .await;
+    drained.assert_lossless("the digest playout");
     handle
         .await
         .expect("the reader task must not panic")

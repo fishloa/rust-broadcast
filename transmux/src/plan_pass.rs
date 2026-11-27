@@ -23,6 +23,17 @@
 //! the two halves of the track meet on the shared timeline. No demuxer in this
 //! workspace produces one.
 //!
+//! A [`MuxInput::Discontinuity`] needs no out-of-band marker in a progressive
+//! file: `stts` states a decode time only as the sum of the preceding samples'
+//! durations (§8.6.1.1), so a break that moves a track's time backwards is
+//! expressed by rebasing its positions onto the continuing timeline
+//! (`BreakRebase`) — the first post-break sample continues from the last
+//! planned one's end and every later sample keeps its spacing. A forward jump
+//! needs no rebase: its distance is written as the preceding sample's duration,
+//! so the jump is stated as given. A backward step inside one track that no
+//! signalled break named is continued the same way: `stts` has no way to state
+//! it, and truncating the track to the first source is worse than continuing.
+//!
 //! Spec: ISO/IEC 14496-12:2026 §8.5-§8.7
 //! (`private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`).
 
@@ -36,6 +47,7 @@ use crate::error::{Error, Result};
 use crate::ir::{Sample, TrackId, TrackSpec};
 use crate::media::TimelineOrigin;
 use crate::mux_stage::MuxInput;
+use crate::rebase::BreakRebase;
 use isobmff::plan::{DEFAULT_DESCRIPTION_INDEX, OwnedPlan, PlanBuilder, PlanSample};
 use isobmff::timing::EditListEntry;
 use isobmff::{Limits, TrackId as IsoTrackId};
@@ -76,6 +88,18 @@ struct TrackState {
     first_dts: i64,
     /// The running relative position of an untimed track's next sample.
     position: i64,
+    /// The end of the track's last planned sample (its position plus its
+    /// duration, in the track's media timescale) — the point a post-break
+    /// sample continues from.
+    last_end: Option<i64>,
+    /// The offset this track's sample positions carry after a break that moved
+    /// time backwards, so the `stts` timeline continues instead of stepping
+    /// back.
+    rebase: BreakRebase,
+    /// A break named this track and its first sample after it is still to
+    /// come: that sample fixes [`Self::rebase`] when the break moved time
+    /// backwards (a forward jump is written as given).
+    awaiting_break: bool,
     prev: Option<PendingSample>,
     /// Σ `stts` deltas, in the track's media timescale.
     media_duration: u64,
@@ -149,6 +173,9 @@ impl PlanPass {
                 kind: None,
                 first_dts: 0,
                 position: 0,
+                last_end: None,
+                rebase: BreakRebase::NONE,
+                awaiting_break: false,
                 prev: None,
                 media_duration: 0,
                 pres_start: 0,
@@ -185,6 +212,17 @@ impl PlanPass {
         let sync = sample.flags.is_sync;
 
         let track_id = IsoTrackId::new(track.value());
+        if let Some(state) = self.tracks.get_mut(index)
+            && state.awaiting_break
+        {
+            state.awaiting_break = false;
+            if let (Some(last_end), Some(raw)) = (state.last_end, dts) {
+                // A break that moves time backwards continues the `stts`
+                // timeline; a forward jump is written as given. A stray
+                // residual step is caught by the per-sample check below.
+                state.rebase = BreakRebase::backwards(last_end, raw);
+            }
+        }
         let state = self
             .tracks
             .get_mut(index)
@@ -210,15 +248,25 @@ impl PlanPass {
                 "progressive: a track's samples must be all timed or all untimed",
             ));
         }
-        let position = match kind {
-            SampleKind::Timed => dts.ok_or(Error::UnsupportedFeature(
-                "progressive: a timed track lost its decode time",
-            ))?,
+        // A `Timed` track's every sample carries a `dts` (checked above).
+        let raw = dts.unwrap_or(0);
+        let mut position = match kind {
+            SampleKind::Timed => state.rebase.apply(raw),
             SampleKind::Untimed => state.position,
         };
         if kind == SampleKind::Untimed {
             state.position = position.saturating_add(i64::from(duration));
+        } else if let Some(prev) = state.prev
+            && position < prev.position
+        {
+            // `stts` cannot step back, and a live source can switch origin
+            // without a signalled break reaching every track: continue this
+            // track from the last sample's end rather than truncating it.
+            let target = prev.position.saturating_add(i64::from(prev.duration));
+            state.rebase = BreakRebase::continue_from(target, raw);
+            position = target;
         }
+        state.last_end = Some(position.saturating_add(i64::from(duration)));
         let presentation = position.saturating_add(i64::from(composition_offset));
         let presentation_end = presentation.saturating_add(i64::from(duration));
         if !state.has_presentation {
@@ -332,9 +380,14 @@ impl Stage for PlanPass {
         match input {
             MuxInput::Track(spec) => self.announce(*spec),
             MuxInput::Sample { track, sample } => self.push_sample(track, &sample),
-            MuxInput::Discontinuity { .. } => Err(Error::UnsupportedFeature(
-                "progressive: a single-file MP4 cannot signal a discontinuity",
-            )),
+            MuxInput::Discontinuity { track } => {
+                for state in &mut self.tracks {
+                    if track.is_none_or(|broken| state.spec.track_id == broken) {
+                        state.awaiting_break = true;
+                    }
+                }
+                Ok(())
+            }
             MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
                 "progressive: the plan names every track the file header describes",
             )),

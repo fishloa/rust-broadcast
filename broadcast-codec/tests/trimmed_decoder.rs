@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use broadcast_codec::{
     AudioFrame, AudioParameters, AudioSamples, ChannelLayout, CodecDescriptor, CodecError, CodecId,
-    CodecParameters, CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, Packet,
-    ProviderInfo, Registry, SampleLayout, Timescale,
+    CodecParameters, CodecProvider, Decoder, DecoderDelay, DecoderTrim, Direction, Encoder,
+    EncoderConfig, Frame, Packet, ProviderInfo, Registry, SampleLayout, Timescale,
 };
 
 const RATE: u32 = 48_000;
@@ -31,7 +31,7 @@ fn parameters(initial: u32, trailing: Option<u32>) -> CodecParameters {
 }
 
 struct FakeProvider {
-    trims: bool,
+    trim: DecoderTrim,
     made: Arc<AtomicUsize>,
 }
 
@@ -47,7 +47,7 @@ impl CodecProvider for FakeProvider {
     fn descriptors(&self) -> Vec<CodecDescriptor> {
         vec![
             CodecDescriptor::new("fake", "pcm", CodecId::Pcm, Direction::Decode)
-                .with_trims(self.trims),
+                .with_trim(self.trim),
         ]
     }
 
@@ -60,6 +60,7 @@ impl CodecProvider for FakeProvider {
         Ok(Box::new(FakeDecoder {
             parameters: parameters.clone(),
             ready: VecDeque::new(),
+            next_pts: 0,
         }))
     }
 
@@ -75,6 +76,7 @@ impl CodecProvider for FakeProvider {
 struct FakeDecoder {
     parameters: CodecParameters,
     ready: VecDeque<Frame>,
+    next_pts: i64,
 }
 
 impl Decoder for FakeDecoder {
@@ -83,6 +85,8 @@ impl Decoder for FakeDecoder {
     }
 
     fn send(&mut self, packet: Packet<'_>) -> Result<(), CodecError> {
+        let pts = self.next_pts;
+        self.next_pts = self.next_pts.saturating_add(4);
         let frame = AudioFrame::new(
             rate(),
             ChannelLayout::Mono,
@@ -90,6 +94,7 @@ impl Decoder for FakeDecoder {
             AudioSamples::S16(vec![1, 2, 3, 4]),
         )
         .ok_or(CodecError::failed("fake sample count"))?
+        .with_pts(pts)
         .with_trim_start(packet.trim_start())
         .with_trim_end(packet.trim_end());
         self.ready.push_back(Frame::Audio(frame));
@@ -106,6 +111,7 @@ impl Decoder for FakeDecoder {
 
     fn reset(&mut self) {
         self.ready.clear();
+        self.next_pts = 0;
     }
 
     fn reconfigure(&mut self, parameters: CodecParameters) -> Result<(), CodecError> {
@@ -115,12 +121,16 @@ impl Decoder for FakeDecoder {
         self.parameters = parameters;
         Ok(())
     }
+
+    fn output_delay(&self) -> Option<u32> {
+        Some(2)
+    }
 }
 
-fn registry(trims: bool) -> (Registry, Arc<AtomicUsize>) {
+fn registry(trim: DecoderTrim) -> (Registry, Arc<AtomicUsize>) {
     let made = Arc::new(AtomicUsize::new(0));
     let provider = FakeProvider {
-        trims,
+        trim,
         made: Arc::clone(&made),
     };
     let registry = Registry::new()
@@ -148,7 +158,7 @@ fn audio(frame: &Frame) -> &AudioFrame {
 
 #[test]
 fn a_non_trimming_decoder_is_wrapped() {
-    let (registry, made) = registry(false);
+    let (registry, made) = registry(unknown());
     let parameters = parameters(0, None);
     let mut decoder = registry.trimmed_decoder(&parameters).expect("a decoder");
     decoder
@@ -162,7 +172,7 @@ fn a_non_trimming_decoder_is_wrapped() {
 
 #[test]
 fn a_trimming_decoder_passes_through_untouched() {
-    let (registry, made) = registry(true);
+    let (registry, made) = registry(DecoderTrim::Implementation);
     let parameters = parameters(0, None);
     let mut decoder = registry.trimmed_decoder(&parameters).expect("a decoder");
     decoder
@@ -176,7 +186,7 @@ fn a_trimming_decoder_passes_through_untouched() {
 
 #[test]
 fn decoder_alone_stays_untrimmed() {
-    let (registry, _) = registry(false);
+    let (registry, _) = registry(unknown());
     let parameters = parameters(0, None);
     let mut decoder = registry.decoder(&parameters).expect("a decoder");
     decoder
@@ -189,7 +199,7 @@ fn decoder_alone_stays_untrimmed() {
 
 #[test]
 fn the_wrapper_forwards_reconfiguration_and_applies_the_new_padding() {
-    let (registry, _) = registry(false);
+    let (registry, _) = registry(unknown());
     let source = parameters(0, None);
     let mut decoder = registry.trimmed_decoder(&source).expect("a decoder");
     decoder
@@ -207,7 +217,7 @@ fn the_wrapper_forwards_reconfiguration_and_applies_the_new_padding() {
 
 #[test]
 fn the_wrapper_applies_both_paddings() {
-    let (registry, _) = registry(false);
+    let (registry, _) = registry(unknown());
     let parameters = parameters(1, Some(1));
     let mut decoder = registry.trimmed_decoder(&parameters).expect("a decoder");
     let mut decoded = Vec::new();
@@ -226,7 +236,7 @@ fn the_wrapper_applies_both_paddings() {
 
 #[test]
 fn reset_drops_the_held_tail_and_restarts() {
-    let (registry, _) = registry(false);
+    let (registry, _) = registry(unknown());
     let parameters = parameters(0, Some(2));
     let mut decoder = registry.trimmed_decoder(&parameters).expect("a decoder");
     decoder.send(Packet::borrowed(&[])).expect("send");
@@ -239,10 +249,80 @@ fn reset_drops_the_held_tail_and_restarts() {
 }
 
 #[test]
-fn a_descriptor_states_whether_it_trims() {
+fn a_descriptor_states_who_trims_and_its_delay() {
     let descriptor = CodecDescriptor::new("fake", "pcm", CodecId::Pcm, Direction::Decode);
-    assert!(!descriptor.applies_trim());
-    assert!(descriptor.with_trims(true).applies_trim());
+    assert_eq!(
+        descriptor.trim(),
+        DecoderTrim::Caller(DecoderDelay::Unknown),
+        "the default states neither a delay nor a trim"
+    );
+    assert_eq!(
+        descriptor
+            .with_trim(DecoderTrim::Caller(DecoderDelay::Declared(529)))
+            .trim(),
+        DecoderTrim::Caller(DecoderDelay::Declared(529))
+    );
+    assert!(
+        CodecDescriptor::new("fake", "pcm", CodecId::Pcm, Direction::Decode)
+            .with_trim(DecoderTrim::Implementation)
+            .trim()
+            .applies_trim()
+    );
+}
+
+/// A descriptor that states neither a delay nor a trim.
+fn unknown() -> DecoderTrim {
+    DecoderTrim::Caller(DecoderDelay::Unknown)
+}
+
+fn declared(samples: u32) -> DecoderTrim {
+    DecoderTrim::Caller(DecoderDelay::Declared(samples))
+}
+
+#[test]
+fn a_declared_delay_is_discarded_before_the_container_padding_and_shortens_the_tail() {
+    let (registry, _) = registry(declared(2));
+    let parameters = parameters(1, Some(3));
+    let mut decoder = registry.trimmed_decoder(&parameters).expect("a decoder");
+    let mut decoded = Vec::new();
+    for _ in 0..2 {
+        decoder.send(Packet::borrowed(&[])).expect("send");
+        while let Some(frame) = decoder.receive().expect("receive") {
+            decoded.extend(samples(&frame));
+        }
+    }
+    decoder.finish().expect("finish");
+    assert_eq!(
+        decoded,
+        [4, 1, 2, 3],
+        "three samples go at the front (one container plus a two-sample delay) and the tail shrinks from three to one"
+    );
+}
+
+#[test]
+fn a_per_stream_delay_comes_from_the_decoder_instance() {
+    let (registry, _) = registry(DecoderTrim::Caller(DecoderDelay::PerStream));
+    let parameters = parameters(0, None);
+    let mut decoder = registry.trimmed_decoder(&parameters).expect("a decoder");
+    assert_eq!(
+        decoder.output_delay(),
+        Some(2),
+        "the wrapper reports the instance's delay"
+    );
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    let frame = decoder.receive().expect("receive").expect("a frame");
+    assert_eq!(samples(&frame), [3, 4]);
+}
+
+#[test]
+fn an_unknown_delay_applies_the_container_values_alone() {
+    let (registry, _) = registry(unknown());
+    let parameters = parameters(1, Some(1));
+    let mut decoder = registry.trimmed_decoder(&parameters).expect("a decoder");
+    assert_eq!(decoder.output_delay(), None);
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    let frame = decoder.receive().expect("receive").expect("a frame");
+    assert_eq!(samples(&frame), [2, 3]);
 }
 
 #[test]
@@ -269,4 +349,87 @@ fn packet_and_frame_trim_default_to_zero_and_keep_their_values() {
     let frame = frame.with_trim_start(2).with_trim_end(3);
     assert_eq!(frame.trim_start(), 2);
     assert_eq!(frame.trim_end(), 3);
+}
+
+fn pre_roll(samples: u32) -> CodecParameters {
+    parameters(0, None).with_pre_roll(samples)
+}
+
+#[test]
+fn pre_roll_is_not_discarded_at_the_start_of_a_stream() {
+    let (registry, _) = registry(unknown());
+    let mut decoder = registry.trimmed_decoder(&pre_roll(4)).expect("a decoder");
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    let frame = decoder.receive().expect("receive").expect("a frame");
+    assert_eq!(samples(&frame), [1, 2, 3, 4]);
+}
+
+#[test]
+fn pre_roll_drops_the_settling_output_after_a_discontinuity() {
+    let (registry, _) = registry(unknown());
+    let mut decoder = registry.trimmed_decoder(&pre_roll(4)).expect("a decoder");
+    decoder.discontinuity();
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    assert!(
+        decoder.receive().expect("receive").is_none(),
+        "the first pre-roll frame is not for output"
+    );
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    let frame = decoder.receive().expect("receive").expect("a frame");
+    assert_eq!(samples(&frame), [1, 2, 3, 4]);
+    assert_eq!(
+        audio(&frame).pts(),
+        Some(4),
+        "the first sample after the pre-roll keeps the stream's timeline"
+    );
+}
+
+#[test]
+fn pre_roll_is_rearmed_by_reset_and_reconfigure() {
+    let (registry, _) = registry(unknown());
+    let mut decoder = registry.trimmed_decoder(&pre_roll(4)).expect("a decoder");
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    assert!(decoder.receive().expect("receive").is_some());
+    decoder.reset();
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    assert!(
+        decoder.receive().expect("receive").is_none(),
+        "reset starts a cold decoder"
+    );
+    decoder.reconfigure(pre_roll(4)).expect("reconfigure");
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    assert!(
+        decoder.receive().expect("receive").is_none(),
+        "a reconfiguration starts a cold decoder"
+    );
+}
+
+#[test]
+fn a_partial_pre_roll_frame_keeps_only_the_samples_past_the_requirement() {
+    let (registry, _) = registry(unknown());
+    let mut decoder = registry.trimmed_decoder(&pre_roll(2)).expect("a decoder");
+    decoder.discontinuity();
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    let frame = decoder.receive().expect("receive").expect("a frame");
+    assert_eq!(samples(&frame), [3, 4]);
+    assert_eq!(audio(&frame).pts(), Some(2));
+}
+
+#[test]
+fn pre_roll_dropping_leaves_no_gap_in_the_timeline() {
+    let (registry, _) = registry(unknown());
+    let mut decoder = registry.trimmed_decoder(&pre_roll(8)).expect("a decoder");
+    decoder.discontinuity();
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    assert!(decoder.receive().expect("receive").is_none());
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    assert!(decoder.receive().expect("receive").is_none());
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    let frame = decoder.receive().expect("receive").expect("a frame");
+    assert_eq!(samples(&frame), [1, 2, 3, 4]);
+    assert_eq!(
+        audio(&frame).pts(),
+        Some(8),
+        "frames cover samples 0..4, 4..8 and 8..12 with no gap"
+    );
 }

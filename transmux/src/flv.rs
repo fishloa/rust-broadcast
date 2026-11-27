@@ -39,6 +39,18 @@
 //! - **Script data** (§E.4.1, `TagType == 18`): `onMetaData`; informational,
 //!   parsed leniently (skipped) on demux and emitted minimally on mux.
 //!
+//! # Timeline discontinuity
+//!
+//! FLV has one monotonic millisecond `Timestamp` per tag (§E.4.1) and no
+//! discontinuity marker. [`MuxInput::Discontinuity`] is therefore expressed by
+//! rebasing: the tags already held are written at their own times, and the
+//! first tag after the break continues from the last written timestamp plus
+//! the triggering track's last duration, with every later tag keeping its
+//! spacing from it. This is a lossless-for-playback mapping (nothing is
+//! dropped or reordered), and the track set is fixed for the stage's life, so
+//! no sequence header is re-sent
+//! (`private/specs-verified/mpeg/transmux/codec/flv.md` §E.4.1).
+//!
 //! `no_std` + `alloc`.
 
 use crate::TrackId;
@@ -52,7 +64,7 @@ use broadcast_core::error::BufferTooShort;
 #[cfg(test)]
 use broadcast_core::len::need_in;
 use rtmp_runtime::RtmpError;
-use rtmp_runtime::amf0::{Amf0Value, amf0_values};
+use rtmp_runtime::amf0::{Amf0Value, amf0_parse_values, amf0_values};
 use rtmp_runtime::flv::FlvHeader;
 use rtmp_runtime::flv::FlvTag as RtmpFlvTag;
 use rtmp_runtime::flv::TagType;
@@ -64,6 +76,7 @@ use broadcast_core::timescale::{Rounding, Timescale, rescale_i64};
 use crate::error::{Error, Result};
 use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use crate::rebase::BreakRebase;
 use broadcast_bitstream::aac_asc::AudioSpecificConfig;
 use isobmff::avc_config::AVCConfigurationBox;
 use isobmff::mp4esds::{
@@ -764,12 +777,24 @@ pub struct FlvMuxStage {
     out: VecDeque<MuxOutput>,
     started: bool,
     meta_patch: Option<u64>,
+    /// An `onMetaData` body written verbatim instead of the generated one,
+    /// so a remux keeps the source file's script tag byte for byte.
+    metadata_body: Option<Vec<u8>>,
 }
 
 impl FlvMuxStage {
     /// Create a new FLV muxer stage.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Write `body` as the `onMetaData` script tag instead of the body this
+    /// crate generates, so a remux of a file whose tag it read through
+    /// [`parse_on_metadata`] keeps that tag byte for byte.
+    #[must_use]
+    pub fn with_metadata_body(mut self, body: Vec<u8>) -> Self {
+        self.metadata_body = Some(body);
+        self
     }
 
     /// Write the FLV header, `onMetaData` and the sequence-header tags, once.
@@ -786,15 +811,23 @@ impl FlvMuxStage {
             .map_err(|e| Error::FieldOverflow(field_overflow(e)))?;
         let header_len = header.len();
         self.out.push_back(MuxOutput::Bytes(header.into()));
-        let tags = self
+        let mut tags = self
             .stream
             .opening_tags(Some(META_DURATION_PLACEHOLDER_SECONDS))?;
+        if let Some(body) = self.metadata_body.take() {
+            for tag in &mut tags {
+                if tag.tag_type == TagType::Script {
+                    tag.body = body.clone();
+                }
+            }
+        } else {
+            self.meta_patch = Some(u64::try_from(header_len + TAG_HEADER_LEN).unwrap_or(u64::MAX));
+        }
         for tag in &tags {
             let mut buf = Vec::new();
             tag.write_into(&mut buf)?;
             self.out.push_back(MuxOutput::Bytes(buf.into()));
         }
-        self.meta_patch = Some(u64::try_from(header_len + TAG_HEADER_LEN).unwrap_or(u64::MAX));
         self.started = true;
         Ok(())
     }
@@ -828,7 +861,10 @@ impl Stage for FlvMuxStage {
                 let tags = self.stream.push(track, sample)?;
                 self.push_tags(tags)
             }
-            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Discontinuity { .. } => {
+                let tags = self.stream.discontinuity()?;
+                self.push_tags(tags)
+            }
             MuxInput::Flush => {
                 let tags = self.stream.flush()?;
                 self.push_tags(tags)
@@ -870,6 +906,19 @@ pub(crate) struct FlvTagStream {
     tracks: Vec<FlvTrack>,
     pending: Vec<Option<Sample>>,
     durations: Vec<u64>,
+    /// The last emitted frame tag's timestamp, if any.
+    last_written_ms: Option<u32>,
+    /// The last sample's duration per track, in FLV milliseconds.
+    last_duration_ms: Vec<u32>,
+    /// FLV has one non-decreasing millisecond timeline and no discontinuity
+    /// marker, so a break is expressed by rebasing: this offset is added to
+    /// every later sample's timestamp so the first tag after the break
+    /// continues from [`Self::last_written_ms`] plus the triggering track's
+    /// last duration ([`BreakRebase::continue_from`]).
+    rebase: BreakRebase,
+    /// A break is waiting for the first sample after it (that sample computes
+    /// the new offset).
+    pending_discontinuity: bool,
 }
 
 impl FlvTagStream {
@@ -886,6 +935,7 @@ impl FlvTagStream {
         self.tracks.push(FlvTrack { spec, kind });
         self.pending.push(None);
         self.durations.push(0);
+        self.last_duration_ms.push(0);
         Ok(())
     }
 
@@ -949,6 +999,11 @@ impl FlvTagStream {
         if sample.timing.and_then(|t| t.dts()).is_none() {
             return Ok(Vec::new());
         }
+        let duration_ticks = i64::try_from(ticks).unwrap_or(i64::MAX);
+        self.last_duration_ms[index] =
+            u32::try_from(ticks_to_ms(duration_ticks, self.tracks[index].spec.timescale)?.max(0))
+                .unwrap_or(u32::MAX);
+        self.rebase_if_pending(index, &sample)?;
         // One pending sample per track orders the interleave; a second sample
         // of the same track before the others catch up (a backward timestamp
         // step, or one track simply running ahead) must not overwrite the
@@ -959,7 +1014,49 @@ impl FlvTagStream {
         }
         self.pending[index] = Some(sample);
         tags.extend(self.take_ready()?);
+        self.note_written(&tags);
         Ok(tags)
+    }
+
+    /// Express a timeline break on the one non-decreasing FLV millisecond
+    /// timeline: emit what is already held (it belongs before the break), then
+    /// rebase the first tag after it so it continues from the last written
+    /// timestamp plus the triggering track's last duration.
+    pub(crate) fn discontinuity(&mut self) -> core::result::Result<Vec<OutTag>, FlvError> {
+        let tags = self.flush()?;
+        self.pending_discontinuity = true;
+        Ok(tags)
+    }
+
+    /// Compute the new [`Self::rebase_ms`] for the first sample after a break.
+    fn rebase_if_pending(
+        &mut self,
+        index: usize,
+        sample: &Sample,
+    ) -> core::result::Result<(), FlvError> {
+        if !core::mem::take(&mut self.pending_discontinuity) {
+            return Ok(());
+        }
+        let Some(last) = self.last_written_ms else {
+            return Ok(());
+        };
+        let Some(dts) = sample.timing.and_then(|t| t.dts()) else {
+            return Ok(());
+        };
+        let natural = ticks_to_ms(dts, self.tracks[index].spec.timescale)?;
+        let target = i64::from(last).saturating_add(i64::from(self.last_duration_ms[index]));
+        self.rebase = BreakRebase::continue_from(target, natural);
+        Ok(())
+    }
+
+    /// Record the newest timestamp written to the stream.
+    fn note_written(&mut self, tags: &[OutTag]) {
+        if let Some(last) = tags.last() {
+            self.last_written_ms = Some(
+                self.last_written_ms
+                    .map_or(last.timestamp, |previous| previous.max(last.timestamp)),
+            );
+        }
     }
 
     /// Emit the earliest pending sample once every announced track holds one.
@@ -993,6 +1090,7 @@ impl FlvTagStream {
         for (_, index, sample) in held {
             tags.push(self.frame_tag(index, &sample)?);
         }
+        self.note_written(&tags);
         Ok(tags)
     }
 
@@ -1023,7 +1121,15 @@ impl FlvTagStream {
         let Some(dts) = sample.timing.and_then(|t| t.dts()) else {
             return Ok(None);
         };
-        clamped_ms(dts, self.tracks[index].spec.timescale).map(Some)
+        let ms = self
+            .rebase
+            .apply(ticks_to_ms(dts, self.tracks[index].spec.timescale)?)
+            .max(0);
+        u32::try_from(ms).map(Some).map_err(|_| {
+            FlvError::Codec(Error::InvalidInput(
+                "FLV tag timestamp does not fit the 32-bit millisecond clock",
+            ))
+        })
     }
 
     /// One sample's frame tag: a `VIDEODATA` (§E.4.3) or `AUDIODATA` (§E.4.2)
@@ -1401,6 +1507,26 @@ const META_VIDEOCODECID_AVC: f64 = 7.0;
 const META_AUDIOCODECID_AAC: f64 = 10.0;
 /// The handler name an `onMetaData` script body starts with (§E.4.1).
 const META_HANDLER_NAME: &str = "onMetaData";
+/// The `duration` property name.
+const META_DURATION: &str = "duration";
+/// The `width` property name.
+const META_WIDTH: &str = "width";
+/// The `height` property name.
+const META_HEIGHT: &str = "height";
+/// The `framerate` property name.
+const META_FRAME_RATE: &str = "framerate";
+/// The `videocodecid` property name.
+const META_VIDEO_CODEC_ID: &str = "videocodecid";
+/// The `audiosamplerate` property name.
+const META_AUDIO_SAMPLE_RATE: &str = "audiosamplerate";
+/// The `audiosamplesize` property name.
+const META_AUDIO_SAMPLE_SIZE: &str = "audiosamplesize";
+/// The `stereo` property name.
+const META_STEREO: &str = "stereo";
+/// The `audiocodecid` property name.
+const META_AUDIO_CODEC_ID: &str = "audiocodecid";
+/// The `filesize` property name.
+const META_FILE_SIZE: &str = "filesize";
 /// The AAC channel count `onMetaData`'s `stereo` flag stands for (§E.5: the
 /// same two-channel answer the FLV `SoundType` bit gives).
 const AAC_CHANNELS_STEREO: u32 = 2;
@@ -1507,6 +1633,222 @@ fn onmetadata_properties(
         ));
     }
     props
+}
+
+/// The handler name RTMP publishers put before `onMetaData` (Adobe FLV v10.1
+/// §E.4.1; the FLV file form starts with `onMetaData` directly).
+const META_HANDLER_SET_DATA_FRAME: &str = "@setDataFrame";
+
+/// The informational properties an `onMetaData` script tag states, typed.
+///
+/// Adobe FLV v10.1 §E.4.1 defines the script-data tag and the `onMetaData`
+/// handler but not the property list
+/// (`private/specs-verified/mpeg/transmux/codec/flv.md` §E.4.1). The
+/// property names are the de-facto set FFmpeg's `libavformat/flvdec.c` and
+/// ExifTool's Flash tag table agree on (`duration`, `width`, `height`, `framerate`,
+/// `videocodecid`, `audiosamplerate`, `audiosamplesize`, `stereo`,
+/// `audiocodecid`, `filesize`, `encoder`); a property the writer stated that
+/// this crate does not name stays in [`properties`](Self::properties) as the
+/// AMF0 value the file carried.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct OnMetadata {
+    body: Vec<u8>,
+    properties: Vec<(String, Amf0Value)>,
+    duration: Option<f64>,
+    width: Option<u16>,
+    height: Option<u16>,
+    frame_rate: Option<f64>,
+    video_codec_id: Option<f64>,
+    audio_sample_rate: Option<u32>,
+    audio_sample_size: Option<u16>,
+    stereo: Option<bool>,
+    audio_codec_id: Option<f64>,
+    file_size: Option<u64>,
+    encoder: Option<String>,
+}
+
+impl OnMetadata {
+    /// The whole-stream duration in seconds, when the writer stated it.
+    #[must_use]
+    pub const fn duration(&self) -> Option<f64> {
+        self.duration
+    }
+
+    /// The coded picture width in pixels.
+    #[must_use]
+    pub const fn width(&self) -> Option<u16> {
+        self.width
+    }
+
+    /// The coded picture height in pixels.
+    #[must_use]
+    pub const fn height(&self) -> Option<u16> {
+        self.height
+    }
+
+    /// The frame rate in frames per second.
+    #[must_use]
+    pub const fn frame_rate(&self) -> Option<f64> {
+        self.frame_rate
+    }
+
+    /// The `videocodecid` the writer stated.
+    #[must_use]
+    pub const fn video_codec_id(&self) -> Option<f64> {
+        self.video_codec_id
+    }
+
+    /// The audio sample rate in Hz.
+    #[must_use]
+    pub const fn audio_sample_rate(&self) -> Option<u32> {
+        self.audio_sample_rate
+    }
+
+    /// The audio sample size in bits.
+    #[must_use]
+    pub const fn audio_sample_size(&self) -> Option<u16> {
+        self.audio_sample_size
+    }
+
+    /// Whether the writer stated a two-channel stream.
+    #[must_use]
+    pub const fn stereo(&self) -> Option<bool> {
+        self.stereo
+    }
+
+    /// The `audiocodecid` the writer stated.
+    #[must_use]
+    pub const fn audio_codec_id(&self) -> Option<f64> {
+        self.audio_codec_id
+    }
+
+    /// The file size the writer stated, in bytes.
+    #[must_use]
+    pub const fn file_size(&self) -> Option<u64> {
+        self.file_size
+    }
+
+    /// The encoding application's name.
+    #[must_use]
+    pub fn encoder(&self) -> Option<&str> {
+        self.encoder.as_deref()
+    }
+
+    /// The script-data body exactly as the file carried it, so a remux can
+    /// write the same bytes back rather than re-encoding the properties.
+    #[must_use]
+    pub fn raw_body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Every property the script tag carried, in the order it carried them.
+    #[must_use]
+    pub fn properties(&self) -> &[(String, Amf0Value)] {
+        &self.properties
+    }
+
+    /// One property by name, as the file carried it.
+    #[must_use]
+    pub fn property(&self, name: &str) -> Option<&Amf0Value> {
+        self.properties
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value)
+    }
+}
+
+impl OnMetadata {
+    /// Read the typed view out of a property list.
+    fn from_properties(body: &[u8], properties: Vec<(String, Amf0Value)>) -> Self {
+        let number = |name: &str| match find_property(&properties, name) {
+            Some(Amf0Value::Number(value)) => Some(*value),
+            _ => None,
+        };
+        let whole16 = |name: &str| {
+            number(name)
+                .and_then(whole_number)
+                .and_then(|n| u16::try_from(n).ok())
+        };
+        let whole32 = |name: &str| {
+            number(name)
+                .and_then(whole_number)
+                .and_then(|n| u32::try_from(n).ok())
+        };
+        let whole64 = |name: &str| number(name).and_then(whole_number);
+        let encoder = match find_property(&properties, "encoder") {
+            Some(Amf0Value::String(encoder) | Amf0Value::LongString(encoder)) => {
+                Some(encoder.clone())
+            }
+            _ => None,
+        };
+        Self {
+            body: body.to_vec(),
+            duration: number(META_DURATION),
+            width: whole16(META_WIDTH),
+            height: whole16(META_HEIGHT),
+            frame_rate: number(META_FRAME_RATE),
+            video_codec_id: number(META_VIDEO_CODEC_ID),
+            audio_sample_rate: whole32(META_AUDIO_SAMPLE_RATE),
+            audio_sample_size: whole16(META_AUDIO_SAMPLE_SIZE),
+            stereo: match find_property(&properties, META_STEREO) {
+                Some(Amf0Value::Boolean(stereo)) => Some(*stereo),
+                _ => None,
+            },
+            audio_codec_id: number(META_AUDIO_CODEC_ID),
+            file_size: whole64(META_FILE_SIZE),
+            encoder,
+            properties,
+        }
+    }
+}
+
+/// A property's value by name.
+fn find_property<'a>(properties: &'a [(String, Amf0Value)], name: &str) -> Option<&'a Amf0Value> {
+    properties
+        .iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value)
+}
+
+/// A finite, non-negative number with no fractional part, as an integer.
+fn whole_number(value: f64) -> Option<u64> {
+    if !value.is_finite() || value < 0.0 || value.trunc() != value {
+        return None;
+    }
+    if value > u64::MAX as f64 {
+        return None;
+    }
+    Some(value as u64)
+}
+
+/// Read an `onMetaData` script-data body (Adobe FLV v10.1 §E.4.1, AMF0 §2).
+///
+/// The body is the handler name followed by one property object or ECMA
+/// array; an RTMP `@setDataFrame` wrapper is accepted. Anything else, or a
+/// body that does not parse as AMF0, is not interpretation: `None`.
+#[must_use]
+pub fn parse_on_metadata(body: &[u8]) -> Option<OnMetadata> {
+    let values = amf0_parse_values(body).ok()?;
+    let mut values = values.into_iter();
+    let mut handler = match values.next()? {
+        Amf0Value::String(handler) => handler,
+        _ => return None,
+    };
+    if handler == META_HANDLER_SET_DATA_FRAME {
+        handler = match values.next()? {
+            Amf0Value::String(handler) => handler,
+            _ => return None,
+        };
+    }
+    if handler != META_HANDLER_NAME {
+        return None;
+    }
+    let properties = match values.next()? {
+        Amf0Value::EcmaArray(properties) | Amf0Value::Object(properties) => properties,
+        _ => return None,
+    };
+    Some(OnMetadata::from_properties(body, properties))
 }
 
 #[cfg(test)]
@@ -1854,6 +2196,89 @@ mod tests {
             Err(FlvError::Codec(Error::InvalidInput(
                 "FLV avcC height does not fit 16 bits"
             )))
+        );
+    }
+
+    fn avc_track(id: u32) -> TrackSpec {
+        let record = AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: 66,
+            profile_compatibility: 0,
+            level_indication: 30,
+            length_size_minus_one: 3,
+            sps: alloc::vec![isobmff::AvcSps(alloc::vec![0x67, 0x42, 0xc0, 0x1e])],
+            pps: alloc::vec![isobmff::AvcPps(alloc::vec![0x68, 0xce, 0x3c, 0x80])],
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: alloc::vec![],
+        };
+        TrackSpec::new(
+            TrackId::new(id),
+            Timescale::try_new(1000).expect("a non-zero timescale"),
+            CodecConfig::Avc {
+                config: AVCConfigurationBox::new(record),
+                width: 16,
+                height: 16,
+            },
+        )
+    }
+
+    fn timed(dts: i64, duration: u32) -> Sample {
+        Sample::new(
+            alloc::vec![0u8; 4],
+            Some(dts),
+            Some(dts),
+            Some(duration),
+            true,
+        )
+        .expect("valid timing")
+    }
+
+    /// A break continues from the last written timestamp plus the *triggering*
+    /// track's last duration, and later tags keep their spacing: rebasing by
+    /// the other track's duration would start the run 60 ms too late.
+    #[test]
+    fn a_break_rebases_by_the_triggering_tracks_last_duration() {
+        let mut stream = FlvTagStream::default();
+        stream.announce(avc_track(1)).expect("track 1");
+        stream.announce(avc_track(2)).expect("track 2");
+        let first = stream.push(TrackId::new(1), timed(0, 40)).expect("push");
+        assert!(first.is_empty(), "one track cannot interleave yet");
+        let opened = stream.push(TrackId::new(2), timed(0, 100)).expect("push");
+        assert_eq!(opened.len(), 1, "the first sample of the pair is released");
+        assert_eq!(
+            stream.last_duration_ms,
+            alloc::vec![40, 100],
+            "the test's two tracks must have different last durations"
+        );
+        let next = stream.push(TrackId::new(1), timed(40, 40)).expect("push");
+        assert_eq!(next.len(), 1, "the other track's held sample is released");
+        assert_eq!(stream.last_written_ms, Some(0));
+
+        let held = stream.discontinuity().expect("a break is expressible");
+        assert_eq!(held.len(), 1, "the held pre-break sample is written first");
+        assert_eq!(held[0].timestamp(), 40);
+        assert_eq!(stream.last_written_ms, Some(40));
+
+        let _ = stream
+            .push(TrackId::new(1), timed(10_000, 40))
+            .expect("push");
+        let after = stream
+            .push(TrackId::new(2), timed(10_100, 100))
+            .expect("push");
+        assert_eq!(after.len(), 1, "the first post-break tag is released");
+        assert_eq!(
+            after[0].timestamp(),
+            80,
+            "the run continues from the last written timestamp (40) plus track 1's 40 ms"
+        );
+        let rest = stream.flush().expect("flush");
+        assert_eq!(rest.len(), 1, "the held post-break tag follows");
+        assert_eq!(
+            rest[0].timestamp(),
+            180,
+            "track 2 keeps its 100 ms spacing after track 1"
         );
     }
 }

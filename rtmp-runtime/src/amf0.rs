@@ -631,6 +631,33 @@ impl Command {
         Ok(out)
     }
 }
+/// Parse a sequence of AMF0 values that fill `body`, the inverse of
+/// [`amf0_values`].
+///
+/// A script-data body is such a sequence: the handler name, then one or more
+/// values (Adobe FLV v10.1 §E.4.1).
+///
+/// # Errors
+///
+/// [`RtmpError::BufferTooShort`] when a value runs past `body`, and the
+/// object/array limits [`Amf0Value::parse`] applies.
+pub fn amf0_parse_values(body: &[u8]) -> Result<Vec<Amf0Value>> {
+    let mut values_out = Vec::new();
+    let mut offset = 0usize;
+    let mut count = 0usize;
+    while offset < body.len() {
+        let (value, used) = parse_value(&body[offset..], 0, &mut count)?;
+        values_out.push(value);
+        offset = offset.checked_add(used).ok_or(RtmpError::FieldOverflow(
+            broadcast_core::len::FieldOverflow {
+                field: "AMF0 value offset",
+                value: u64::try_from(offset).unwrap_or(u64::MAX),
+                max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+            },
+        ))?;
+    }
+    Ok(values_out)
+}
 
 /// Encode `values` in order as one AMF0 byte sequence: what a message body
 /// carrying several bare values is (`onMetaData` is a String followed by an
@@ -677,6 +704,27 @@ mod tests {
         let mut expected = values[0].try_to_bytes().unwrap();
         expected.extend(values[1].try_to_bytes().unwrap());
         assert_eq!(body, expected);
+    }
+
+    #[test]
+    fn a_value_sequence_parses_back_what_it_encoded() {
+        let values = [
+            Amf0Value::String("onMetaData".to_string()),
+            Amf0Value::EcmaArray(vec![
+                ("duration".to_string(), Amf0Value::Number(1.5)),
+                ("stereo".to_string(), Amf0Value::Boolean(false)),
+            ]),
+        ];
+        let body = amf0_values(&values).expect("encode");
+        assert_eq!(amf0_parse_values(&body).expect("parse"), values);
+    }
+
+    #[test]
+    fn a_truncated_value_sequence_is_an_error_not_a_partial_list() {
+        let values = [Amf0Value::String("onMetaData".to_string())];
+        let mut body = amf0_values(&values).expect("encode");
+        body.pop();
+        assert!(amf0_parse_values(&body).is_err());
     }
 
     /// #2761: the overflow error carried `value = u64::MAX, max = u64::MAX`,

@@ -277,12 +277,11 @@ fn an_mp4_mp3_track_takes_its_padding_from_the_lame_tag() {
             break;
         }
         if samples.is_empty() {
-            assert!(
-                broadcast_bitstream::parse_lame_tag(&bytes[offset..end])
-                    .expect("a frame parses")
-                    .is_some(),
-                "the first frame carries the Info tag"
-            );
+            let tag = broadcast_bitstream::parse_lame_tag(&bytes[offset..end])
+                .expect("a frame parses")
+                .expect("the first frame carries the Info tag");
+            assert_eq!(tag.encoder_delay(), Some(576), "the tag's own delay");
+            assert_eq!(tag.encoder_padding(), Some(960), "the tag's own padding");
         }
         samples.push(Sample::timed_raw(
             bytes[offset..end].to_vec(),
@@ -332,8 +331,8 @@ fn an_mp4_mp3_track_takes_its_padding_from_the_lame_tag() {
     let specs: Vec<TrackSpec> = back.tracks.into_iter().map(|track| track.spec).collect();
     assert_eq!(
         audio_spec(&specs).padding,
-        GaplessTrim::new(1105, Some(431)),
-        "LAME delay 576 + 529 decoder delay, padding 960 - 529 (ffprobe: skip_samples=1105, \
-         discard_padding=431)"
+        GaplessTrim::new(576, Some(960)),
+        "the LAME tag's own encoder delay 576 and padding 960; a decoder's intrinsic \
+         delay is the provider's to declare, not the container's"
     );
 }

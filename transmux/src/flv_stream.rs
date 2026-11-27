@@ -93,8 +93,8 @@ use rtmp_runtime::RtmpError;
 
 use crate::flv::{
     CODEC_ID_AVC, FLV_HEADER_LEN, FLV_TIMESCALE, FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN,
-    PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz, avc_dimensions,
-    avc_packet_type, build_aac_esds, read_si24, tag_type,
+    OnMetadata, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz, avc_dimensions,
+    avc_packet_type, build_aac_esds, parse_on_metadata, read_si24, tag_type,
 };
 use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, DemuxEvent, SampleTiming};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -311,6 +311,9 @@ pub struct StreamingFlvDemux {
     /// Whether a damaged span was reported; an input that is damaged but had
     /// no complete tag is still diagnosed, not silently accepted.
     damaged: bool,
+    /// The first `onMetaData` script tag's typed properties, once one has
+    /// been read; a later one never replaces it.
+    on_metadata: Option<OnMetadata>,
     /// Start and length of a damaged run not yet reported: consecutive skips
     /// (a resync candidate that later fails, then a further skip) are ONE
     /// reported span, not one per attempt.
@@ -350,6 +353,7 @@ impl StreamingFlvDemux {
             tags_seen: false,
             announced: false,
             damaged: false,
+            on_metadata: None,
             damage_start: None,
             damage_len: 0,
             ended_inside_a_tag: false,
@@ -537,6 +541,7 @@ impl StreamingFlvDemux {
                 body,
                 tag_offset,
                 total,
+                &mut self.on_metadata,
                 &mut self.events,
                 &mut self.announced,
             )?;
@@ -594,6 +599,18 @@ impl StreamingFlvDemux {
     #[must_use]
     pub fn ended_inside_a_tag(&self) -> bool {
         self.ended_inside_a_tag
+    }
+
+    /// The informational properties the file's `onMetaData` tag stated, once
+    /// one has been read: the whole-stream facts a caller cannot derive from
+    /// the tags alone (the stated duration, frame rate, encoder).
+    ///
+    /// The tags themselves are not an input to any sample, so this never
+    /// changes what the demuxer emits; a script tag that does not parse as
+    /// AMF0 leaves this `None` rather than failing the file.
+    #[must_use]
+    pub fn on_metadata(&self) -> Option<&OnMetadata> {
+        self.on_metadata.as_ref()
     }
 
     /// Record `len` damaged bytes starting at `cursor` (relative to `pending`).
@@ -734,6 +751,7 @@ impl StreamingFlvDemux {
             tag.body,
             offset,
             header.total_len(),
+            &mut self.on_metadata,
             &mut self.events,
             &mut self.announced,
         )?;
@@ -810,6 +828,7 @@ impl StreamingFlvDemux {
         body: &[u8],
         offset: u64,
         tag_len: usize,
+        on_metadata: &mut Option<OnMetadata>,
         events: &mut VecDeque<DemuxEvent>,
         announced: &mut bool,
     ) -> Result<(), FlvError> {
@@ -834,8 +853,13 @@ impl StreamingFlvDemux {
                 events,
                 announced,
             ),
-            tag_type::SCRIPT => Ok(()), // onMetaData — informational, skipped
-            _ => Ok(()),                // unknown tag type — skipped leniently
+            tag_type::SCRIPT => {
+                if on_metadata.is_none() {
+                    *on_metadata = parse_on_metadata(body);
+                }
+                Ok(())
+            }
+            _ => Ok(()), // unknown tag type — skipped leniently
         }
     }
 

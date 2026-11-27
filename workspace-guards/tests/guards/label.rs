@@ -43,6 +43,11 @@ pub struct Crate {
 /// True if `{prefix}{name}` appears with an identifier boundary (whole name).
 fn has_impl(all: &str, prefix: &str, name: &str) -> bool {
     let needle = format!("{prefix}{name}");
+    // Every accepted shape spells the needle contiguously, so one whole-text
+    // search rejects the overwhelming majority of names before the line walk.
+    if !all.contains(&needle) {
+        return false;
+    }
     let is_boundary =
         |rest: &str| !matches!(rest.chars().next(), Some(c) if c.is_alphanumeric() || c == '_');
     let is_path_or_space =

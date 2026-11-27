@@ -1259,3 +1259,25 @@ impl<'a> SimpleTag<'a> {
         self.children().iter().filter_map(AnyElement::as_simple_tag)
     }
 }
+
+impl<'a> Targets<'a> {
+    /// The `TargetTypeValue`, when present.
+    #[must_use]
+    pub fn target_type_value(&self) -> Option<u64> {
+        child!(self, ids::TARGET_TYPE_VALUE, as_unsigned)
+    }
+
+    /// The `TargetType` text, when present.
+    #[must_use]
+    pub fn target_type(&self) -> Option<&'a str> {
+        child!(self, ids::TARGET_TYPE, as_text).and_then(Text::as_str)
+    }
+
+    /// Every `TagTrackUID` this tag targets.
+    pub fn track_uids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.children()
+            .iter()
+            .filter(|element| element.id() == ids::TAG_TRACK_UID)
+            .filter_map(crate::matroska::Element::as_unsigned)
+    }
+}

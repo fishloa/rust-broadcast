@@ -8,4 +8,5 @@ pub mod segmenter_feed;
 pub mod shared;
 #[path = "../it/support/shared_it.rs"]
 pub mod shared_it;
+pub mod trunk_drain;
 pub mod udp_origin;

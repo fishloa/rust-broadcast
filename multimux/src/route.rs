@@ -416,12 +416,15 @@ impl PeriodCursor {
     ///
     /// A Period opened only because numbers were skipped keeps the init segment, so it is
     /// period-connected to the open one (§5.3.2.4: equivalent Initialization Segments, timestamps
-    /// non-continuous across the skipped segment; DASH-IF IOP 4.3 4.11.4.2).
+    /// non-continuous across the skipped segment; DASH-IF IOP 4.3 4.11.4.2). A segment the
+    /// segmenter marked discontinuous also opens a new Period: the source timeline broke, and
+    /// `@presentationTimeOffset` on the new Period is the media time the new segment starts at.
     fn anchor_for(
         &self,
         generation: media_plane::ids::Generation,
         segment: (u64, u64),
         program_start: (u64, u64),
+        discontinuous: bool,
     ) -> PeriodAnchor {
         let same_init = matches!(self.last, Some((false, last, _)) if last == generation);
         let (first_public_seq, media_start_ns) = if self.last.is_none() {
@@ -430,7 +433,7 @@ impl PeriodCursor {
             segment
         };
         match self.anchor {
-            Some(open) if same_init && !self.skipped_numbers => open,
+            Some(open) if same_init && !self.skipped_numbers && !discontinuous => open,
             previous => {
                 let connected = previous.filter(|_| same_init);
                 PeriodAnchor {
@@ -450,9 +453,10 @@ impl PeriodCursor {
         generation: media_plane::ids::Generation,
         segment: (u64, u64),
         program_start: (u64, u64),
+        discontinuous: bool,
     ) -> Option<PeriodAnchor> {
         if !gap {
-            self.anchor = Some(self.anchor_for(generation, segment, program_start));
+            self.anchor = Some(self.anchor_for(generation, segment, program_start, discontinuous));
         }
         self.last = Some((gap, generation, segment.0));
         self.skipped_numbers = false;
@@ -679,6 +683,7 @@ impl DashState {
                         init_generation,
                         (public_seq, timeline_position_ns),
                         self.program_start(),
+                        entry.discontinuous,
                     ),
                     instance: self.instance,
                 });
@@ -709,9 +714,12 @@ impl DashState {
     /// The Period this program's first segment will open or join, for an MPD rendered before
     /// any segment closed: a continued program's next number and media start are its epoch's.
     fn first_period(&self, generation: media_plane::ids::Generation) -> PeriodAnchor {
-        self.period
-            .lock()
-            .anchor_for(generation, self.program_start(), self.program_start())
+        self.period.lock().anchor_for(
+            generation,
+            self.program_start(),
+            self.program_start(),
+            false,
+        )
     }
 
     /// `(public number, media start ns)` of this program's first segment.
@@ -1755,7 +1763,7 @@ impl ProgramServing {
                 media_plane::ids::SegmentSeq::new(info.segment_seq),
                 duration,
                 Timestamp::from_nanos(start_ns),
-                false,
+                info.discontinuous,
             ))
         });
         match published {

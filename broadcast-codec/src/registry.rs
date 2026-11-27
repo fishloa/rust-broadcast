@@ -8,6 +8,7 @@ use core::fmt;
 
 use crate::availability::Probe;
 use crate::codec::{CodecId, CodecParameters};
+use crate::delay::DecoderTrim;
 use crate::descriptor::CodecDescriptor;
 use crate::direction::Direction;
 use crate::encoder_config::EncoderConfig;
@@ -273,8 +274,15 @@ impl Registry {
     /// unless the selected implementation says it applies the trim itself.
     ///
     /// The wrapper returns the decoder's frames with the initial and trailing
-    /// padding removed (see [`TrimStage`](crate::TrimStage)); an implementation
-    /// whose [`CodecDescriptor::applies_trim`] is true is returned unchanged.
+    /// padding removed, plus the implementation's own declared delay (see
+    /// [`TrimStage`](crate::TrimStage) and
+    /// [`DecoderTrim`](crate::DecoderTrim)); an implementation whose
+    /// [`CodecDescriptor::trim`] is
+    /// [`DecoderTrim::Implementation`](crate::DecoderTrim::Implementation) is
+    /// returned unchanged. When the delay is
+    /// [`DecoderDelay::Unknown`](crate::DecoderDelay::Unknown) only the
+    /// container's values are applied, and the [`inventory`](Self::inventory)
+    /// reports the implementation's delay as unknown.
     ///
     /// # Errors
     /// As [`Self::decoder`].
@@ -283,10 +291,12 @@ impl Registry {
         parameters: &CodecParameters,
     ) -> Result<Box<dyn Decoder>, CodecError> {
         let (decoder, descriptor) = self.decoder_with(parameters)?;
-        if descriptor.applies_trim() {
-            return Ok(decoder);
+        match descriptor.trim() {
+            DecoderTrim::Implementation => Ok(decoder),
+            DecoderTrim::Caller(delay) => {
+                Ok(Box::new(TrimmedDecoder::new(decoder, parameters, delay)))
+            }
         }
-        Ok(Box::new(TrimmedDecoder::new(decoder, parameters)))
     }
 
     fn decoder_with(

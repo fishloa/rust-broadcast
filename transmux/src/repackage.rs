@@ -207,6 +207,13 @@ fn collect(outputs: &[MuxOutput]) -> RepackageOutput {
         match output {
             MuxOutput::Init(bytes) => init_segment = bytes.to_vec(),
             MuxOutput::Segment(segment) => media_segments.push(segment.bytes.to_vec()),
+            // The output is a bare CMAF byte stream, where a break has two
+            // in-band forms and no out-of-band one: the next fragment's `tfdt`
+            // carries the given (or rebased) decode time, and the resegmenting
+            // [`Segmenter`] marks that segment's summary `discontinuous` for a
+            // caller that renders a playlist over it. Both come from the stage;
+            // a marker emitted instead names a break already written.
+            MuxOutput::Discontinuity { .. } => {}
             _ => {}
         }
     }
@@ -503,6 +510,9 @@ struct RepackageSink<T> {
     transform: Option<T>,
     /// The transform's chain, once the `moov`'s track set is known.
     chain: Option<MuxChain<T>>,
+    /// A break that arrived before the segmenter existed, to forward as soon
+    /// as it does.
+    pending_discontinuity: Option<Option<TrackId>>,
 }
 
 impl<T> RepackageSink<T>
@@ -527,6 +537,7 @@ where
                 .map(|(start, end)| WindowHold::new(start, end, repackage.hold)),
             transform: None,
             chain: None,
+            pending_discontinuity: None,
         }
     }
 
@@ -630,6 +641,11 @@ where
         self.pending
             .push_back(MuxOutput::Init(bytes::Bytes::from(init)));
         self.segmenter = Some(segmenter);
+        if let Some(track) = self.pending_discontinuity.take()
+            && let Some(segmenter) = self.segmenter.as_mut()
+        {
+            segmenter.feed(MuxInput::Discontinuity { track }, Timestamp::ZERO)?;
+        }
         Ok(())
     }
 
@@ -891,7 +907,21 @@ where
                 }
                 Ok(())
             }
-            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Discontinuity { track } => {
+                if let Some(chain) = self.chain.as_mut() {
+                    chain.feed(MuxInput::Discontinuity { track })?;
+                    return self.drain_chain();
+                }
+                match self.segmenter.as_mut() {
+                    Some(segmenter) => {
+                        segmenter.feed(MuxInput::Discontinuity { track }, Timestamp::ZERO)
+                    }
+                    None => {
+                        self.pending_discontinuity = Some(track);
+                        Ok(())
+                    }
+                }
+            }
             MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
                 "repackage: the resegmented init segment names every kept track",
             )),

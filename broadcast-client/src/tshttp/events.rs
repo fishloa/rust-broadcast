@@ -58,6 +58,14 @@ broadcast_core::impl_spec_display!(StarveKind);
 pub enum Event {
     /// Demuxer event (T5, T14).
     Demux(Box<DemuxEvent>),
+    /// Content the demuxer skipped, altered or repaired — the one
+    /// [`broadcast_core::damage::Damage`] report, delivered in order with the
+    /// events around it. Whether a report also stops the session is the
+    /// caller's
+    /// [`Config::damage_policy`](crate::tshttp::Config::damage_policy); with
+    /// `Fail` the session ends with this report inside
+    /// [`Event::DemuxError`].
+    Damage(broadcast_core::damage::Damage),
     /// Stall notice (T11).
     StallNotice {
         /// How long the stall has lasted.
@@ -105,6 +113,7 @@ enum EventSerde {
     Reconnecting { attempt: u32 },
     GaveUp { attempts: u32 },
     DemuxError { reason: String },
+    Damage { report: String },
 }
 
 #[cfg(feature = "serde")]
@@ -116,6 +125,10 @@ impl serde::Serialize for Event {
     {
         match self {
             Self::Demux(_) => serializer.serialize_unit_variant("Event", 0, "Demux"),
+            Self::Damage(damage) => EventSerde::Damage {
+                report: damage.to_string(),
+            }
+            .serialize(serializer),
             Self::StallNotice { stalled } => {
                 EventSerde::StallNotice { stalled: *stalled }.serialize(serializer)
             }
