@@ -738,3 +738,128 @@ fn a_bad_signature_is_still_a_bad_signature() {
         FlvError::BadSignature([b'X', b'L', b'V'])
     ));
 }
+
+/// The script-data tag body of an FLV byte stream, by walking the tag loop.
+fn script_body(flv: &[u8]) -> Option<&[u8]> {
+    let mut at = 13; // FLV header (9) + PreviousTagSize0 (4)
+    while at + 11 <= flv.len() {
+        let tag_type = flv[at];
+        let size = usize::from(flv[at + 1]) << 16
+            | usize::from(flv[at + 2]) << 8
+            | usize::from(flv[at + 3]);
+        let body = flv.get(at + 11..at + 11 + size)?;
+        if tag_type == 18 {
+            return Some(body);
+        }
+        at += 11 + size + 4;
+    }
+    None
+}
+
+fn feed_whole(input: &[u8]) -> StreamingFlvDemux {
+    let mut demux = StreamingFlvDemux::new();
+    feed_and_drain(&mut demux, input).expect("feeds");
+    demux
+}
+
+#[test]
+fn the_av_fixture_on_metadata_is_typed() {
+    let demux = feed_whole(&FLV);
+    let meta = demux.on_metadata().expect("the file has an onMetaData tag");
+    // ExifTool: Duration 3.10 s, ImageWidth 320, ImageHeight 240, FrameRate 25,
+    // VideoCodecID 7, AudioCodecID 10, AudioSampleRate 44100,
+    // AudioSampleSize 16, Stereo No, Encoder Lavf62.12.102, FileSizeBytes 62474.
+    assert!((meta.duration().expect("duration") - 3.099).abs() < 1e-9);
+    assert_eq!(meta.width(), Some(320));
+    assert_eq!(meta.height(), Some(240));
+    assert_eq!(meta.frame_rate(), Some(25.0));
+    assert_eq!(meta.video_codec_id(), Some(7.0));
+    assert_eq!(meta.audio_codec_id(), Some(10.0));
+    assert_eq!(meta.audio_sample_rate(), Some(44_100));
+    assert_eq!(meta.audio_sample_size(), Some(16));
+    assert_eq!(meta.stereo(), Some(false));
+    assert_eq!(meta.encoder(), Some("Lavf62.12.102"));
+    assert_eq!(meta.file_size(), Some(62_474));
+}
+
+#[test]
+fn the_audio_only_fixture_on_metadata_is_typed() {
+    let audio = test_fixtures::read("flv/aac-7-1.flv");
+    let demux = feed_whole(&audio);
+    let meta = demux.on_metadata().expect("the file has an onMetaData tag");
+    // ExifTool: Duration 0.22 s, AudioCodecID 10, AudioSampleSize 16,
+    // Stereo No, Encoder Lavf62.12.102, FileSizeBytes 737.
+    assert!((meta.duration().expect("duration") - 0.221).abs() < 1e-9);
+    assert_eq!(meta.width(), None, "an audio-only file states no width");
+    assert_eq!(meta.audio_codec_id(), Some(10.0));
+    assert_eq!(meta.audio_sample_size(), Some(16));
+    assert_eq!(meta.stereo(), Some(false));
+    assert_eq!(meta.encoder(), Some("Lavf62.12.102"));
+    assert_eq!(meta.file_size(), Some(737));
+}
+
+#[test]
+fn the_script_tag_body_is_kept_byte_exact_and_the_muxer_writes_it_back() {
+    let demux = feed_whole(&FLV);
+    let meta = demux.on_metadata().expect("the file has an onMetaData tag");
+    let original = script_body(&FLV).expect("the source script tag body");
+    assert_eq!(meta.raw_body(), original, "the body is read verbatim");
+    let media = test_harness::collect::media_from_flv(&FLV).expect("the fixture demuxes");
+    let muxed = crate::mux_bytes::mux_bytes(
+        &mut transmux::FlvMuxStage::new().with_metadata_body(meta.raw_body().to_vec()),
+        &media,
+    );
+    assert_eq!(
+        script_body(&muxed).expect("the remux writes a script tag"),
+        original,
+        "the remux keeps the source onMetaData bytes"
+    );
+}
+
+#[test]
+fn a_damaged_on_metadata_tag_is_skipped_and_the_samples_still_flow() {
+    let mut damaged = FLV.clone();
+    let body = script_body(&FLV).expect("the source script tag body");
+    let at = damaged
+        .windows(body.len())
+        .position(|window| window == body)
+        .expect("the body is in the file");
+    damaged[at] = 0xff; // not an AMF0 marker
+    let mut demux = StreamingFlvDemux::new();
+    let events = feed_and_drain(&mut demux, &damaged).expect("a damaged script tag is not fatal");
+    assert!(demux.on_metadata().is_none(), "no typed view of damage");
+    let tracks = events
+        .iter()
+        .filter(|event| matches!(event, DemuxEvent::TrackAdded(_)))
+        .count();
+    assert_eq!(tracks, 2, "both tracks are still announced");
+    let samples = events
+        .iter()
+        .filter(|event| matches!(event, DemuxEvent::Sample { .. }))
+        .count();
+    assert!(samples > 0, "samples still flow");
+}
+
+#[test]
+fn a_mutated_duration_fails_the_fixture_value() {
+    let mut mutated = FLV.clone();
+    let body = script_body(&FLV).expect("the source script tag body");
+    let at = mutated
+        .windows(body.len())
+        .position(|window| window == body)
+        .expect("the body is in the file");
+    let duration_at = at
+        + body
+            .windows(8)
+            .position(|window| window == b"duration")
+            .expect("the duration property")
+        + 8
+        + 1;
+    mutated[duration_at..duration_at + 8].copy_from_slice(&9.5f64.to_be_bytes());
+    let demux = feed_whole(&mutated);
+    let meta = demux.on_metadata().expect("the tag still parses");
+    assert!(
+        (meta.duration().expect("duration") - 3.099).abs() > 1.0,
+        "the mutation is visible, so the value assertion above bites"
+    );
+}

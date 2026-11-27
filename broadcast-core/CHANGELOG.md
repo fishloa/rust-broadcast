@@ -4,6 +4,13 @@
 
 ### Added
 
+- `damage`: the workspace's one report of content a reader skipped
+  (`Damage`, `DamageKind`, `Severity`, `DamageLocation`, `ByteRange`,
+  `MediaTimeRange`, `DamageCause`), the caller's `DamagePolicy` and
+  `Disposition` (report or fail, per severity and optionally per kind), the
+  `DamageError` a failing policy stops with, and `DamagePolicy::admit`, the one
+  helper a reader calls. Best-effort reading and the rule that a silent skip is
+  a defect are stated in `docs/API-CONVENTIONS.md`.
 - Initial contents, moved out of `broadcast-common` so the wire-format
   contract can reach `1.0` and stay frozen while the format crates keep
   growing. The moved modules are `traits` (`Parse`, `Serialize`), `len`,

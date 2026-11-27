@@ -20,7 +20,13 @@ use super::sample::Sample;
 use super::track::TrackSpec;
 use crate::TrackId;
 use alloc::sync::Arc;
+use broadcast_core::damage::{
+    ByteRange, Damage, DamageCause, DamageKind, MediaTimeRange, Severity,
+};
 use mpeg_ts::pid::Pid;
+
+/// A TS packet's size in bytes, widened for byte-offset arithmetic.
+const TS_PACKET_BYTES: u64 = mpeg_ts::ts::TS_PACKET_SIZE as u64;
 
 /// Container-native identity for a [`DemuxEvent`] that is not itself part of
 /// the neutral vocabulary — e.g. the MPEG-2 TS PID a
@@ -237,6 +243,111 @@ pub enum InputDegradation {
 }
 
 impl InputDegradation {
+    /// The kind of report this degradation produces.
+    pub fn damage_kind(&self) -> DamageKind {
+        match self {
+            InputDegradation::InvalidParameterSet => DamageKind::MetadataSkipped,
+            InputDegradation::SyncLoss { .. } => DamageKind::Resynchronised,
+            InputDegradation::PesUnitTruncated { .. }
+            | InputDegradation::TruncatedPacket { .. }
+            | InputDegradation::TruncatedUnit { .. } => DamageKind::InputTruncated,
+            InputDegradation::TransportError
+            | InputDegradation::ContinuityGap { .. }
+            | InputDegradation::MalformedUnit { .. }
+            | InputDegradation::Scrambled => DamageKind::MediaUnitDropped,
+        }
+    }
+
+    /// The severity of report this degradation produces: a short PES unit
+    /// that lost no bytes is informational, everything else costs content.
+    pub fn damage_severity(&self) -> Severity {
+        match self {
+            InputDegradation::InvalidParameterSet | InputDegradation::PesUnitTruncated { .. } => {
+                Severity::Informational
+            }
+            _ => Severity::Degraded,
+        }
+    }
+
+    /// The structure this degradation damaged, in the format's own terms.
+    pub fn damage_what(&self) -> &'static str {
+        match self {
+            InputDegradation::InvalidParameterSet => "parameter set",
+            InputDegradation::PesUnitTruncated { .. } => "PES packet",
+            InputDegradation::MalformedUnit { .. } | InputDegradation::TruncatedUnit { .. } => {
+                "container unit"
+            }
+            _ => "TS packet",
+        }
+    }
+
+    /// The report for this degradation, located at `provenance` and, when the
+    /// caller has resolved them, at `track` and `media_time`.
+    ///
+    /// A loss whose bytes are not in the input at all (dropped packets, a
+    /// truncated tail) carries a zero-length [`ByteRange`] marking where it
+    /// was observed; a discarded span carries the bytes it covered.
+    pub fn to_damage(
+        &self,
+        track: Option<TrackId>,
+        media_time: Option<MediaTimeRange>,
+        provenance: EventProvenance,
+    ) -> Damage {
+        let packet_range = provenance
+            .packet_index
+            .map(|index| ByteRange::new(index.saturating_mul(TS_PACKET_BYTES), TS_PACKET_BYTES));
+        let (range, cause) = match *self {
+            InputDegradation::SyncLoss {
+                offset,
+                dropped_bytes,
+            }
+            | InputDegradation::TruncatedPacket {
+                offset,
+                dropped_bytes,
+            } => (Some(ByteRange::new(offset, dropped_bytes)), None),
+            InputDegradation::MalformedUnit { position }
+            | InputDegradation::TruncatedUnit { position } => {
+                (Some(ByteRange::new(position, 0)), None)
+            }
+            InputDegradation::ContinuityGap { .. } => {
+                let observed = provenance
+                    .packet_index
+                    .map(|index| ByteRange::new(index.saturating_mul(TS_PACKET_BYTES), 0));
+                (observed, None)
+            }
+            InputDegradation::PesUnitTruncated {
+                declared,
+                available,
+            } => (
+                packet_range,
+                Some(DamageCause::from(broadcast_core::error::LengthMismatch {
+                    what: "PES_packet_length",
+                    declared,
+                    actual: available,
+                })),
+            ),
+            _ => (packet_range, None),
+        };
+        let mut damage = Damage::new(
+            self.damage_kind(),
+            self.damage_severity(),
+            self.damage_what(),
+        );
+        if let Some(range) = range {
+            damage = damage.at_byte_range(range);
+        }
+        if let Some(track) = track {
+            damage = damage.for_track(track.value());
+        }
+        if let Some(media_time) = media_time {
+            damage = damage.at_media_time(media_time);
+        }
+        if let Some(cause) = cause {
+            damage = damage.with_cause(cause);
+        }
+        damage
+    }
+
     /// A short, stable label for this degradation — used by `Display`.
     pub fn name(&self) -> &'static str {
         match self {
@@ -504,6 +615,15 @@ pub enum DemuxEvent {
         /// Number of bytes skipped before the stream was re-locked.
         dropped_bytes: u64,
     },
+    /// Content the demuxer skipped, altered, resynchronised past, truncated,
+    /// time-repaired or dropped a track for, with everything it knows about it
+    /// (`broadcast_core::damage::Damage`, the workspace's one report).
+    ///
+    /// This is the channel a player reads to decide whether to log, warn,
+    /// fail or repair; the demuxer never chooses. [`InputDegradation`] says
+    /// the same damage through [`DemuxEvent::InputDegraded`] and converts to
+    /// this report ([`InputDegradation::to_damage`]).
+    Damage(Damage),
     /// Every currently-known declared track has resolved: none is still
     /// pending config recovery. By the time this fires,
     /// [`DemuxEvent::TrackAdded`] has already been (or is about to be, in the
@@ -669,6 +789,12 @@ impl DemuxEvent {
             kind,
             provenance,
         }
+    }
+
+    /// Construct a [`DemuxEvent::Damage`] — see
+    /// [`Self::clock_reference`] for why this variant needs a constructor.
+    pub fn damage(damage: Damage) -> Self {
+        DemuxEvent::Damage(damage)
     }
 
     /// Construct a [`DemuxEvent::DamagedSpan`] — see

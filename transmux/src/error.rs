@@ -21,6 +21,12 @@ pub enum Error {
     #[error(transparent)]
     BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
+    /// A caller's damage policy refused a report a reader produced: the
+    /// error carries the same `broadcast_core::damage::Damage` the reader
+    /// would otherwise have published.
+    #[error(transparent)]
+    Damage(#[from] broadcast_core::damage::DamageError),
+
     /// Box size was declared as 1 (triggers largesize) but fewer than 8 bytes available.
     #[error("largesize indicated but buffer too short: need {need}, have {have}")]
     LargesizeBufferTooShort {

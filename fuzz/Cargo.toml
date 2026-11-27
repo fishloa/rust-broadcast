@@ -654,6 +654,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "defacto_tags"
+path = "fuzz_targets/defacto_tags.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "matroska_reader"
 path = "fuzz_targets/matroska_reader.rs"
 test = false

@@ -984,6 +984,13 @@ pub enum Event {
     /// the mapping from Sender Reports takes over. It is never emitted for a single-track
     /// presentation or for a non-RTSP source.
     AvSync(AvSync),
+    /// Content the reader skipped, altered, resynchronised past, truncated,
+    /// time-repaired or dropped a track for — the one
+    /// [`broadcast_core::damage::Damage`] report (see
+    /// `docs/API-CONVENTIONS.md` § Best-effort reading). Delivered in order
+    /// with the samples around it; what the report means is the player's
+    /// decision, never the session's.
+    Damage(broadcast_core::damage::Damage),
     /// A condition the player should tell the user about. `fatal` means the session will not
     /// recover by itself: it has closed its connections and goes silent, so the player shows a
     /// message and does not retry. Non-fatal errors are emitted once per kind until a success
@@ -1059,6 +1066,7 @@ impl PartialEq for Event {
                 },
             ) => *sa == *sb && *ra == *rb && *rra == *rrb,
             (Self::Buffer(a), Self::Buffer(b)) => *a == *b,
+            (Self::Damage(a), Self::Damage(b)) => a == b,
             (Self::AvSync(a), Self::AvSync(b)) => *a == *b,
             (Self::Variants(a), Self::Variants(b)) => *a == *b,
             (
