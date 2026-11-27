@@ -1506,6 +1506,7 @@ mod tests {
                 length_size_minus_one,
                 arrays: vec![HevcNalArray {
                     array_completeness: true,
+                    reserved: false,
                     nal_unit_type: 32,
                     nalus: vec![HevcNalUnit(vec![0x40, 0x01, 0x0C, 0x01, 0xFF])],
                 }],

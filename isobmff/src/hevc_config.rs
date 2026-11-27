@@ -154,6 +154,8 @@ const LENGTH_SIZE_MASK: u8 = 0x03;
 /// Bit layout of a NAL array header byte.
 const ARRAY_COMPLETENESS_SHIFT: u32 = 7;
 const ARRAY_COMPLETENESS_BIT: u8 = 0x80;
+/// The spec-reserved bit after `array_completeness`; libheif sets it.
+const ARRAY_RESERVED_BIT: u8 = 0x40;
 const ARRAY_RESERVED_SHIFT: u32 = 6;
 const ARRAY_RESERVED_MASK: u8 = 0x01;
 const NAL_UNIT_TYPE_MASK: u8 = 0x3F;
@@ -243,7 +245,7 @@ impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
             // byte: array_completeness(1) + reserved(1)=0 + NAL_unit_type(6)
             let b_arr = read_u8(bytes, &mut cursor, "NAL array header")?;
             let array_completeness = (b_arr >> ARRAY_COMPLETENESS_SHIFT) != 0;
-            let _reserved_arr = (b_arr >> ARRAY_RESERVED_SHIFT) & ARRAY_RESERVED_MASK;
+            let reserved = (b_arr >> ARRAY_RESERVED_SHIFT) & ARRAY_RESERVED_MASK != 0;
             let nal_unit_type = b_arr & NAL_UNIT_TYPE_MASK;
 
             // numNalus (16)
@@ -265,6 +267,7 @@ impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
 
             arrays.push(HevcNalArray {
                 array_completeness,
+                reserved,
                 nal_unit_type,
                 nalus,
             });
@@ -395,7 +398,8 @@ impl Serialize for HEVCDecoderConfigurationRecord {
                 ARRAY_COMPLETENESS_BIT
             } else {
                 0
-            }) | (arr.nal_unit_type & NAL_UNIT_TYPE_MASK);
+            }) | (if arr.reserved { ARRAY_RESERVED_BIT } else { 0 })
+                | (arr.nal_unit_type & NAL_UNIT_TYPE_MASK);
             buf[cursor] = first_byte;
             cursor += 1;
 
@@ -684,6 +688,7 @@ mod tests {
     fn oversized_nalu_length_errors() {
         let record = record_with_arrays(vec![HevcNalArray {
             array_completeness: true,
+            reserved: false,
             nal_unit_type: 32,
             nalus: vec![HevcNalUnit(vec![0xAAu8; 65536])],
         }]);
@@ -705,6 +710,7 @@ mod tests {
     fn max_nalu_length_round_trips() {
         let record = record_with_arrays(vec![HevcNalArray {
             array_completeness: true,
+            reserved: false,
             nal_unit_type: 32,
             nalus: vec![HevcNalUnit(vec![0xAAu8; 65535])],
         }]);
@@ -720,6 +726,7 @@ mod tests {
         let arrays: Vec<HevcNalArray> = (0..256)
             .map(|_| HevcNalArray {
                 array_completeness: false,
+                reserved: false,
                 nal_unit_type: 33,
                 nalus: vec![HevcNalUnit(vec![0x42])],
             })
@@ -744,6 +751,7 @@ mod tests {
         let arrays: Vec<HevcNalArray> = (0..255)
             .map(|_| HevcNalArray {
                 array_completeness: false,
+                reserved: false,
                 nal_unit_type: 33,
                 nalus: vec![HevcNalUnit(vec![0x42])],
             })

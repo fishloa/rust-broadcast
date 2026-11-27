@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The item layer: HEIF and AVIF still images read and written (issue #4167
+  tier 2).** New modules `item` (ISO/IEC 14496-12:2026 §8.11/§8.15: `iloc`,
+  `iinf`/`infe`, `pitm`, `iref` with its typed reference boxes,
+  `iprp`/`ipco`/`ipma`, `idat`, `ipro`, `grpl`/`EntityToGroupBox`, `brnd`,
+  `hdlp`), `image` (ISO/IEC 23008-12:2017 clause 6 with its 2020 corrigendum:
+  `ispe`, `pixi`, `rloc`, `auxC`, `irot`, `lsel`, `imir`, the `grid`/`iovl`/
+  `iden` derived bodies, the HEVC/AVC configuration properties, and AVIF
+  v1.2.0's `a1op`/`a1lx` and brands), `item_reader` (a sans-IO reader yielding
+  brands, the primary item, every item with its properties, references and
+  resolved data ranges, entity groups, image size/rotation/mirroring,
+  thumbnails, auxiliary images, grid tiles/canvas, overlay layers, Exif/XMP
+  ranges, and a byte-exact re-emit plan) and `item_writer` (builds a file from
+  typed parts, choosing the `iloc` widths and offsets). A property whose
+  syntax another clause already defines reuses that type; coded item data is
+  opaque and addressed by byte ranges. New typed registry boxes take the
+  crate's coverage to 88 of 167 ISO/IEC 14496-12:2026 types. New types
+  `ItemId`, `PropertyIndex`, `GroupId`, `ItemType`, `ReferenceType`,
+  `EntityGroupType`, `ItemStep`, `StillImage`, `ReemitOp` and `ItemWriter`.
+  `Limits` gains caller-set item/property/reference count caps that default to
+  unlimited.
+
+
 - **Tier 1 box types and a tested coverage table (issue #4167).** New typed,
   private-field boxes with builders, accessors and symmetric parse/serialize:
   audio signalling `chnl`/`dmix`/`ludt` (`tlou`, `alou`)/`labl`; track
@@ -34,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `frma`-format sample entry from an `encv`/`enca` entry, and
   `init_segment::sample_entry_variant` is public so a demuxer can reparse that
   cleartext entry.
+
+### Breaking
+
+- `nalu_types::HevcNalArray` gained a `reserved` field: real files (libheif)
+  set the bit the `hvcC` array header declares reserved, and dropping it made
+  a HEIF item property fail the byte-exact round trip. `HevcNalArray::new`
+  keeps writing 0; a parsed array keeps the bit it read.
 
 ### Changed
 

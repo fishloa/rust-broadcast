@@ -94,6 +94,15 @@ impl Hdlr {
         HDLR_MIN_BODY_LEN + self.name.len()
     }
 
+    /// Parse a whole `hdlr` box (header included).
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if !item.four_cc().eq(&HDLR) {
+            return Err(Error::InvalidInput("expected hdlr"));
+        }
+        Self::parse_body(item.body)
+    }
+
     fn parse_body(body: &[u8]) -> Result<Self> {
         need_in(body, HDLR_MIN_BODY_LEN, "hdlr body")?;
         let reserved_slice = &body[HDLR_RESERVED_OFFSET..HDLR_MIN_BODY_LEN];

@@ -119,6 +119,40 @@ impl FileTypeBox {
         })
     }
 
+    /// Parse the `GeneralTypeBox` payload (no box header): the shape the
+    /// `brnd` item property reuses (§8.11.15.1).
+    pub fn parse_payload(body: &[u8]) -> Result<Self> {
+        let b = BrandBox::parse_body(body)?;
+        Ok(Self {
+            major_brand: b.major_brand,
+            minor_version: b.minor_version,
+            compatible_brands: b.compatible_brands,
+        })
+    }
+
+    /// The payload length of a `GeneralTypeBox` carrying these brands.
+    #[must_use]
+    pub fn payload_len(&self) -> usize {
+        self.brand().body_len()
+    }
+
+    /// Write the `GeneralTypeBox` payload (no box header).
+    pub fn serialize_payload_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.payload_len();
+        need_out(buf, need)?;
+        let mut cursor = 0;
+        buf[cursor..cursor + BOX_TYPE_SIZE].copy_from_slice(&self.major_brand);
+        cursor += BOX_TYPE_SIZE;
+        buf[cursor..cursor + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.minor_version.to_be_bytes());
+        cursor += core::mem::size_of::<u32>();
+        for brand in &self.compatible_brands {
+            buf[cursor..cursor + BOX_TYPE_SIZE].copy_from_slice(brand);
+            cursor += BOX_TYPE_SIZE;
+        }
+        Ok(cursor)
+    }
+
     fn brand(&self) -> BrandBox {
         BrandBox {
             major_brand: self.major_brand,

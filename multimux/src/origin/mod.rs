@@ -2129,10 +2129,13 @@ fn spawn_ingest(
                      any publisher that can reach this port may publish"
                 );
             }
-            let route_cfg = crate::source::rtmp::RtmpRoute::new(name, listen.clone())
-                .with_app(app.clone())
-                .with_stream_key(stream_key.clone())
-                .with_timeouts(timeouts);
+            let route_cfg = match config.prebound_tcp(listen) {
+                Some(listener) => crate::source::rtmp::RtmpRoute::with_listener(name, listener),
+                None => crate::source::rtmp::RtmpRoute::new(name, listen.clone()),
+            }
+            .with_app(app.clone())
+            .with_stream_key(stream_key.clone())
+            .with_timeouts(timeouts);
             spawn_supervised(
                 route_cfg,
                 ctx,
@@ -4616,11 +4619,10 @@ mod tests {
     async fn ts_udp_input_ingests_and_becomes_resolvable_through_the_registry() {
         let reserved = tokio::net::UdpSocket::bind("127.0.0.1:0")
             .await
-            .expect("reserve port");
+            .expect("bind the route's socket");
         let addr = reserved.local_addr().expect("local addr");
-        drop(reserved);
 
-        let cfg = crate::config::Config {
+        let mut cfg = crate::config::Config {
             routes: vec![crate::config::Route {
                 name: "cam1".into(),
                 input: crate::config::InputSpec::TsUdp {
@@ -4642,6 +4644,7 @@ mod tests {
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
         };
+        cfg.prebound.with_udp(addr.to_string(), reserved);
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(std::time::Duration::from_secs(4))

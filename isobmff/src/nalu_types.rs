@@ -19,6 +19,9 @@ const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
 
 /// One-byte `array_completeness` flag in an `hvcC` NAL-array header.
 const ARRAY_COMPLETENESS_FLAG: u8 = 0x80;
+/// The 1-bit `reserved` field that follows `array_completeness` in an array
+/// header. The spec writes 0; libheif writes 1, so it is kept as read.
+const ARRAY_RESERVED_FLAG: u8 = 0x40;
 /// Byte size of an `hvcC` NAL-array header: one packed byte plus the 16-bit
 /// `numNalus` count.
 const HEVC_NAL_ARRAY_HEADER_LEN: usize = 1 + core::mem::size_of::<u16>();
@@ -100,15 +103,28 @@ impl Serialize for HevcNalUnit {
 ///
 /// Corresponds to one iteration of the `numOfArrays` loop in
 /// `HEVCDecoderConfigurationRecord` (ISO/IEC 14496-15:2017 §8.3.3).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct HevcNalArray {
     /// `array_completeness` flag — all NALs of this type are in the array.
     pub array_completeness: bool,
+    /// The spec-reserved bit after `array_completeness`, kept because real
+    /// writers (libheif) set it and a re-serialization must reproduce it.
+    pub reserved: bool,
     /// `NAL_unit_type` — restricted to VPS/SPS/PPS/prefix SEI/suffix SEI.
     pub nal_unit_type: u8,
     /// The NAL units in this array.
     pub nalus: Vec<HevcNalUnit>,
+}
+
+impl core::fmt::Debug for HevcNalArray {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HevcNalArray")
+            .field("array_completeness", &self.array_completeness)
+            .field("nal_unit_type", &self.nal_unit_type)
+            .field("nalus", &self.nalus)
+            .finish()
+    }
 }
 
 impl HevcNalArray {
@@ -116,6 +132,7 @@ impl HevcNalArray {
     pub fn new(array_completeness: bool, nal_unit_type: u8, nalus: Vec<HevcNalUnit>) -> Self {
         Self {
             array_completeness,
+            reserved: false,
             nal_unit_type,
             nalus,
         }
@@ -159,6 +176,10 @@ impl Serialize for HevcNalArray {
             ARRAY_COMPLETENESS_FLAG
         } else {
             0u8
+        }) | (if self.reserved {
+            ARRAY_RESERVED_FLAG
+        } else {
+            0
         }) | (self.nal_unit_type & HEVC_NAL_TYPE_MASK);
         buf[cursor] = first_byte;
         cursor += 1;
@@ -213,6 +234,7 @@ mod tests {
     fn hevc_nal_array_oversized_count_errors() {
         let arr = HevcNalArray {
             array_completeness: false,
+            reserved: false,
             nal_unit_type: 33,
             nalus: (0..65536).map(|_| HevcNalUnit(alloc::vec![0x42])).collect(),
         };
@@ -234,6 +256,7 @@ mod tests {
     fn hevc_nal_array_max_count_round_trips() {
         let arr = HevcNalArray {
             array_completeness: false,
+            reserved: false,
             nal_unit_type: 33,
             nalus: (0..65535).map(|_| HevcNalUnit(alloc::vec![0x42])).collect(),
         };
@@ -249,6 +272,7 @@ mod tests {
         ];
         let arr = HevcNalArray {
             array_completeness: true,
+            reserved: false,
             nal_unit_type: 33,
             nalus,
         };
@@ -260,6 +284,7 @@ mod tests {
 
         let incomplete = HevcNalArray {
             array_completeness: false,
+            reserved: false,
             nal_unit_type: 33,
             nalus: alloc::vec![HevcNalUnit(alloc::vec![0x42, 0x01, 0x0C])],
         };

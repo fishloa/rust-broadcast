@@ -40,6 +40,7 @@ const MAX_PIC_AVERAGE_LIGHT_LEVEL_OFFSET: usize = CHROMATICITY_LEN;
 /// A CIE 1931 chromaticity coordinate pair in increments of 0.00002 (H.265
 /// D.3.28; 50000 = 1.0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ChromaticityXy {
     /// `x`, 0..=50000.
     pub x: u16,
@@ -52,6 +53,7 @@ pub struct ChromaticityXy {
 /// `display_primaries` are in SEI order: index 0 green, 1 blue, 2 red.
 /// Luminances are in units of 0.0001 cd/m2 (H.265 D.3.28).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MasteringDisplayColourVolume {
     /// `display_primaries_x[c]` / `display_primaries_y[c]` for c = 0..3.
     pub display_primaries: [ChromaticityXy; CIE_PRIMARY_COUNT],
@@ -65,6 +67,7 @@ pub struct MasteringDisplayColourVolume {
 
 /// `content_light_level_info` (H.265 D.2.35) / ISOBMFF `clli` body, in cd/m2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ContentLightLevel {
     /// `max_content_light_level` (MaxCLL).
     pub max_content_light_level: u16,

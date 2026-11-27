@@ -19,6 +19,8 @@ The only directories permitted directly under either tier (the guard
 | `ps` | MPEG-2 program streams |
 | `pes` | Bare PES packets |
 | `mp4` | ISO BMFF files: progressive, fragmented, CMAF, LL-CMAF |
+| `heif` | HEIF still images and image collections (ISO/IEC 23008-12) |
+| `avif` | AVIF still images, grids, alpha and HDR (AV1 Image File Format) |
 | `mkv` | Matroska and WebM |
 | `flv` | FLV files |
 | `mxf` | MXF files |

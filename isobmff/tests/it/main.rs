@@ -12,6 +12,7 @@ mod fixture_v1_scte35_livesim;
 mod hevc_array_rules;
 mod init_segment;
 mod init_segment_sweep;
+mod item_layer;
 mod largesize_truncation;
 mod metadata;
 mod permissive;

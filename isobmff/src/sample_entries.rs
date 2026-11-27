@@ -989,6 +989,7 @@ mod tests {
             length_size_minus_one: 3,
             arrays: alloc::vec![crate::nalu_types::HevcNalArray {
                 array_completeness: true,
+                reserved: false,
                 nal_unit_type: 32,
                 nalus: alloc::vec![crate::nalu_types::HevcNalUnit(vec![
                     0x40, 0x01, 0x0C, 0x01, 0xFF

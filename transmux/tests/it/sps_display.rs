@@ -673,6 +673,7 @@ fn hevc_cfg_for_sps(sps: Vec<u8>) -> CodecConfig {
                 length_size_minus_one: 3,
                 arrays: vec![isobmff::nalu_types::HevcNalArray {
                     array_completeness: true,
+                    reserved: false,
                     nal_unit_type: 33,
                     nalus: vec![isobmff::nalu_types::HevcNalUnit(sps)],
                 }],
@@ -816,6 +817,7 @@ fn hevc_field_seq_one_ffip_zero_no_hrd_is_none() {
                 length_size_minus_one: 3,
                 arrays: vec![isobmff::nalu_types::HevcNalArray {
                     array_completeness: true,
+                    reserved: false,
                     nal_unit_type: 33,
                     nalus: vec![isobmff::nalu_types::HevcNalUnit(sps)],
                 }],
