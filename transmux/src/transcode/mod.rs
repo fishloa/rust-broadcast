@@ -42,4 +42,4 @@ mod bridge;
 mod stage;
 
 pub use bridge::{codec_parameters_from_track, track_spec_from_codec_parameters};
-pub use stage::TranscodeStage;
+pub use stage::{DecoderFactory, TranscodeStage};

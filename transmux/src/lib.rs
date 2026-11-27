@@ -390,7 +390,7 @@ pub use splice::{
 };
 #[cfg(feature = "codec")]
 pub use transcode::{
-    TranscodeStage, codec_parameters_from_track, track_spec_from_codec_parameters,
+    DecoderFactory, TranscodeStage, codec_parameters_from_track, track_spec_from_codec_parameters,
 };
 pub use trickplay::TrickPlayStage;
 pub use ts_demux::{
