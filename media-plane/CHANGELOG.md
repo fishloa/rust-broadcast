@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `SampleCursorItem::damage`/`SegmentCursorItem::damage` and
+  `SampleCursor::take_damage`: a cursor that fell behind a ring (timed,
+  sparse, writer handovers, track markers, the segment log) or across an
+  archive pin's gap is the same loss in the workspace's one report vocabulary,
+  with the media-time span it covers when the ring can name both ends. The
+  in-band item keeps its exact count, so nothing is lost.
+- `SegmenterEvent::Damage`: the segmenter reports a cursor it fell behind and a
+  source-clock break it re-anchored on, alongside the manifest discontinuity
+  and segment output it already emits.
+- `ParsedFile::damage` and the file session's publication of it: a reader's
+  report is no longer discarded by the whole-file path, and reaches the host
+  before the content it describes.
+
+### Added
+
 - `IngestDriver::take_damage` hands the host every `SessionEvent::Damage` the
   session published since the last call, in order and with the program its
   track belongs to, so a host can log or meter what an input lost instead of
