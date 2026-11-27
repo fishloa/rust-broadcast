@@ -2,7 +2,6 @@
 mod absolute_timing;
 mod ac3_crc_check;
 mod ac3_syncframe_ranges;
-mod adts_container_probe_drift;
 mod any_stream;
 mod audio_config_facts;
 mod audio_metadata;

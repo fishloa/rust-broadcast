@@ -47,11 +47,14 @@ marked unverified.
 
 | Feature | Default | What it enables |
 |---|---|---|
-| `std` | yes | Forwards `broadcast-common/std`; off gives pure `#![no_std]` + `alloc` |
+| `std` | yes | Forwards `broadcast-core/std` and `broadcast-bitstream/std`; off gives pure `#![no_std]` + `alloc` |
 
-The only runtime dependency is `broadcast-common`. A probe that finds no
-candidate allocates nothing; a match allocates the internal candidate `Vec`
-once (pinned by `tests/alloc_bound.rs`).
+Two runtime dependencies: `broadcast-core` (the wire readers) and
+`broadcast-bitstream` with only its `aac` + `mpeg-audio` features, whose ADTS
+and MPEG audio header parsers judge each candidate header — the workspace has
+one parser per header, so a probe can never disagree with a demuxer about what
+a frame header is. A probe that finds no candidate allocates nothing; a match
+allocates the internal candidate `Vec` once (pinned by `tests/alloc_bound.rs`).
 
 ```toml
 [dependencies]
@@ -156,15 +159,17 @@ for `OggS`) is "stop" for that prober, not "read more".
 `#![no_std]` + `alloc`, `#![forbid(unsafe_code)]`. All public enums are
 `#[non_exhaustive]` with `name()` and `Display` (label convention, guarded by
 `workspace-guards/tests/guards/label.rs`). The crate needs no spec transcription of its own:
-every constant is reused from a sibling crate that round-trips real fixtures,
-pinned by a dev-dependency drift guard (`mpeg-ts`, `mpeg-ps`, `st377-1`). There
+the ADTS and MPEG audio header parsers come from `broadcast-bitstream` and the
+container constants are pinned by a dev-dependency drift guard (`mpeg-ts`,
+`mpeg-ps`, `st377-1`). There
 is no wire format, so the workspace round-trip invariant does not apply; the
 real-fixture identification tests are its equivalent gate.
 
 ## Related crates
 
-Depends on `broadcast-common` only (dev-dependencies `mpeg-ts`, `mpeg-ps`,
-`st377-1`). Used by `transmux` (CLI container detection, replacing its
-fixed-offset check, issue #960), `media-doctor` and `multimux`.
+Depends on `broadcast-core` and `broadcast-bitstream` (`aac` + `mpeg-audio`
+only), with dev-dependencies `mpeg-ts`, `mpeg-ps`, `st377-1`. Used by
+`transmux` (CLI container detection, replacing its fixed-offset check, issue
+#960), `media-doctor` and `multimux`.
 
 MSRV 1.95.0. Licensed under MIT OR Apache-2.0.

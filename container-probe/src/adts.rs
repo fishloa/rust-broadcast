@@ -10,40 +10,20 @@
 //!
 //! The longest chain of valid frames linked by their own `frame_length` fields:
 //! `>= 16` -> `LATTICE_STRONG`, `>= 4` -> `LATTICE_WEAK`, fewer -> no match.
+//!
+//! Only the chain walk, the scoring and the synthetic fixture builder live
+//! here: each candidate header is judged by
+//! `broadcast_bitstream::aac_asc::parse_adts_header`, the workspace's one ADTS
+//! header parser.
 
 use crate::{Confidence, Detail, Evidence, Outcome};
+use broadcast_bitstream::aac_asc::{ADTS_HEADER_SIZE, parse_adts_header};
 
-/// A conformant ADTS profile/layer byte masked to its `layer` + `profile`
-/// bits: `0xFF` sync hi, `0xF6` selects layer/profile (ISO/IEC 13818-7 §6.2.1;
-/// `layer` must be `00`), compared to `0xF0`.
-const ADTS_LAYER_MASK: u8 = 0xF6;
-/// The ADTS syncword bytes (`0xFF` + `0xF0` profile/layer pattern).
-const ADTS_SYNC: [u8; 2] = [0xFF, 0xF0];
-/// Bits 1:0 of byte 3 and the whole of bytes 4-5 carry the 13-bit
-/// `frame_length` (ISO/IEC 13818-7 §6.2.1): `byte3[1:0]` are bits `[12:11]`,
-/// `byte4` is `[10:3]`, `byte5[7:5]` is `[2:0]`. So the two high bits from byte 3
-/// shift left by **11** (they land at bit 12 and 11 of the 13-bit field).
-/// `frame_len = ((byte3 & 0x03) << 11) | (byte4 << 3) | (byte5 >> 5)`.
-const ADTS_FRAME_LENGTH_SHIFT: u8 = 11;
-/// Minimum aac profile frame length for a plausible frame (a header alone is
-/// 7 bytes; shorter is not a real ADTS frame).
-const ADTS_MIN_FRAME_LEN: usize = 7;
-/// The number of header bytes `adts_frame_len` reads: the 12-bit syncword +
-/// layer byte + the three frame-length bytes (through byte 5). A region shorter
-/// than this cannot even offer one header, so the prober cannot rule ADTS out.
+/// The number of header bytes the prober judges a candidate on: the 12-bit
+/// syncword, the layer byte and the three `frame_length` bytes (through byte
+/// 5). A region shorter than this cannot even offer one header, so the prober
+/// cannot rule ADTS out.
 const ADTS_HEADER_LEN: usize = 6;
-
-/// Byte offsets of the 13-bit `frame_length` field: its top 2 bits are in
-/// the third header byte, the rest in the fourth and fifth (§2.2.2, Table 2.2).
-const ADTS_LEN_HIGH_BYTE: usize = 3;
-const ADTS_LEN_MID_BYTE: usize = 4;
-const ADTS_LEN_LOW_BYTE: usize = 5;
-/// Mask of the 2 high `frame_length` bits.
-const ADTS_LEN_HIGH_MASK: u8 = 0x03;
-/// Shift of the next 8 `frame_length` bits.
-const ADTS_LEN_MID_SHIFT: u32 = 3;
-/// Shift of the 3 low `frame_length` bits.
-const ADTS_LEN_LOW_SHIFT: u32 = 5;
 /// Minimum valid-frames-in-a-chain for a positive `LATTICE_WEAK` match.
 const ADTS_MIN_CHAIN_WEAK: usize = 4;
 /// Valid-frames-in-a-chain that lift the verdict to `LATTICE_STRONG`.
@@ -110,25 +90,27 @@ fn need_at_least(anchor: usize, frame_len: usize) -> usize {
 }
 
 /// `true` if a valid ADTS frame header sits at `i`, and if so the
-/// 13-bit `frame_length`. Only the 6 bytes through byte 5 (the syncword, the
-/// layer byte and the three length bytes) are read — the frame's *body* is
-/// deliberately not inspected, so the check is "a header fits", not "the whole
-/// frame fits".
+/// `frame_length` the shared ADTS parser reads from it
+/// (`broadcast_bitstream::aac_asc::parse_adts_header`, the one ADTS header
+/// parser in the workspace).
+///
+/// The prober judges a candidate on the six bytes through byte 5 — the
+/// syncword, the layer byte and the three length bytes — so a region ending
+/// there still yields its length; the shared parser reads the full seven-byte
+/// header, so the window is zero-padded to it. Padding byte 6 carries
+/// `buffer_fullness` low bits and `num_raw_data_blocks`, neither of which
+/// changes `frame_length` or the prober's floor, and a frame shorter than a
+/// header is refused by both.
 fn adts_frame_len(data: &[u8], i: usize) -> Option<usize> {
-    if data.len().saturating_sub(i) < ADTS_HEADER_LEN {
+    let available = data.len().saturating_sub(i);
+    if available < ADTS_HEADER_LEN {
         return None;
     }
-    if data[i] != ADTS_SYNC[0] || data[i + 1] & ADTS_LAYER_MASK != ADTS_SYNC[1] {
-        return None;
-    }
-    let frame_len = ((usize::from(data[i + ADTS_LEN_HIGH_BYTE]) & ADTS_LEN_HIGH_MASK as usize)
-        << ADTS_FRAME_LENGTH_SHIFT)
-        | (usize::from(data[i + ADTS_LEN_MID_BYTE]) << ADTS_LEN_MID_SHIFT)
-        | (usize::from(data[i + ADTS_LEN_LOW_BYTE]) >> ADTS_LEN_LOW_SHIFT);
-    if frame_len < ADTS_MIN_FRAME_LEN {
-        return None;
-    }
-    Some(frame_len)
+    let mut window = [0u8; ADTS_HEADER_SIZE];
+    let copied = available.min(ADTS_HEADER_SIZE);
+    window[..copied].copy_from_slice(&data[i..i + copied]);
+    let header = parse_adts_header(&window).ok()?;
+    Some(usize::from(header.frame_length()))
 }
 
 /// The longest chain of valid ADTS frames linked by their own `frame_length`
