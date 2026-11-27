@@ -69,7 +69,8 @@ struct Counts {
 }
 
 /// A decoder that holds [`HOLD`] packets, then emits one frame — two for the
-/// first batch — and drains its remainder at `finish`.
+/// first batch — and drains its remainder as one last frame at `finish`, so
+/// `frames = ceil(packets / HOLD) + 1` for every input it is given.
 struct FakeDecoder {
     parameters: CodecParameters,
     queued: VecDeque<Packet<'static>>,
@@ -529,12 +530,17 @@ fn a_track_removed_mid_stream_flushes_the_decoder_then_the_encoder() {
     let counts = *counts.borrow();
     assert_eq!(counts.packets_in, fed, "every input reached the decoder");
     assert_eq!(
+        counts.frames_out,
+        fed.div_ceil(HOLD) + 1,
+        "the decoder's remainder is flushed as a frame at finish: nothing held is lost"
+    );
+    assert_eq!(
         counts.frames_in, counts.frames_out,
         "every decoded frame reached the encoder"
     );
     assert_eq!(
         counts.packets_out,
-        counts.frames_in + 1,
+        fed.div_ceil(HOLD) + 2,
         "the encoder emitted one packet per frame plus its first extra"
     );
     let samples_out = outputs
@@ -796,13 +802,22 @@ fn cmaf_out_describes_the_encoder_and_loses_nothing() {
         "the init segment carries the encoder's time base"
     );
     let counts = *counts.borrow();
+    let audio_in = samples
+        .iter()
+        .filter(|(id, _)| *id == audio.track_id)
+        .count();
     assert_eq!(
-        counts.frames_out, counts.frames_in,
+        counts.frames_out,
+        audio_in.div_ceil(HOLD) + 1,
+        "the decoder's remainder is flushed as a frame at finish: nothing is lost"
+    );
+    assert_eq!(
+        counts.frames_in, counts.frames_out,
         "every decoded frame reached the encoder"
     );
     assert_eq!(
         track.samples.len(),
-        counts.packets_out,
+        audio_in.div_ceil(HOLD) + 2,
         "every coded packet the encoder emitted is in the output"
     );
     assert_is_monotonic(&track.samples);
@@ -859,9 +874,18 @@ fn ts_out_describes_the_encoder_and_loses_nothing() {
         other => panic!("the audio track is AAC, got {other:?}"),
     }
     let counts = *counts.borrow();
+    let audio_in = samples
+        .iter()
+        .filter(|(id, _)| *id == audio.track_id)
+        .count();
+    assert_eq!(
+        counts.frames_out,
+        audio_in.div_ceil(HOLD) + 1,
+        "the decoder's remainder is flushed as a frame at finish"
+    );
     assert_eq!(
         track.samples.len(),
-        counts.packets_out,
+        audio_in.div_ceil(HOLD) + 2,
         "every coded packet the encoder emitted is in the TS output"
     );
     assert_is_monotonic(&track.samples);

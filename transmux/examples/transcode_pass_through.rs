@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .ok_or("usage: transcode_pass_through <out.cmaf>")?;
 
-    let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts"))?;
+    let ts = test_fixtures::read("ts/h264-aac.ts");
     let (specs, samples) = demux(&ts)?;
     let audio = specs
         .iter()
@@ -109,8 +109,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// A track's announced description and its coded samples, in demux order.
+type Demuxed = (Vec<TrackSpec>, Vec<(TrackId, Sample)>);
+
 /// Demux the fixture into its announced tracks and their samples.
-fn demux(ts: &[u8]) -> Result<(Vec<TrackSpec>, Vec<(TrackId, Sample)>), transmux::Error> {
+fn demux(ts: &[u8]) -> Result<Demuxed, transmux::Error> {
     let mut demux = transmux::StreamingTsDemux::new();
     let mut specs = Vec::new();
     let mut samples = Vec::new();
@@ -122,9 +125,7 @@ fn demux(ts: &[u8]) -> Result<(Vec<TrackSpec>, Vec<(TrackId, Sample)>), transmux
                 specs.push(spec)
             }
             transmux::DemuxEvent::Sample {
-                track_id,
-                sample,
-                ..
+                track_id, sample, ..
             } => samples.push((track_id, sample)),
             _ => {}
         }
@@ -134,11 +135,7 @@ fn demux(ts: &[u8]) -> Result<(Vec<TrackSpec>, Vec<(TrackId, Sample)>), transmux
 
 /// Take everything the stage has ready: announcements apart from the rest,
 /// because a muxer builds its init segment from the whole announced set.
-fn collect(
-    stage: &mut TranscodeStage,
-    announced: &mut Vec<MuxInput>,
-    rest: &mut Vec<MuxInput>,
-) {
+fn collect(stage: &mut TranscodeStage, announced: &mut Vec<MuxInput>, rest: &mut Vec<MuxInput>) {
     while let Some(input) = stage.poll() {
         match input {
             MuxInput::Track(_) => announced.push(input),
