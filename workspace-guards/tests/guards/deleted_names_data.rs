@@ -707,4 +707,89 @@ pub const TABLE: &[Banned] = &[
         reason: "walk_mhas_packets lives in broadcast_bitstream::mhas",
         issue: "broadcast-bitstream bs3a",
     },
+    Banned {
+        name: "transmux::mpeg_legacy::MpegAudioLayer",
+        reason: "the MPEG audio frame header lives in broadcast_bitstream::mpeg_audio",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::mpeg_legacy::MpegAudioFrameHeader",
+        reason: "the MPEG audio frame header lives in broadcast_bitstream::mpeg_audio",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::MpegAudioLayer",
+        reason: "the MPEG audio frame header lives in broadcast_bitstream::mpeg_audio",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::MpegAudioFrameHeader",
+        reason: "the MPEG audio frame header lives in broadcast_bitstream::mpeg_audio",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::MPEG_AUDIO_SYNCWORD",
+        reason: "the MPEG audio syncword lives in broadcast_bitstream::mpeg_audio",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data",
+        reason: "AFD and bar data live in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data::AfdSignal",
+        reason: "the AFD signal lives in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data::PictureUserData",
+        reason: "picture user data lives in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data::afd_from_t35_payload",
+        reason: "the AFD decode lives in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data::bar_data_from_t35_payload",
+        reason: "the bar-data decode lives in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data::bar_data_from_ga94_payload",
+        reason: "the bar-data decode lives in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::mpeg_legacy",
+        reason: "the MPEG-2 video sequence header lives in broadcast_bitstream::{mpeg2, h262}",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::h262",
+        reason: "the MPEG-2 sequence and picture user-data walk lives in broadcast_bitstream::h262",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::Mpeg2SeqHeader",
+        reason: "the MPEG-2 sequence header lives in broadcast_bitstream::mpeg2",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::SEQUENCE_HEADER_CODE",
+        reason: "the MPEG-2 sequence_header_code lives in broadcast_bitstream::mpeg2",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::SequenceHeaderGeometry",
+        reason: "the MPEG-2 sequence geometry lives in broadcast_bitstream::h262",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::SequenceDisplayExtension",
+        reason: "the MPEG-2 sequence display extension lives in broadcast_bitstream::h262",
+        issue: "broadcast-bitstream bs5",
+    },
 ];

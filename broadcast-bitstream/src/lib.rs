@@ -11,6 +11,8 @@
 #![doc = include_str!("../examples/annexb_to_avcc.rs")]
 #![doc = "```\n\n### `print_adts_headers`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/print_adts_headers.rs")]
+#![doc = "```\n\n### `print_mpeg_audio_headers`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/print_mpeg_audio_headers.rs")]
 #![doc = "```\n\n### `decode_capture_sps`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/decode_capture_sps.rs")]
 #![doc = "```\n\n### `print_capture_slices`\n\n```rust,ignore"]
@@ -32,6 +34,8 @@ pub mod codec_config_ext;
 pub mod dts_core;
 mod error;
 pub mod facts;
+#[cfg(feature = "mpeg2")]
+pub mod h262;
 #[cfg(all(feature = "hevc", feature = "isobmff"))]
 pub mod hdr;
 #[cfg(feature = "hevc")]
@@ -40,6 +44,10 @@ pub mod hdr10plus;
 pub mod interlace;
 #[cfg(feature = "mpegh")]
 pub mod mhas;
+#[cfg(feature = "mpeg2")]
+pub mod mpeg2;
+#[cfg(feature = "mpeg-audio")]
+pub mod mpeg_audio;
 pub mod nal;
 #[cfg(feature = "isobmff")]
 pub mod nalu_ext;
@@ -48,6 +56,7 @@ pub mod rfc6381;
 #[cfg(feature = "h264")]
 pub mod slice_header;
 pub mod sps;
+pub mod user_data;
 
 #[cfg(feature = "aac")]
 pub use aac_asc::{
@@ -78,6 +87,8 @@ pub use codec_config_ext::avc_config_from_sps_pps;
 #[cfg(feature = "dts")]
 pub use dts_core::{DTS_CORE_SYNC_WORD, DtsCoreFrame, DtsCoreFrameInfo, split_dts_core_frames};
 pub use error::{Error, Result};
+#[cfg(feature = "mpeg2")]
+pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
 #[cfg(all(feature = "hevc", feature = "isobmff"))]
 pub use hdr::HdrStaticMetadata;
 #[cfg(feature = "hevc")]
@@ -93,6 +104,10 @@ pub use interlace::hevc_facts;
 pub use interlace::{PicStruct, PictureFacts, SourceScanType, VideoScan};
 #[cfg(feature = "mpegh")]
 pub use mhas::{MhasPacket, find_mpegh3da_config, walk_mhas_packets};
+#[cfg(feature = "mpeg-audio")]
+pub use mpeg_audio::{MPEG_AUDIO_SYNCWORD, MpegAudioFrameHeader, MpegAudioLayer, MpegAudioVersion};
+#[cfg(feature = "mpeg2")]
+pub use mpeg2::{Mpeg2SeqHeader, SEQUENCE_HEADER_CODE};
 #[cfg(feature = "h264")]
 pub use nal::AvcNalUnitType;
 #[cfg(feature = "hevc")]
@@ -122,3 +137,4 @@ pub use sps::{
 };
 #[cfg(feature = "vvc")]
 pub use sps::{VvcSpsInfo, decode_vvc_sps};
+pub use user_data::{AfdSignal, PictureUserData, afd_from_t35_payload, bar_data_from_t35_payload};

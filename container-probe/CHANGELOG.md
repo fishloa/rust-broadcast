@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.
+- `broadcast-bitstream` (features `aac` + `mpeg-audio`) is a second runtime
+  dependency: the ADTS and MPEG audio header parsers are the workspace's one
+  copy (`broadcast_bitstream::aac_asc::parse_adts_header` and
+  `broadcast_bitstream::mpeg_audio::MpegAudioFrameHeader::parse`) instead of
+  this crate's own. The chain walk, the scoring, the ID3v2 skip and the
+  synthetic fixture builder stay. A probe that only needs a container verdict
+  now links the parsers as well.
+### Fixed
+
+- MP3 frame length: the `padding_bit` is bit 1 of the header's third byte, not
+  of the fourth (whose bit 1 is the low bit of `emphasis`). Sharing the
+  workspace parser corrects it, so a frame whose `emphasis` is 2 or 3 no longer
+  gains a spurious byte.
+
 ### Added
 
 - `BRAND_LEN`: the byte length of an ISO/IEC 14496-12 major brand, already the type of `Detail::Isobmff`'s `major_brand` field, is now public so callers can name it.

@@ -244,10 +244,11 @@ use mpeg_ts::ts::{
 };
 
 use crate::error::Result;
-use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
 use crate::nal_params::{ParamKind, parameter_set_is_valid};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
 use broadcast_bitstream::HdrStaticMetadata;
+use broadcast_bitstream::Mpeg2SeqHeader;
+use broadcast_bitstream::MpegAudioFrameHeader;
 use broadcast_bitstream::aac_asc::{
     ADTS_BLOCK_POSITION_SIZE, ADTS_CRC_SIZE, ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig,
     SamplingFrequencyIndex, adts_header_len, parse_adts_header,
@@ -745,8 +746,8 @@ pub(crate) fn mpeg2_is_sync(au: &[u8]) -> bool {
         if au[i..i + START_CODE_PREFIX.len()] == START_CODE_PREFIX {
             let code = au[i + START_CODE_PREFIX.len()];
             if code
-                == crate::mpeg_legacy::SEQUENCE_HEADER_CODE
-                    [crate::mpeg_legacy::SEQUENCE_HEADER_CODE.len() - 1]
+                == broadcast_bitstream::SEQUENCE_HEADER_CODE
+                    [broadcast_bitstream::SEQUENCE_HEADER_CODE.len() - 1]
             {
                 return true;
             }
@@ -923,7 +924,7 @@ impl FrameSync for MpegAudioSync {
             return SyncParse::NeedMore;
         }
         match MpegAudioFrameHeader::parse(data) {
-            Ok(hdr) => SyncParse::Frame(hdr, hdr.frame_length),
+            Ok(hdr) => SyncParse::Frame(hdr, hdr.frame_length()),
             Err(_) => SyncParse::NotSync,
         }
     }
@@ -3600,8 +3601,8 @@ fn finalize_probe(
             Some((
                 CodecConfig::Mpeg2Video {
                     esds,
-                    width: seq.width,
-                    height: seq.height,
+                    width: seq.width(),
+                    height: seq.height(),
                 },
                 VIDEO_TIMESCALE,
                 LiveKind::Video {
@@ -3617,10 +3618,10 @@ fn finalize_probe(
             // real broadcast payload is not guaranteed to start on a frame
             // sync.
             let (_, first) = find_mpeg_audio_sync(latest)?;
-            let sample_rate = first.sample_rate;
+            let sample_rate = first.sample_rate();
             let timescale = Timescale::try_new(sample_rate).ok()?;
-            let channel_count = first.channels;
-            let samples_per_frame = first.samples_per_frame;
+            let channel_count = first.channels();
+            let samples_per_frame = first.samples_per_frame();
             let oti = if *is_mpeg2 {
                 OTI_MPEG2_AUDIO
             } else {
@@ -3638,8 +3639,8 @@ fn finalize_probe(
                     STREAM_TYPE_AUDIO,
                     false,
                     0,
-                    first.bitrate_bps,
-                    first.bitrate_bps,
+                    first.bitrate_bps(),
+                    first.bitrate_bps(),
                     None,
                 )),
                 Some(SLConfigDescriptor::predefined_two()),
@@ -3647,7 +3648,7 @@ fn finalize_probe(
             Some((
                 CodecConfig::MpegAudio {
                     esds,
-                    layer: first.layer,
+                    layer: first.layer(),
                     channel_count,
                     sample_rate,
                     sample_size: AUDIO_SAMPLE_SIZE_BITS,
@@ -13047,9 +13048,9 @@ pub(crate) mod tests {
         let mut f = alloc::vec![0xFF, 0xFD, 0xA4 | (u8::from(pad) << 1), 0x00];
         f.extend_from_slice(&body_bytes(n, len - 4));
         let hdr = MpegAudioFrameHeader::parse(&f).expect("valid MP2 header");
-        assert_eq!(hdr.frame_length, len);
-        assert_eq!(hdr.samples_per_frame as i64, MP2_SAMPLES);
-        assert_eq!(hdr.sample_rate, 48_000);
+        assert_eq!(hdr.frame_length(), len);
+        assert_eq!(hdr.samples_per_frame() as i64, MP2_SAMPLES);
+        assert_eq!(hdr.sample_rate(), 48_000);
         f
     }
 

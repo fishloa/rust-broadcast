@@ -1,9 +1,10 @@
 //! DASH manifest gates: RFC 6381 MPEG codec strings, addressing labels and an
 //! empty caller-supplied duration list (ISO/IEC 23009-1 §5.3.9.4.4).
 #![cfg(feature = "std")]
+use broadcast_bitstream::MpegAudioLayer;
 use isobmff::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox};
 use transmux::dash::{Addressing, DashPackager};
-use transmux::{CodecConfig, MpegAudioLayer, rfc6381_codec_string};
+use transmux::{CodecConfig, rfc6381_codec_string};
 
 fn esds(oti: u8) -> EsdsBox {
     EsdsBox {

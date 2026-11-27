@@ -7,11 +7,18 @@
 //! container merely contains scattered `0xFF` noise (measured: every corpus
 //! container's longest MP3 chain is 0-1, `audio.mp3`'s is 44).
 //!
-//! Only MPEG-1 Layer III is matched (`version == 3`, `layer == 1`); the
-//! reserved bitrate indices (0, 15) and reserved sample-rate index (3) are
-//! rejected. An ID3v2 tag at the head is skipped before anchoring.
+//! Only MPEG-1 Layer III is matched (`MpegAudioFrameHeader::version()` is
+//! `Mpeg1` and `layer()` is `LayerIII`); the reserved bitrate indices (0, 15)
+//! and reserved sample-rate index (3) are rejected by the shared header parser.
+//! An ID3v2 tag at the head is skipped before anchoring.
+//!
+//! Only the chain walk, the scoring and the ID3v2 skip live here: each
+//! candidate header is judged by
+//! `broadcast_bitstream::mpeg_audio::MpegAudioFrameHeader::parse`, the
+//! workspace's one MPEG audio header parser.
 
 use crate::{Confidence, Detail, Evidence, Outcome};
+use broadcast_bitstream::{MpegAudioFrameHeader, MpegAudioLayer, MpegAudioVersion};
 
 /// The ID3v2 tag signature (ID3v2 §3.1; the tag precedes the audio in
 /// `fixtures/audio/audio.mp3`: `49 44 33 04`, version 2.4).
@@ -28,46 +35,13 @@ const ID3_FLAG_FOOTER: u8 = 0x10;
 /// ID3v2 syncsafe size uses only the low 7 bits of each of the 4 size bytes
 /// (the top bit is always 0) (ID3v2 §3.1).
 const ID3_SYNCSAFE_MASK: u8 = 0x7F;
-/// An MPEG audio syncword is an 11-bit `1`s pattern: ``b[0] == 0xFF`` and the
-/// top 3 bits of `b[1]` set (ISO/IEC 11172-3 §2.4.2.3).
-const MP3_SYNC_B0: u8 = 0xFF;
-const MP3_SYNC_B1_MASK: u8 = 0xE0;
-/// The MPEG version field `b[1][4:3]`: `3` is MPEG-1 (`11`).
-const MP3_VERSION_MPEG1: u8 = 3;
-/// The MPEG layer field `b[1][2:1]`: `1` is Layer III (`01`) (transmux
-/// `mpeg_legacy.rs`: `LAYER_III = 0b01`).
-const MP3_LAYER_III: u8 = 1;
-/// `frame_length` = `FRAME_LENGTH_COEFF * bitrate / sample_rate + padding`
-/// (ISO/IEC 11172-3 §2.4.2.3; `samples_per_frame/8` = 1152/8 = 144).
-const FRAME_LENGTH_COEFF: u32 = 144;
-/// Minimum valid MP3 frame length (the 4-byte header; real frames are larger).
-const MP3_MIN_FRAME_LEN: usize = 4;
-/// The bytes a 4-byte MP3 frame header occupies; a region shorter than this
-/// cannot offer one header, so the prober cannot rule MP3 out.
+/// The bytes a 4-byte MPEG audio frame header occupies; a region shorter than
+/// this cannot offer one header, so the prober cannot rule MP3 out.
 const MP3_HEADER_LEN: usize = 4;
-/// Convert the kbps bitrate table to bits per second for `frame_length`.
-const BITRATE_KILO_FACTOR: u32 = 1000;
 /// Minimum chained frames for a positive `LATTICE_WEAK` match.
 const MP3_MIN_CHAIN_WEAK: usize = 4;
 /// Chained frames that lift the verdict to `LATTICE_STRONG`.
 const MP3_MIN_CHAIN_STRONG: usize = 16;
-
-/// Byte offsets of the MPEG-1 Layer III header's second to fourth bytes.
-const HEADER_BYTE_B1: usize = 1;
-const HEADER_BYTE_B2: usize = 2;
-const HEADER_BYTE_B3: usize = 3;
-
-/// Wire bit positions and masks of the header fields (ISO/IEC 11172-3 §2.4.2.3).
-const VERSION_SHIFT: u32 = 3;
-const VERSION_MASK: u8 = 0x03;
-const LAYER_SHIFT: u32 = 1;
-const LAYER_MASK: u8 = 0x03;
-const BITRATE_INDEX_SHIFT: u32 = 4;
-const BITRATE_INDEX_MASK: u8 = 0x0F;
-const SAMPLE_RATE_INDEX_SHIFT: u32 = 2;
-const SAMPLE_RATE_INDEX_MASK: u8 = 0x03;
-const PADDING_SHIFT: u32 = 1;
-const PADDING_MASK: u8 = 0x01;
 
 /// Byte offset of the ID3v2 header's flags field.
 const ID3_FLAGS_OFFSET: usize = 5;
@@ -77,16 +51,6 @@ const ID3_SIZE_OFFSET: usize = 6;
 const ID3_SIZE_LEN: usize = 4;
 /// Payload bits each of those bytes carries (the top bit is always clear).
 const ID3_SYNC_SAFE_BITS: u32 = 7;
-
-/// Bitrate table (kbps) for MPEG-1 Layer III by `bitrate_index`
-/// (`b[2][7:4]`); index 0 (free-format) and 15 (forbidden) are `0` and
-/// rejected (ISO/IEC 11172-3 §2.4.2.3; transmux `mpeg_legacy.rs`).
-const BITRATE_KBPS: [u16; 16] = [
-    0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0,
-];
-/// Sample rates (Hz) for MPEG-1 by `sample_rate_index` (`b[2][3:2]`); index 3
-/// is reserved (ISO/IEC 11172-3 §2.4.2.3; transmux `mpeg_legacy.rs`).
-const SAMPLE_RATE_MPEG1: [u32; 3] = [44_100, 48_000, 32_000];
 
 /// The registered MP3 prober: ID3 skip + longest length-chained frame run.
 pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
@@ -170,40 +134,18 @@ fn longest_mp3_chain(data: &[u8]) -> crate::chain::Chain {
 
 /// `frame_length` for a valid MPEG-1 Layer III frame header at `i`, or `None`
 /// if the bytes are not a conformant MP3 frame header.
+///
+/// The header itself is decoded by
+/// `broadcast_bitstream::mpeg_audio::MpegAudioFrameHeader::parse` (the
+/// workspace's one MPEG audio header parser). That parser also accepts MPEG-2,
+/// MPEG-2.5 and Layers I/II, so the prober's own narrowing — MPEG-1 Layer III
+/// only — is applied on top.
 fn mp3_frame_len(data: &[u8], i: usize) -> Option<usize> {
-    if data.len().saturating_sub(i) < MP3_HEADER_LEN {
+    let header = MpegAudioFrameHeader::parse(data.get(i..)?).ok()?;
+    if header.version() != MpegAudioVersion::Mpeg1 || header.layer() != MpegAudioLayer::LayerIII {
         return None;
     }
-    let b0 = data[i];
-    let b1 = data[i + HEADER_BYTE_B1];
-    let b2 = data[i + HEADER_BYTE_B2];
-    let b3 = data[i + HEADER_BYTE_B3];
-    if b0 != MP3_SYNC_B0 || b1 & MP3_SYNC_B1_MASK != MP3_SYNC_B1_MASK {
-        return None;
-    }
-    let version = (b1 >> VERSION_SHIFT) & VERSION_MASK;
-    let layer = (b1 >> LAYER_SHIFT) & LAYER_MASK;
-    if version != MP3_VERSION_MPEG1 || layer != MP3_LAYER_III {
-        return None;
-    }
-    let br_idx = (b2 >> BITRATE_INDEX_SHIFT) & BITRATE_INDEX_MASK;
-    let sr_idx = (b2 >> SAMPLE_RATE_INDEX_SHIFT) & SAMPLE_RATE_INDEX_MASK;
-    if usize::from(sr_idx) >= SAMPLE_RATE_MPEG1.len() {
-        return None;
-    }
-    let bitrate = BITRATE_KBPS[br_idx as usize];
-    if bitrate == 0 {
-        return None; // reserved/free-format
-    }
-    let padding = (b3 >> PADDING_SHIFT) & PADDING_MASK;
-    let len = (FRAME_LENGTH_COEFF * u32::from(bitrate) * BITRATE_KILO_FACTOR)
-        / SAMPLE_RATE_MPEG1[sr_idx as usize]
-        + u32::from(padding);
-    let len = len as usize;
-    if len < MP3_MIN_FRAME_LEN {
-        return None;
-    }
-    Some(len)
+    Some(header.frame_length())
 }
 
 /// The number of bytes to skip past a leading ID3v2 tag, or `None` when there
@@ -402,11 +344,18 @@ mod tests {
     }
 
     /// `frame_length = 144 * bitrate / sample_rate + padding` (ISO/IEC
-    /// 11172-3 §2.4.2.3): 144 * 128 000 / 44 100 is 417, plus the padding bit.
+    /// 11172-3 §2.4.2.3): 144 * 128 000 / 44 100 is 417, plus the padding bit —
+    /// which is bit 1 of the header's THIRD byte, not of the fourth. The fourth
+    /// byte's bit 1 is the low bit of `emphasis` and must not lengthen a frame.
     #[test]
     fn a_frame_length_matches_the_iso_table_with_and_without_padding() {
         assert_eq!(mp3_frame_len(&[0xFF, 0xFB, 0x90, 0x00], 0), Some(417));
-        assert_eq!(mp3_frame_len(&[0xFF, 0xFB, 0x90, 0x02], 0), Some(418));
+        assert_eq!(mp3_frame_len(&[0xFF, 0xFB, 0x92, 0x00], 0), Some(418));
+        assert_eq!(
+            mp3_frame_len(&[0xFF, 0xFB, 0x90, 0x02], 0),
+            Some(417),
+            "emphasis bit 1 is not padding"
+        );
     }
 
     /// Each reserved or out-of-range header field is rejected on its own.

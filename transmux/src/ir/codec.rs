@@ -265,7 +265,7 @@ pub enum CodecConfig {
         /// The `esds` box (OTI 0x69/0x6B; DecoderSpecificInfo usually empty).
         esds: EsdsBox,
         /// Audio layer (1/2/3), from the first frame header.
-        layer: crate::mpeg_legacy::MpegAudioLayer,
+        layer: broadcast_bitstream::MpegAudioLayer,
         /// Channel count.
         channel_count: u16,
         /// Sampling rate in Hz.
