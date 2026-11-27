@@ -44,6 +44,20 @@
 //!
 //! HEVC / DTS / other codecs are not carried here (skipped, never fatal).
 //!
+//! # Damaged input
+//!
+//! Best-effort by default: a damaged input plays as far as it can. A damaged
+//! pack header, an unparsable PES, a PES length that overruns a pack boundary
+//! and a truncated tail are reported as [`DemuxEvent::InputDegraded`]; the
+//! scanner resynchronises on the next `pack_start_code` and every stream's
+//! splitter is re-anchored so the timeline after the damage stays monotonic.
+//! The errors that remain are: an MPEG-1 pack header
+//! (`mpeg_ps::Error::Mpeg1NotSupported`, a format this crate does not
+//! demux), a PES longer than the caller's `PsLimits::max_pes_bytes`, the
+//! caller's held-sample cap, the Annex B splitter's open-NAL cap, and an input
+//! in which no pack ever parsed (`finish` returns the scanner's first error:
+//! playback is impossible).
+//!
 //! # Spec
 //!
 //! - **Program Stream framing (pack header / system header / PSM)**: ISO/IEC
@@ -61,11 +75,13 @@ use core::num::NonZeroU32;
 
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::damage::{ByteRange, Damage, DamageKind, DamagePolicy, Severity};
 use broadcast_core::timescale::Timescale;
 use broadcast_core::wire::u16_at;
 use mpeg_ps::{PsEvent, PsLimits, PsScanner};
 
 use crate::TrackId;
+use crate::demux_damage;
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{
@@ -315,6 +331,8 @@ pub struct StreamingPsDemux {
     finished: bool,
     /// Total bytes fed, for absolute degradation positions.
     fed: u64,
+    /// What each [`Damage`] this demuxer publishes means to the caller.
+    damage_policy: DamagePolicy,
 }
 
 impl Default for StreamingPsDemux {
@@ -338,11 +356,53 @@ impl StreamingPsDemux {
             state: DemuxState::new(limits),
             finished: false,
             fed: 0,
+            damage_policy: DamagePolicy::new(),
         }
     }
 
-    /// Drain every unit the scanner has ready.
+    /// Set what each damage report this demuxer publishes means: the default
+    /// reports everything and fails on nothing.
+    #[must_use]
+    pub fn with_damage_policy(mut self, damage_policy: DamagePolicy) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
+
+    /// Drain every unit the scanner has ready, then hand the reports it
+    /// queued to the caller's policy.
     fn drain(&mut self) -> Result<()> {
+        let from = self.state.events.len();
+        self.drain_units()?;
+        demux_damage::admit_new(&self.state.events, &self.damage_policy, from)
+    }
+
+    /// Report the bytes the input left incomplete at end of stream: a tail
+    /// that ends inside a pack (or a PES) is dropped, never silently.
+    fn report_tail(&mut self) {
+        let have = self.scanner.buffered_len();
+        let Ok(have) = u64::try_from(have) else {
+            return;
+        };
+        if have == 0 {
+            return;
+        }
+        let position = self.fed.saturating_sub(have);
+        self.state.events.push_back(DemuxEvent::input_degraded(
+            None,
+            InputDegradation::TruncatedUnit { position },
+            EventProvenance::default(),
+        ));
+        self.state.events.push_back(DemuxEvent::damage(
+            Damage::new(
+                DamageKind::InputTruncated,
+                Severity::Degraded,
+                "Program Stream pack",
+            )
+            .at_byte_range(ByteRange::new(position, have)),
+        ));
+    }
+
+    fn drain_units(&mut self) -> Result<()> {
         loop {
             let buffered = self.scanner.buffered_len();
             let position = self.fed.saturating_sub(buffered as u64);
@@ -392,16 +452,18 @@ impl Stage for StreamingPsDemux {
         if self.finished {
             return Ok(());
         }
+        let from = self.state.events.len();
         self.scanner.finish();
-        self.drain()?;
+        self.drain_units()?;
         if self.state.packs_seen == 0
             && let Some(error) = self.scanner.first_error()
         {
             return Err(Error::Ps(error.clone()));
         }
+        self.report_tail();
         self.state.finish_streams()?;
         self.finished = true;
-        Ok(())
+        demux_damage::admit_new(&self.state.events, &self.damage_policy, from)
     }
 }
 
@@ -444,11 +506,22 @@ impl DemuxState {
     }
 
     fn on_resync(&mut self, position: u64, skipped: u64) {
-        let _ = skipped;
+        for stream in &mut self.streams {
+            stream.reanchor();
+        }
         self.events.push_back(DemuxEvent::input_degraded(
             None,
             InputDegradation::MalformedUnit { position },
             EventProvenance::default(),
+        ));
+        let range = ByteRange::new(position, skipped);
+        self.events.push_back(DemuxEvent::damage(
+            Damage::new(
+                DamageKind::Resynchronised,
+                Severity::Degraded,
+                "Program Stream pack",
+            )
+            .at_byte_range(range),
         ));
     }
 
@@ -483,6 +556,15 @@ impl DemuxState {
                     None,
                     InputDegradation::MalformedUnit { position },
                     EventProvenance::default(),
+                ));
+                let len = u64::try_from(packet.len()).unwrap_or(u64::MAX);
+                self.events.push_back(DemuxEvent::damage(
+                    Damage::new(
+                        DamageKind::MediaUnitDropped,
+                        Severity::Degraded,
+                        "PES packet",
+                    )
+                    .at_byte_range(ByteRange::new(position, len)),
                 ));
                 return Ok(());
             }
@@ -684,6 +766,22 @@ impl Stream {
             ac3_next_dts: None,
             ac3_anchor_wire90: 0,
             ac3_ticks_since_anchor: 0,
+        }
+    }
+
+    /// A container-level resync lost the bytes between the last delivered
+    /// unit and the next one: drop the partial elementary-stream state and
+    /// re-anchor every splitter's absolute offset to the bytes actually
+    /// delivered, so the next PES timestamp is bound to the unit it belongs
+    /// to instead of drifting.
+    fn reanchor(&mut self) {
+        self.stamps.clear();
+        let offset = self.es_len;
+        match &mut self.body {
+            Body::H264(state) => state.reanchor(offset),
+            Body::Mpeg2(state) => state.reanchor(offset),
+            Body::Ac3(state) => state.reanchor(offset),
+            _ => {}
         }
     }
 
@@ -1011,6 +1109,9 @@ struct VideoTiming {
     first_stamp: Option<(u64, i128)>,
     frame_dur: Option<i128>,
     last_dts: Option<i128>,
+    /// The last decode time resolved from a held access unit, so a stamp that
+    /// a resync bound to the wrong unit cannot move the timeline backwards.
+    last_resolved: Option<i128>,
 }
 
 impl VideoTiming {
@@ -1025,6 +1126,7 @@ impl VideoTiming {
             first_stamp: None,
             frame_dur: None,
             last_dts: None,
+            last_resolved: None,
         }
     }
 
@@ -1130,6 +1232,11 @@ impl VideoTiming {
             let dts = au.dts.unwrap_or_else(|| {
                 anchor.1 + (i128::from(au.index) - i128::from(anchor.0)) * duration
             });
+            let dts = match self.last_resolved {
+                Some(previous) if dts < previous => previous.saturating_add(duration),
+                _ => dts,
+            };
+            self.last_resolved = Some(dts);
             let pts = au.pts.unwrap_or(dts);
             let display = if h264 {
                 let Some(tracker) = self.tracker.as_mut() else {
@@ -1271,6 +1378,13 @@ impl H264State {
         })
     }
 
+    fn reanchor(&mut self, offset: u64) {
+        self.splitter =
+            AccessUnitSplitter::with_max_open_nal_bytes(NalCodec::Avc, MAX_OPEN_NAL_BYTES);
+        self.cursor = Some(offset);
+        self.pre_scan.clear();
+    }
+
     fn push(&mut self, payload: &[u8]) -> Result<()> {
         self.splitter.push(payload)?;
         if self.cursor.is_none() {
@@ -1329,6 +1443,13 @@ impl Mpeg2State {
             search_from: 0,
             flushing: false,
         })
+    }
+
+    fn reanchor(&mut self, offset: u64) {
+        self.buf.clear();
+        self.base = offset;
+        self.first_picture = false;
+        self.search_from = 0;
     }
 
     fn push(&mut self, payload: &[u8]) {
@@ -1405,6 +1526,11 @@ impl Ac3State {
             info: None,
             checked: false,
         }
+    }
+
+    fn reanchor(&mut self, offset: u64) {
+        self.buf.clear();
+        self.base = offset;
     }
 
     fn push(&mut self, payload: &[u8]) {

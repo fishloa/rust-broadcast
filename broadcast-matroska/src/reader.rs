@@ -51,6 +51,18 @@ const RESYNC_ID_BYTES: usize = MAX_ELEMENT_ID_OCTETS;
 /// chunks is still found.
 const RESYNC_OVERLAP: usize = RESYNC_ID_BYTES - 1;
 
+/// The `what` of a report about a malformed element whose id is known.
+const ELEMENT_NAME: &str = "element";
+
+/// The `what` of a report about an element id this crate does not name.
+const UNKNOWN_ELEMENT_NAME: &str = "element";
+
+/// The `what` of a report about a damaged Block.
+const BLOCK_NAME: &str = "Block";
+
+/// The `what` of a report about the input ending inside an element.
+const INPUT_NAME: &str = "input";
+
 /// A half-open byte range in the input: `[offset, offset + len)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteRange {
@@ -452,6 +464,43 @@ impl Warning {
             | Self::MalformedBlock { offset }
             | Self::Truncated { offset } => *offset,
         }
+    }
+}
+
+impl From<Warning> for broadcast_core::damage::Damage {
+    /// The reader's own fault report as the workspace's one damage report, so a
+    /// consumer above this crate speaks a single vocabulary.
+    fn from(warning: Warning) -> Self {
+        use broadcast_core::damage::{ByteRange, Damage, DamageKind, Severity};
+
+        let point = ByteRange::new(warning.position(), 0);
+        let named = |id: u32| {
+            ids::lookup(id)
+                .map(|def| def.name)
+                .unwrap_or(UNKNOWN_ELEMENT_NAME)
+        };
+        let (kind, severity, what) = match warning {
+            Warning::MalformedElement { .. } => (
+                DamageKind::MetadataSkipped,
+                Severity::Degraded,
+                ELEMENT_NAME,
+            ),
+            Warning::UnparsedElement { id, .. } => (
+                DamageKind::MetadataSkipped,
+                Severity::Informational,
+                named(id),
+            ),
+            Warning::UnknownSizeElement { id, .. } => {
+                (DamageKind::Resynchronised, Severity::Degraded, named(id))
+            }
+            Warning::MalformedBlock { .. } => {
+                (DamageKind::MediaUnitDropped, Severity::Degraded, BLOCK_NAME)
+            }
+            Warning::Truncated { .. } => {
+                (DamageKind::InputTruncated, Severity::Degraded, INPUT_NAME)
+            }
+        };
+        Damage::new(kind, severity, what).at_byte_range(point)
     }
 }
 
@@ -899,7 +948,6 @@ impl Reader {
         self.cluster_end = None;
         self.group = None;
         self.current_cluster = None;
-        self.cluster_timestamp = 0;
     }
 
     fn finish_group(&mut self) -> Result<()> {
@@ -950,6 +998,14 @@ impl Reader {
             return Err(error);
         }
         self.warned(Warning::Truncated { offset });
+        if let Some(side) = self.side.take() {
+            // A side read (the Cues the SeekHead points at) ran past the
+            // input: the index is optional, so resume the main walk instead
+            // of ending it.
+            self.pos = side.return_pos;
+            self.phase = Phase::Header { at: Where::Segment };
+            return Ok(());
+        }
         self.done = true;
         self.phase = Phase::Done;
         let _ = at;
@@ -1004,6 +1060,17 @@ impl Reader {
     }
 
     fn end_of_input(&mut self, at: Where, offset: u64) -> Result<()> {
+        if self.side.is_some() {
+            return self.truncated(
+                at,
+                offset,
+                Error::Truncated {
+                    what: "side read",
+                    need: 0,
+                    have: 0,
+                },
+            );
+        }
         match at {
             Where::Group { end } if self.pos < end => self.truncated(
                 at,
@@ -1037,6 +1104,19 @@ impl Reader {
         if let Some(len) = payload_len
             && len > self.limits.max_element_bytes()
         {
+            if self.tolerated() {
+                // A size larger than the element cap cannot be buffered; it is
+                // a broken size field, so skip the element and resynchronise
+                // rather than refusing the whole input.
+                self.warned(Warning::MalformedElement { offset });
+                self.pos = offset.saturating_add(1);
+                self.resync_carry_len = 0;
+                self.phase = Phase::Resync {
+                    remaining: self.limits.max_resync_bytes(),
+                    at,
+                };
+                return Ok(());
+            }
             return Err(Error::LimitExceeded {
                 limit: "max_element_bytes",
                 value: len,
@@ -1143,7 +1223,11 @@ impl Reader {
             }
             ids::CHAPTERS | ids::TAGS | ids::ATTACHMENTS => {
                 let Some(len) = payload_len else {
-                    return Err(Error::UnknownSizeNotAllowed { id });
+                    return self.malformed(
+                        Where::Segment,
+                        offset,
+                        Error::UnknownSizeNotAllowed { id },
+                    );
                 };
                 let end = self.pos.checked_add(len).ok_or(Error::SizeOverflow)?;
                 self.elements.push_back((
@@ -1163,6 +1247,17 @@ impl Reader {
             ids::CLUSTER => self.enter_cluster(header, offset, payload_len),
             _ if id == crate::ebml::global::VOID_ID || id == crate::ebml::global::CRC32_ID => {
                 self.skip(payload_len, offset, Where::Segment)
+            }
+            _ if is_cluster_child(id) => {
+                // A Block or Timestamp directly under the Segment: a Cluster
+                // declared a size that ended before them (a zero or short
+                // size field). Keep them in the Cluster in force instead of
+                // skipping the rest of its media.
+                self.warned(Warning::MalformedElement { offset });
+                self.cluster_end = None;
+                self.phase = Phase::Header { at: Where::Cluster };
+                self.held = Some((header, offset));
+                Ok(())
             }
             _ => self.malformed(
                 Where::Segment,
@@ -1222,7 +1317,11 @@ impl Reader {
             ids::SIMPLE_BLOCK => self.start_block(BlockOwner::Cluster, header, offset, payload_len),
             ids::BLOCK_GROUP => {
                 let Some(len) = payload_len else {
-                    return Err(Error::UnknownSizeNotAllowed { id });
+                    return self.malformed(
+                        Where::Cluster,
+                        offset,
+                        Error::UnknownSizeNotAllowed { id },
+                    );
                 };
                 let end = self.pos.checked_add(len).ok_or(Error::SizeOverflow)?;
                 self.group = Some(GroupContext {
@@ -1336,13 +1435,17 @@ impl Reader {
     ) -> Result<()> {
         let id = header.id().value();
         let Some(len) = payload_len else {
-            return Err(Error::UnknownSizeNotAllowed { id });
+            return self.malformed(Where::Segment, offset, Error::UnknownSizeNotAllowed { id });
         };
         if len > self.limits.max_master_bytes() {
-            return Err(Error::LimitExceeded {
-                limit: "max_master_bytes",
-                value: len,
-            });
+            return self.malformed(
+                Where::Segment,
+                offset,
+                Error::LimitExceeded {
+                    limit: "max_master_bytes",
+                    value: len,
+                },
+            );
         }
         let body = ByteRange {
             offset: self.pos,
@@ -1366,7 +1469,11 @@ impl Reader {
     ) -> Result<()> {
         let id = header.id().value();
         let Some(len) = payload_len else {
-            return Err(Error::UnknownSizeNotAllowed { id });
+            let at = match kind {
+                UnsignedKind::ClusterTimestamp => Where::Cluster,
+                UnsignedKind::BlockDuration => self.group_where(),
+            };
+            return self.malformed(at, offset, Error::UnknownSizeNotAllowed { id });
         };
         let body = ByteRange {
             offset: self.pos,
@@ -1414,7 +1521,11 @@ impl Reader {
     ) -> Result<()> {
         let id = header.id().value();
         let Some(len) = payload_len else {
-            return Err(Error::UnknownSizeNotAllowed { id });
+            let at = match owner {
+                BlockOwner::Cluster => Where::Cluster,
+                BlockOwner::Group => self.group_where(),
+            };
+            return self.malformed(at, offset, Error::UnknownSizeNotAllowed { id });
         };
         let payload = ByteRange {
             offset: self.pos,
@@ -1494,7 +1605,13 @@ impl Reader {
         };
         match kind {
             MasterKind::Ebml => {
-                EbmlHeader::parse(&full)?;
+                match EbmlHeader::parse(&full) {
+                    Ok(_) => {}
+                    Err(_error) if self.tolerated() => {
+                        self.warned(Warning::MalformedElement { offset });
+                    }
+                    Err(error) => return Err(error),
+                }
                 self.seen_ebml = true;
                 self.phase = Phase::Header { at: Where::Top };
                 Ok(())
@@ -1532,20 +1649,26 @@ impl Reader {
                     pos = pos.saturating_add(used);
                 }
                 Ok((_other, used)) => pos = pos.saturating_add(used),
-                Err(error) => {
+                Err(_error) => {
                     let entry_offset = offset.saturating_add(
                         u64::try_from(header_len.saturating_add(pos)).unwrap_or(u64::MAX),
                     );
+                    if let Some((entry, used)) =
+                        self.recover_track_entry(&payload[pos..], entry_offset)
+                    {
+                        entries.push(Element::TrackEntry(entry));
+                        pos = pos.saturating_add(used);
+                        continue;
+                    }
                     self.warned(Warning::UnparsedElement {
                         id: ids::TRACK_ENTRY,
                         offset: entry_offset,
                     });
-                    let (entry_header, used) = match ElementHeader::parse(&payload[pos..]) {
-                        Ok(parsed) => parsed,
-                        Err(_) => return Err(error),
+                    let Ok((entry_header, used)) = ElementHeader::parse(&payload[pos..]) else {
+                        break;
                     };
                     let Some(len) = entry_header.payload_len() else {
-                        return Err(error);
+                        break;
                     };
                     let skip = used.saturating_add(usize::try_from(len).unwrap_or(usize::MAX));
                     if skip == 0 || pos.saturating_add(skip) > payload.len() {
@@ -1556,6 +1679,57 @@ impl Reader {
             }
         }
         Ok(Tracks::from_parts(header, entries))
+    }
+
+    /// Re-type one `TrackEntry` child by child, for an entry the strict parse
+    /// refused: the corrupt run is reported and dropped, and the entry
+    /// survives with the children around it, so damaged metadata costs a field
+    /// rather than the track.
+    fn recover_track_entry<'a>(
+        &mut self,
+        bytes: &'a [u8],
+        offset: u64,
+    ) -> Option<(crate::matroska::TrackEntry<'a>, usize)> {
+        let (header, header_len) = ElementHeader::parse(bytes).ok()?;
+        if header.id().value() != ids::TRACK_ENTRY {
+            return None;
+        }
+        let len = usize::try_from(header.payload_len()?).ok()?;
+        let body = bytes.get(header_len..header_len.checked_add(len)?)?;
+        let mut children: Vec<Element<'a>> = Vec::new();
+        let mut pos = 0usize;
+        let mut damaged: Option<usize> = None;
+        while pos < body.len() {
+            if let Ok((element, used)) = Element::parse_at(&body[pos..], &self.limits)
+                && used > 0
+                && is_track_entry_child(element.header().id().value())
+            {
+                if let Some(start) = damaged.take() {
+                    let child = offset.saturating_add(
+                        u64::try_from(header_len.saturating_add(start)).unwrap_or(u64::MAX),
+                    );
+                    self.warned(Warning::MalformedElement { offset: child });
+                }
+                children.push(element);
+                pos = pos.saturating_add(used);
+                continue;
+            }
+            damaged.get_or_insert(pos);
+            pos = pos.saturating_add(1);
+        }
+        if let Some(start) = damaged {
+            let child = offset.saturating_add(
+                u64::try_from(header_len.saturating_add(start)).unwrap_or(u64::MAX),
+            );
+            self.warned(Warning::MalformedElement { offset: child });
+        }
+        if children.is_empty() {
+            return None;
+        }
+        Some((
+            crate::matroska::TrackEntry::from_parts(header, children),
+            header_len.saturating_add(len),
+        ))
     }
 
     fn master_failed(&mut self, kind: MasterKind, offset: u64, error: Error) -> Result<()> {
@@ -1570,7 +1744,10 @@ impl Reader {
             MasterKind::Cues => ids::CUES,
         };
         self.warned(Warning::UnparsedElement { id, offset });
-        self.side = None;
+        if let Some(side) = self.side.take() {
+            self.pos = side.return_pos;
+            self.phase = Phase::Header { at: Where::Segment };
+        }
         Ok(())
     }
 
@@ -1804,7 +1981,21 @@ impl Reader {
                 },
             );
         }
-        let value = crate::ebml::scalar::Unsigned::parse(bytes)?.value();
+        let value = match crate::ebml::scalar::Unsigned::parse(bytes) {
+            Ok(value) => value.value(),
+            Err(_error) if self.tolerated() => {
+                self.warned(Warning::MalformedElement { offset });
+                self.pos = body.end();
+                self.phase = Phase::Header {
+                    at: match kind {
+                        UnsignedKind::ClusterTimestamp => Where::Cluster,
+                        UnsignedKind::BlockDuration => self.group_where(),
+                    },
+                };
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         match kind {
             UnsignedKind::ClusterTimestamp => {
                 let timestamp = i64::try_from(value).map_err(|_| {
@@ -1871,13 +2062,23 @@ impl Reader {
                         self.phase = Phase::Header { at: Where::Cluster };
                     }
                     BlockOwner::Group => {
+                        let mut duplicate = false;
                         if let Some(group) = self.group.as_mut() {
                             if group.block.is_some() {
+                                duplicate = true;
+                            } else {
+                                group.block = Some(pending);
+                            }
+                        }
+                        if duplicate {
+                            if !self.tolerated() {
                                 return Err(Error::InvalidBlock {
                                     what: "BlockGroup carries two Blocks",
                                 });
                             }
-                            group.block = Some(pending);
+                            self.warned(Warning::MalformedBlock {
+                                offset: element.offset,
+                            });
                         }
                         self.pos = payload.end();
                         self.phase = Phase::Header {
@@ -2011,7 +2212,8 @@ impl Reader {
         let mut window = Vec::with_capacity(carry_len + bytes.len());
         window.extend_from_slice(&self.resync_carry[..carry_len]);
         window.extend_from_slice(bytes);
-        if let Some(index) = find_resync(&window, at) {
+        let found = find_resync(&window, at, false).or_else(|| find_resync(&window, at, true));
+        if let Some(index) = found {
             let target = base.saturating_add(u64::try_from(index).unwrap_or(0));
             self.pos = target;
             self.resync_carry_len = 0;
@@ -2067,18 +2269,17 @@ fn is_level_one(id: u32) -> bool {
 /// damaged Cluster child does not lose the rest of its Cluster. Every candidate
 /// must also parse as a complete element header, so a byte pattern inside a
 /// Block payload is not mistaken for a boundary.
-fn find_resync(window: &[u8], at: Where) -> Option<usize> {
+fn find_resync(window: &[u8], at: Where, children: bool) -> Option<usize> {
     for index in 0..window.len() {
         let rest = window.get(index..)?;
         let Some((header, _)) = ElementHeader::parse(rest).ok() else {
             continue;
         };
         let id = header.id().value();
-        let boundary = if matches!(at, Where::Cluster | Where::Group { .. }) {
-            is_level_one(id) || is_cluster_child(id)
-        } else {
-            is_level_one(id)
-        };
+        let boundary = is_level_one(id)
+            || (children
+                && matches!(at, Where::Cluster | Where::Group { .. })
+                && is_cluster_child(id));
         if boundary {
             return Some(index);
         }
@@ -2099,6 +2300,15 @@ fn is_cluster_child(id: u32) -> bool {
             | ids::ENCRYPTED_BLOCK
             | ids::SILENT_TRACKS
     ) || id == crate::ebml::global::VOID_ID
+        || id == crate::ebml::global::CRC32_ID
+}
+
+/// Whether `id` may appear directly inside a `TrackEntry`, plus the global
+/// elements every level may carry.
+fn is_track_entry_child(id: u32) -> bool {
+    const TRACK_ENTRY_PATH: &str = r"Segment\Tracks\TrackEntry";
+    ids::lookup(id).is_some_and(|def| def.parent == TRACK_ENTRY_PATH)
+        || id == crate::ebml::global::VOID_ID
         || id == crate::ebml::global::CRC32_ID
 }
 

@@ -548,7 +548,9 @@ pub fn write_big_mp4(path: &Path, opts: &BigMp4Options) -> BigMp4 {
         duration: mvhd_duration,
         rate: BIG_MP4_RATE_UNITY,
         volume: BIG_MP4_VOLUME_UNITY,
+        reserved: Default::default(),
         matrix: BIG_MP4_IDENTITY_MATRIX,
+        pre_defined: Default::default(),
         next_track_id: TrackId::new(BIG_MP4_NEXT_TRACK_ID),
     };
     let ftyp = FileTypeBox {
@@ -662,20 +664,16 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
 
     let stbl = SampleTableBox {
         children: vec![
-            StblChild::Stsd(SampleDescriptionBox {
-                version: 0,
-                flags: 0,
-                entries: vec![spec.entry.clone()],
-            }),
+            StblChild::Stsd(SampleDescriptionBox::new(0, 0, vec![spec.entry.clone()])),
             StblChild::Stts(spec.stts.clone()),
             StblChild::Stsc(spec.stsc.clone()),
-            StblChild::Stsz(SampleSizeBox {
-                version: 0,
-                flags: 0,
-                sample_size: spec.sample_bytes,
-                sample_count: spec.sample_count,
-                entries: vec![],
-            }),
+            StblChild::Stsz(SampleSizeBox::new(
+                0,
+                0,
+                spec.sample_bytes,
+                spec.sample_count,
+                vec![],
+            )),
             StblChild::Co64(ChunkLargeOffsetBox {
                 version: 0,
                 flags: 0,
@@ -684,15 +682,15 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
         ],
     };
     let dinf = DataInformationBox::new(
-        Some(DataReferenceBox {
-            version: 0,
-            flags: 0,
-            entries: vec![DataEntry::Url(DataEntryUrlBox {
+        Some(DataReferenceBox::new(
+            0,
+            0,
+            vec![DataEntry::Url(DataEntryUrlBox {
                 version: 0,
                 flags: 1,
                 location: vec![],
             })],
-        }),
+        )),
         vec![],
     );
     let minf = if spec.audio {
@@ -702,6 +700,7 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
                 version: 0,
                 flags: 0,
                 balance: 0,
+                reserved: Default::default(),
             }),
             Some(dinf),
             Some(stbl),
@@ -730,6 +729,7 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
             timescale: expect("track timescale", Timescale::try_new(spec.timescale)),
             duration: spec.delta,
             language: BIG_MP4_LANGUAGE_UNDETERMINED,
+            quality: Default::default(),
         }),
         Some(HandlerBox {
             version: 0,
@@ -749,7 +749,9 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
             creation_time: 0,
             modification_time: 0,
             track_id: TrackId::new(spec.track_id),
+            reserved: Default::default(),
             duration: spec.delta,
+            reserved_2: Default::default(),
             layer: 0,
             alternate_group: 0,
             volume: if spec.audio {
@@ -757,6 +759,7 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
             } else {
                 0
             },
+            reserved_3: Default::default(),
             matrix: BIG_MP4_IDENTITY_MATRIX,
             width: if spec.audio { 0 } else { BIG_MP4_VIDEO_WIDTH },
             height: if spec.audio { 0 } else { BIG_MP4_VIDEO_HEIGHT },
@@ -976,7 +979,9 @@ fn write_big_fmp4_sparse(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
         duration: rescale_ceil(total_duration, 90_000, BIG_MP4_MOVIE_TIMESCALE),
         rate: BIG_MP4_RATE_UNITY,
         volume: BIG_MP4_VOLUME_UNITY,
+        reserved: Default::default(),
         matrix: BIG_MP4_IDENTITY_MATRIX,
+        pre_defined: Default::default(),
         next_track_id: TrackId::new(BIG_MP4_VIDEO_TRACK + 1),
     };
     let empty_stts = build_stts(&[]);
@@ -1018,31 +1023,31 @@ fn write_big_fmp4_sparse(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
     let mut moof = MovieFragmentBox::new(
         MovieFragmentHeaderBox::new(1),
         vec![TrackFragmentBox::new(
-            TrackFragmentHeaderBox {
-                flags: TFHD_DEFAULT_BASE_IS_MOOF,
-                track_id: TrackId::new(BIG_MP4_VIDEO_TRACK),
-                base_data_offset: None,
-                sample_description_index: None,
-                default_sample_duration: None,
-                default_sample_size: None,
-                default_sample_flags: None,
-            },
+            TrackFragmentHeaderBox::new(
+                TFHD_DEFAULT_BASE_IS_MOOF,
+                TrackId::new(BIG_MP4_VIDEO_TRACK),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
             Some(TrackFragmentBaseMediaDecodeTimeBox::new_v1(0)),
-            vec![TrackFragmentRunBox {
-                version: 1,
-                tr_flags: TRUN_DATA_OFFSET_PRESENT
+            vec![TrackFragmentRunBox::new(
+                1,
+                TRUN_DATA_OFFSET_PRESENT
                     | TRUN_SAMPLE_DURATION_PRESENT
                     | TRUN_SAMPLE_SIZE_PRESENT
                     | TRUN_SAMPLE_FLAGS_PRESENT,
-                data_offset: Some(0),
-                first_sample_flags: None,
-                samples: vec![TrunSample {
+                Some(0),
+                None,
+                vec![TrunSample {
                     sample_duration: Some(BIG_FMP4_SAMPLE_DELTA),
                     sample_size: Some(sample_bytes),
                     sample_flags: Some(SAMPLE_FLAGS_SYNC),
                     sample_composition_time_offset: None,
                 }],
-            }],
+            )],
         )],
     );
     let moof_len = moof.serialized_len();
@@ -1100,15 +1105,15 @@ fn write_big_fmp4_sparse(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
                 })
             })
             .collect();
-        let tfra = TrackFragmentRandomAccessBox {
-            version: 1,
-            flags: 0,
-            track_id: TrackId::new(BIG_MP4_VIDEO_TRACK),
-            length_size_of_traf_num: 0,
-            length_size_of_trun_num: 0,
-            length_size_of_sample_num: 0,
+        let tfra = TrackFragmentRandomAccessBox::new(
+            1,
+            0,
+            TrackId::new(BIG_MP4_VIDEO_TRACK),
+            0,
+            0,
+            0,
             entries,
-        };
+        );
         let mfra_len = 8
             + tfra.serialized_len()
             + MovieFragmentRandomAccessOffsetBox {

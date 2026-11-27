@@ -849,10 +849,11 @@ pub fn resync_decision(input: &[u8], at_eof: bool) -> ResyncDecision {
         return ResyncDecision::Tag;
     }
     // A plausible header whose own body has not fully arrived is a tag still
-    // being read, not damage: wait for exactly that body.
+    // being read, not damage: wait for exactly that body. At end of input it
+    // cannot arrive, so the front is damaged and the scan below decides.
     if plausible_tag_header(input, 0, false) {
         let body_end = FLV_TAG_HEADER_LEN.saturating_add(tag_data_size(input, 0));
-        if body_end > input.len() {
+        if body_end > input.len() && !at_eof {
             return ResyncDecision::Need(body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN));
         }
     }
@@ -891,6 +892,12 @@ pub fn resync_decision(input: &[u8], at_eof: bool) -> ResyncDecision {
         if tag_chain_holds(input, at, true) {
             return ResyncDecision::Skip(at);
         }
+    }
+    if at_eof {
+        // No consistent tag chain anywhere in what is left: the tail is
+        // damaged. Consume it (keeping less than one tag header so the next
+        // decision terminates) and let the caller report the span.
+        return ResyncDecision::Skip(input.len().saturating_sub(FLV_TAG_HEADER_LEN - 1));
     }
     ResyncDecision::Need(input.len().saturating_add(1))
 }

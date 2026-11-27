@@ -436,15 +436,15 @@ fn a_sidx_plan_numbers_its_subsegments_from_one() {
            <SegmentBase timescale="1000" indexRange="0-99"/>
            </Representation></AdaptationSet></Period>"#,
     );
-    let mut sidx = SegmentIndexBox {
-        version: 0,
-        flags: 0,
-        reference_id: 1,
-        timescale: broadcast_core::timescale::Timescale::try_new(1000).unwrap(),
-        earliest_presentation_time: 0,
-        first_offset: 0,
-        references: Vec::new(),
-    };
+    let mut sidx = SegmentIndexBox::new(
+        0,
+        0,
+        1,
+        broadcast_core::timescale::Timescale::try_new(1000).unwrap(),
+        0,
+        0,
+        Vec::new(),
+    );
     for _ in 0..3 {
         sidx.references.push(SidxReference {
             reference_type: 0,
@@ -482,14 +482,14 @@ fn a_sidx_reference_to_another_sidx_is_refused() {
     use isobmff::timing::SegmentIndexBox;
     use isobmff::timing::SidxReference;
 
-    let sidx = SegmentIndexBox {
-        version: 0,
-        flags: 0,
-        reference_id: 1,
-        timescale: broadcast_core::timescale::Timescale::try_new(1000).unwrap(),
-        earliest_presentation_time: 0,
-        first_offset: 0,
-        references: vec![SidxReference {
+    let sidx = SegmentIndexBox::new(
+        0,
+        0,
+        1,
+        broadcast_core::timescale::Timescale::try_new(1000).unwrap(),
+        0,
+        0,
+        vec![SidxReference {
             reference_type: 1,
             referenced_size: 10,
             subsegment_duration: 1000,
@@ -497,7 +497,7 @@ fn a_sidx_reference_to_another_sidx_is_refused() {
             sap_type: 0,
             sap_delta_time: 0,
         }],
-    };
+    );
     assert!(matches!(
         base_index::segments(&sidx, 100),
         Err(AddressError::Unsupported(
@@ -520,15 +520,15 @@ fn a_sidx_segment_without_starts_with_sap_is_marked_so() {
         sap_type: 0,
         sap_delta_time: 0,
     };
-    let sidx = SegmentIndexBox {
-        version: 0,
-        flags: 0,
-        reference_id: 1,
-        timescale: broadcast_core::timescale::Timescale::try_new(1000).unwrap(),
-        earliest_presentation_time: 0,
-        first_offset: 0,
-        references: vec![reference(1), reference(0)],
-    };
+    let sidx = SegmentIndexBox::new(
+        0,
+        0,
+        1,
+        broadcast_core::timescale::Timescale::try_new(1000).unwrap(),
+        0,
+        0,
+        vec![reference(1), reference(0)],
+    );
     let segs = base_index::segments(&sidx, 100).unwrap();
     assert_eq!(segs.len(), 2);
     assert!(segs[0].starts_with_sap);

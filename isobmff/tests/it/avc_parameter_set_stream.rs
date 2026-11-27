@@ -96,11 +96,7 @@ fn an_avcp_entry_is_typed_and_round_trips_through_stsd() {
     entry.codec_type = AVCP_SAMPLE_ENTRY;
     entry.config.config.sps.clear();
     entry.config.config.pps.clear();
-    let stsd = SampleDescriptionBox {
-        version: 0,
-        flags: 0,
-        entries: vec![SampleEntryVariant::Avc1(entry.clone())],
-    };
+    let stsd = SampleDescriptionBox::new(0, 0, vec![SampleEntryVariant::Avc1(entry.clone())]);
     let bytes = stsd.try_to_bytes().unwrap();
 
     let parsed = SampleDescriptionBox::parse(&bytes).unwrap();

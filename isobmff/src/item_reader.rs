@@ -240,6 +240,33 @@ pub struct MetaRecord {
     version: u8,
     flags: u32,
     children: Vec<MetaChild>,
+    /// The wire header form of each child, parallel to `children`: a child
+    /// written with `size == 0` or `size == 1` + `largesize` keeps that form
+    /// on a rewrite (§4.2). A record a caller built carries no forms, so every
+    /// child is written compact.
+    forms: Vec<BoxForm>,
+}
+
+/// The header form one `meta` child was written with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+enum BoxForm {
+    /// A 32-bit `size`.
+    Compact,
+    /// `size == 0`: the box runs to the end of its container.
+    ToEnd,
+    /// `size == 1` and a 64-bit `largesize`.
+    LargeSize,
+}
+
+impl BoxForm {
+    /// The extra bytes this form adds to a compact 8-byte header.
+    const fn extra_header(self) -> usize {
+        match self {
+            Self::Compact | Self::ToEnd => 0,
+            Self::LargeSize => LARGESIZE_SIZE,
+        }
+    }
 }
 
 impl MetaRecord {
@@ -250,6 +277,7 @@ impl MetaRecord {
             version,
             flags,
             children,
+            forms: Vec::new(),
         }
     }
 
@@ -276,17 +304,29 @@ impl MetaRecord {
         Ok(BOX_HEADER_MIN_SIZE + self.body_len()?)
     }
 
+    /// The header form recorded for the child at `index`. An opaque child
+    /// writes its own header (it carries `to_end`/`largesize`), so its form is
+    /// only needed for the `size == 0` rewrite.
+    fn form(&self, index: usize) -> BoxForm {
+        match (self.children.get(index), self.forms.get(index).copied()) {
+            (Some(MetaChild::Opaque(_)), Some(BoxForm::LargeSize)) | (_, None) => BoxForm::Compact,
+            (_, Some(form)) => form,
+        }
+    }
+
     fn body_len(&self) -> Result<usize> {
         let mut len = FULLBOX_EXTRA_SIZE;
-        for child in &self.children {
+        for (index, child) in self.children.iter().enumerate() {
             len = len
                 .checked_add(child.serialized_len())
+                .and_then(|len| len.checked_add(self.form(index).extra_header()))
                 .ok_or(Error::InvalidInput("meta body length overflow"))?;
         }
         Ok(len)
     }
 
-    /// Rebuild the `meta` body (FullBox word plus children).
+    /// Rebuild the `meta` body (FullBox word plus children), each child in the
+    /// header form it was parsed with.
     pub fn to_body(&self) -> Result<Vec<u8>> {
         let need = self.body_len()?;
         let mut out = alloc::vec![0u8; need];
@@ -294,8 +334,46 @@ impl MetaRecord {
         let flags = self.flags.to_be_bytes();
         out[1..FULLBOX_EXTRA_SIZE].copy_from_slice(&flags[1..]);
         let mut cursor = FULLBOX_EXTRA_SIZE;
-        for child in &self.children {
-            cursor += child.serialize_into(&mut out[cursor..])?;
+        for (index, child) in self.children.iter().enumerate() {
+            let compact = child.serialized_len();
+            let form = self.form(index);
+            match form {
+                BoxForm::Compact => {
+                    cursor += child.serialize_into(&mut out[cursor..])?;
+                }
+                BoxForm::ToEnd => {
+                    cursor += child.serialize_into(&mut out[cursor..])?;
+                    let size_at = cursor - compact;
+                    let size = out
+                        .get_mut(size_at..size_at.saturating_add(core::mem::size_of::<u32>()))
+                        .ok_or(Error::InvalidInput("meta child header"))?;
+                    size.copy_from_slice(&0u32.to_be_bytes());
+                }
+                BoxForm::LargeSize => {
+                    if out.len() < cursor.saturating_add(BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE) {
+                        return Err(Error::InvalidInput("meta child header"));
+                    }
+                    let mut scratch = alloc::vec![0u8; compact];
+                    let written = child.serialize_into(&mut scratch)?;
+                    let body = scratch
+                        .get(BOX_HEADER_MIN_SIZE..written)
+                        .ok_or(Error::InvalidInput("meta child body"))?;
+                    // `size == 1` means a 64-bit `largesize` follows (§4.2).
+                    let type_at = cursor + core::mem::size_of::<u32>();
+                    let sentinel = crate::box_types::SIZE_INDICATES_LARGESIZE;
+                    out[cursor..type_at].copy_from_slice(&sentinel.to_be_bytes());
+                    out[type_at..cursor + BOX_HEADER_MIN_SIZE]
+                        .copy_from_slice(&scratch[type_at..BOX_HEADER_MIN_SIZE]);
+                    let total = u64::try_from(compact.saturating_add(LARGESIZE_SIZE))
+                        .map_err(|_| Error::InvalidInput("meta child size"))?;
+                    out[cursor + BOX_HEADER_MIN_SIZE
+                        ..cursor + BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE]
+                        .copy_from_slice(&total.to_be_bytes());
+                    let start = cursor + BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
+                    out[start..start + body.len()].copy_from_slice(body);
+                    cursor = start + body.len();
+                }
+            }
         }
         if cursor != need {
             return Err(Error::InvalidInput("meta body length changed"));
@@ -566,6 +644,7 @@ pub struct StillImage {
     groups: GroupsListBox,
     handler_type: Option<[u8; BOX_TYPE_SIZE]>,
     total_len: Option<u64>,
+    degraded: Vec<ImageFinding>,
 }
 
 impl StillImage {
@@ -809,7 +888,7 @@ impl StillImage {
     /// 11, reported without refusing the read.
     #[must_use]
     pub fn structure_findings(&self) -> Vec<ImageFinding> {
-        let mut findings = Vec::new();
+        let mut findings = self.degraded.clone();
         for group in self.groups.groups() {
             let group_id = group.group_id();
             if group.grouping_type() == EntityGroupType::Ster
@@ -1103,7 +1182,18 @@ fn declared_size(header: &[u8]) -> Result<Option<u64>> {
     match u32_at(header, SIZE_OFFSET) {
         SIZE_TO_EOF => Ok(None),
         SIZE_INDICATES_LARGESIZE => {
-            Ok(Some(broadcast_core::wire::u64_at(header, LARGESIZE_OFFSET)))
+            let large = broadcast_core::wire::u64_at(header, LARGESIZE_OFFSET);
+            if large < (TOP_HEADER_LEN + LARGESIZE_SIZE) as u64 {
+                // A `largesize` shorter than its own 16-byte header cannot
+                // describe a box (§4.2); treating it as an empty payload would
+                // drop every byte it claims.
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
+                    field: "largesize",
+                    value: large,
+                    reason: "shorter than the 16-byte header it belongs to",
+                }));
+            }
+            Ok(Some(large))
         }
         size => Ok(Some(u64::from(size))),
     }
@@ -1117,6 +1207,7 @@ impl StillImage {
         idat: Option<(u64, usize)>,
         total_len: Option<u64>,
         limits: &Limits,
+        degraded: Vec<ImageFinding>,
     ) -> Result<Self> {
         let mut iloc: Option<ItemLocationBox> = None;
         let mut iinf: Option<ItemInfoBox> = None;
@@ -1216,6 +1307,7 @@ impl StillImage {
             groups,
             handler_type,
             total_len,
+            degraded,
         })
     }
 }
@@ -1523,6 +1615,7 @@ pub struct ItemReader {
     reported_loaded: bool,
     derived_queue: VecDeque<usize>,
     derived_current: Option<DerivedFetch>,
+    degraded: Vec<ImageFinding>,
 }
 
 impl ItemReader {
@@ -1545,6 +1638,7 @@ impl ItemReader {
             reported_loaded: false,
             derived_queue: VecDeque::new(),
             derived_current: None,
+            degraded: Vec::new(),
         }
     }
 
@@ -1718,19 +1812,25 @@ impl ItemReader {
         let size32 = u32_at(prefix, SIZE_OFFSET);
         let fourcc = fourcc_of(prefix);
         let header_len = prefix.len();
-        let size = match size32 {
-            SIZE_TO_EOF => match self.config.total_len {
-                Some(total) => total.saturating_sub(*offset),
-                None => {
-                    return Err(Error::InvalidInput(
-                        "a size-0 box needs the file length; call with_total_len",
-                    ));
-                }
-            },
-            SIZE_INDICATES_LARGESIZE => broadcast_core::wire::u64_at(prefix, LARGESIZE_OFFSET),
-            size => u64::from(size),
+        let (size, to_end) = match size32 {
+            SIZE_TO_EOF => (
+                match self.config.total_len {
+                    Some(total) => total.saturating_sub(*offset),
+                    None => {
+                        return Err(Error::InvalidInput(
+                            "a size-0 box needs the file length; call with_total_len",
+                        ));
+                    }
+                },
+                true,
+            ),
+            SIZE_INDICATES_LARGESIZE => (
+                broadcast_core::wire::u64_at(prefix, LARGESIZE_OFFSET),
+                false,
+            ),
+            size => (u64::from(size), false),
         };
-        if size != 0 && size < header_len as u64 {
+        if size < header_len as u64 {
             return Err(Error::BoxSizeUnderflow {
                 size,
                 header_size: header_len,
@@ -1769,7 +1869,7 @@ impl ItemReader {
                     prefix: Vec::new(),
                     target: TOP_HEADER_LEN,
                 };
-                if self.config.total_len == Some(next_offset) || size == 0 {
+                if self.config.total_len == Some(next_offset) || to_end {
                     self.finalize()?;
                 }
             }
@@ -1811,17 +1911,33 @@ impl ItemReader {
                         limit: self.config.limits.max_moov_bytes(),
                     });
                 }
-                let payload_abs = box_start.saturating_add(header.len() as u64);
-                let (record, idat) = parse_meta(bytes, payload_abs)?;
-                if let Some(idat) = idat {
-                    self.idat = Some(idat);
+                if self.meta.is_some() {
+                    // One file-level `meta` describes the item model (§8.11.1).
+                    // A second is carried opaque in its own position and
+                    // re-emitted byte-exact, with a finding.
+                    self.degraded
+                        .push(ImageFinding::ExtraMetaBox { offset: box_start });
+                    self.top_level.push(TopLevelBox {
+                        fourcc: META,
+                        header: header.clone(),
+                        payload: TopLevelPayload::Copy(ByteRange {
+                            offset: box_start.saturating_add(header.len() as u64),
+                            len: size.saturating_sub(header.len() as u64),
+                        }),
+                    });
+                } else {
+                    let payload_abs = box_start.saturating_add(header.len() as u64);
+                    let (record, idat) = parse_meta(bytes, payload_abs, &mut self.degraded)?;
+                    if let Some(idat) = idat {
+                        self.idat = Some(idat);
+                    }
+                    self.meta = Some(record);
+                    self.top_level.push(TopLevelBox {
+                        fourcc: META,
+                        header,
+                        payload: TopLevelPayload::Meta,
+                    });
                 }
-                self.meta = Some(record);
-                self.top_level.push(TopLevelBox {
-                    fourcc: META,
-                    header,
-                    payload: TopLevelPayload::Meta,
-                });
             }
         }
         self.phase = Phase::Header {
@@ -1850,6 +1966,7 @@ impl ItemReader {
             self.idat,
             self.config.total_len,
             &self.config.limits,
+            core::mem::take(&mut self.degraded),
         )?;
         for (index, item) in image.items.iter().enumerate() {
             if item_needs_body(item) {
@@ -1918,10 +2035,40 @@ impl ItemReader {
             .iter()
             .filter(|reference| reference.reference_type == ReferenceType::Dimg)
             .count();
-        match item.item_type {
-            ItemType::Rgan => item.region = Some(RegionItem::parse(body)?),
-            ItemType::Mint => item.integrity = Some(IntegrityItem::parse(body)?),
-            _ => item.derived = Some(DerivedImage::parse(item.item_type, body, reference_count)?),
+        let item_type = item.item_type;
+        let offset = item.data_ranges().first().map_or(0, |range| range.offset);
+        // A body this crate cannot type stays where it is: the item keeps its
+        // data ranges, so the bytes are carried by construction. Only the
+        // typed view is lost, and the finding says which body and why.
+        let failure = match item_type {
+            ItemType::Rgan => match RegionItem::parse(body) {
+                Ok(region) => {
+                    item.region = Some(region);
+                    None
+                }
+                Err(err) => Some(err),
+            },
+            ItemType::Mint => match IntegrityItem::parse(body) {
+                Ok(integrity) => {
+                    item.integrity = Some(integrity);
+                    None
+                }
+                Err(err) => Some(err),
+            },
+            _ => match DerivedImage::parse(item_type, body, reference_count) {
+                Ok(derived) => {
+                    item.derived = Some(derived);
+                    None
+                }
+                Err(err) => Some(err),
+            },
+        };
+        if let Some(err) = failure {
+            image.degraded.push(ImageFinding::UnrepresentableBox {
+                box_type: item_type.fourcc(),
+                offset,
+                reason: crate::error::OpaqueReason::of(&err),
+            });
         }
         Ok(())
     }
@@ -1933,6 +2080,73 @@ fn item_needs_body(item: &Item) -> bool {
             || matches!(item.item_type(), ItemType::Rgan | ItemType::Mint))
 }
 
+/// One finding per `ipma` whose association table left bytes over. The
+/// association boxes keep their wire order, so the n-th `ipma` child of
+/// `iprp` is the n-th entry of [`ItemPropertiesBox::associations`].
+fn ipma_trailing_findings(
+    iprp: &[u8],
+    base: u64,
+    properties: &ItemPropertiesBox,
+) -> Vec<ImageFinding> {
+    let mut findings = Vec::new();
+    let Some(body) = iprp.get(BOX_HEADER_MIN_SIZE..) else {
+        return findings;
+    };
+    let mut rest = body;
+    let mut seen = 0usize;
+    while !rest.is_empty() {
+        let Ok((item, used)) = parse_box(rest) else {
+            break;
+        };
+        if item.four_cc() == crate::item::IPMA
+            && let Some(association) = properties.associations().get(seen)
+        {
+            let carried = association.trailing().len();
+            if carried != 0 {
+                let delta = (item.bytes.as_ptr() as usize).saturating_sub(iprp.as_ptr() as usize);
+                findings.push(ImageFinding::TrailingBytes {
+                    box_type: crate::item::IPMA,
+                    offset: base.saturating_add(u64::try_from(delta).unwrap_or(u64::MAX)),
+                    carried: u64::try_from(carried).unwrap_or(u64::MAX),
+                });
+            }
+            seen += 1;
+        }
+        rest = &rest[used..];
+    }
+    findings
+}
+
+/// Whether a typed `meta` child writes back the type and body it parsed. The
+/// header form (`size == 0`, `size == 1` + `largesize`) is carried separately,
+/// so only the four-CC and the bytes after the header are compared.
+fn reproducible(parsed: &MetaChild, child: &crate::box_types::BoxItem<'_>) -> bool {
+    let Ok(bytes) = parsed.try_to_bytes() else {
+        return false;
+    };
+    let Some(body) = bytes.get(BOX_HEADER_MIN_SIZE..) else {
+        return false;
+    };
+    if bytes.get(crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
+        != child
+            .bytes
+            .get(crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
+    {
+        return false;
+    }
+    let source_body = child.bytes.get(child.header.header_size()..);
+    source_body == Some(body)
+}
+
+/// One `item::DegradedChild` as the finding the item reader reports.
+fn unrepresentable_finding(child: crate::item::DegradedChild) -> ImageFinding {
+    ImageFinding::UnrepresentableBox {
+        box_type: child.box_type(),
+        offset: child.offset(),
+        reason: child.reason(),
+    }
+}
+
 fn fourcc_of(prefix: &[u8]) -> [u8; BOX_TYPE_SIZE] {
     let mut fourcc = [0u8; BOX_TYPE_SIZE];
     if prefix.len() >= TYPE_OFFSET + BOX_TYPE_SIZE {
@@ -1941,7 +2155,11 @@ fn fourcc_of(prefix: &[u8]) -> [u8; BOX_TYPE_SIZE] {
     fourcc
 }
 
-fn parse_meta(body: &[u8], payload_abs: u64) -> Result<(MetaRecord, Option<(u64, usize)>)> {
+fn parse_meta(
+    body: &[u8],
+    payload_abs: u64,
+    degraded: &mut Vec<ImageFinding>,
+) -> Result<(MetaRecord, Option<(u64, usize)>)> {
     if body.len() < FULLBOX_EXTRA_SIZE {
         return Err(Error::BufferTooShort(
             broadcast_core::error::BufferTooShort {
@@ -1955,6 +2173,7 @@ fn parse_meta(body: &[u8], payload_abs: u64) -> Result<(MetaRecord, Option<(u64,
     let flags = broadcast_core::wire::u24_at(body, crate::box_types::FULLBOX_FLAGS_OFFSET)
         & crate::box_types::FULLBOX_FLAGS_MASK;
     let mut children = Vec::new();
+    let mut forms = Vec::new();
     let mut idat = None;
     let mut rest = &body[FULLBOX_EXTRA_SIZE..];
     let children_start = payload_abs.saturating_add(FULLBOX_EXTRA_SIZE as u64);
@@ -1974,13 +2193,31 @@ fn parse_meta(body: &[u8], payload_abs: u64) -> Result<(MetaRecord, Option<(u64,
             .saturating_add(consumed_total as u64)
             .saturating_add(child.start as u64);
         let fourcc = child.four_cc();
+        forms.push(if child.to_end() {
+            BoxForm::ToEnd
+        } else if child.has_largesize() {
+            BoxForm::LargeSize
+        } else {
+            BoxForm::Compact
+        });
         let parsed = match &fourcc {
             b"hdlr" => MetaChild::Hdlr(Hdlr::parse_box(child.bytes)?),
             b"pitm" => MetaChild::Pitm(PrimaryItemBox::parse(child.bytes)?),
             b"iloc" => MetaChild::Iloc(ItemLocationBox::parse(child.bytes)?),
             b"iinf" => MetaChild::Iinf(ItemInfoBox::parse(child.bytes)?),
-            b"iref" => MetaChild::Iref(ItemReferenceBox::parse(child.bytes)?),
-            b"iprp" => MetaChild::Iprp(ItemPropertiesBox::parse(child.bytes)?),
+            b"iref" => {
+                let (references, opaque) =
+                    ItemReferenceBox::parse_degrading(child.bytes, absolute)?;
+                degraded.extend(opaque.into_iter().map(unrepresentable_finding));
+                MetaChild::Iref(references)
+            }
+            b"iprp" => {
+                let (properties, opaque) =
+                    ItemPropertiesBox::parse_degrading(child.bytes, absolute)?;
+                degraded.extend(opaque.into_iter().map(unrepresentable_finding));
+                degraded.extend(ipma_trailing_findings(child.bytes, absolute, &properties));
+                MetaChild::Iprp(properties)
+            }
             b"idat" => {
                 let box_value = ItemDataBox::parse(child.bytes)?;
                 idat = Some((
@@ -1990,13 +2227,33 @@ fn parse_meta(body: &[u8], payload_abs: u64) -> Result<(MetaRecord, Option<(u64,
                 MetaChild::Idat(box_value)
             }
             b"ipro" => MetaChild::Ipro(crate::item::ItemProtectionBox::parse(child.bytes)?),
-            b"grpl" => MetaChild::Grpl(GroupsListBox::parse(child.bytes)?),
+            b"grpl" => {
+                let (groups, opaque) = GroupsListBox::parse_degrading(child.bytes, absolute)?;
+                degraded.extend(opaque.into_iter().map(unrepresentable_finding));
+                MetaChild::Grpl(groups)
+            }
             _ => {
                 let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
                 opaque.to_end = child.to_end();
                 opaque.largesize = child.has_largesize();
                 MetaChild::Opaque(opaque)
             }
+        };
+        // A typed child that would not write its own bytes back — a dropped
+        // tail, a re-derived count — is kept opaque instead, so a rewrite
+        // stays exact; the finding says which one.
+        let parsed = if reproducible(&parsed, &child) {
+            parsed
+        } else {
+            degraded.push(ImageFinding::UnrepresentableBox {
+                box_type: fourcc,
+                offset: absolute,
+                reason: crate::error::OpaqueReason::NotReproducible,
+            });
+            let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
+            opaque.to_end = child.to_end();
+            opaque.largesize = child.has_largesize();
+            MetaChild::Opaque(opaque)
         };
         children.push(parsed);
         rest = &rest[used..];
@@ -2007,6 +2264,7 @@ fn parse_meta(body: &[u8], payload_abs: u64) -> Result<(MetaRecord, Option<(u64,
             version,
             flags,
             children,
+            forms,
         },
         idat,
     ))

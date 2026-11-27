@@ -951,7 +951,7 @@ fn track_protection_from_entry(
 pub(crate) fn overlay_sample_entry_geometry(
     display: Option<DisplayGeometry>,
     config: &CodecConfig,
-    extra_boxes: &[isobmff::sample_entries::OpaqueBox],
+    extra_boxes: &[isobmff::box_support::OpaqueBox],
 ) -> Option<DisplayGeometry> {
     // First `pasp` in entry order.
     let pasp = extra_boxes
@@ -1062,7 +1062,7 @@ pub(crate) fn overlay_sample_entry_geometry(
 /// [`TrackSpec::display`].
 fn overlay_sample_entry_display(
     mut spec: TrackSpec,
-    extra_boxes: &[isobmff::sample_entries::OpaqueBox],
+    extra_boxes: &[isobmff::box_support::OpaqueBox],
 ) -> TrackSpec {
     let config = spec.config.clone();
     spec.display = overlay_sample_entry_geometry(spec.display, &config, extra_boxes);
@@ -1083,7 +1083,7 @@ fn overlay_sample_entry_display(
 /// plus its entry-level extra boxes for the display overlay.
 pub(crate) fn track_entry_inband_and_extras(
     entry: &SampleEntryVariant,
-) -> (bool, Vec<isobmff::sample_entries::OpaqueBox>) {
+) -> (bool, Vec<isobmff::box_support::OpaqueBox>) {
     match entry {
         SampleEntryVariant::Avc1(e) => (
             e.codec_type == *b"avc3" || e.codec_type == *b"avc4",
@@ -1115,8 +1115,8 @@ pub(crate) struct InbandDisplayTagger {
     tracker: SpsTracker,
     config: CodecConfig,
     seed_sar: Option<(u16, u16)>,
-    extra: Vec<isobmff::sample_entries::OpaqueBox>,
-    extra_without_pasp: Vec<isobmff::sample_entries::OpaqueBox>,
+    extra: Vec<isobmff::box_support::OpaqueBox>,
+    extra_without_pasp: Vec<isobmff::box_support::OpaqueBox>,
     cached_raw: Option<Arc<DisplayInfo>>,
     cached_overlaid: Option<Arc<DisplayInfo>>,
 }
@@ -1125,7 +1125,7 @@ impl InbandDisplayTagger {
     /// A tagger for an AVC/HEVC track, or `None` for any other codec.
     pub(crate) fn new(
         config: &CodecConfig,
-        extra: &[isobmff::sample_entries::OpaqueBox],
+        extra: &[isobmff::box_support::OpaqueBox],
     ) -> Option<Self> {
         let codec = match config {
             CodecConfig::Avc { .. } => TrackCodec::Avc,
@@ -1204,7 +1204,7 @@ impl InbandDisplayTagger {
 fn overlay_display_info(
     raw: &Arc<DisplayInfo>,
     config: &CodecConfig,
-    extra: &[isobmff::sample_entries::OpaqueBox],
+    extra: &[isobmff::box_support::OpaqueBox],
 ) -> Arc<DisplayInfo> {
     let mut info = (**raw).clone();
     info.geometry = overlay_sample_entry_geometry(info.geometry, config, extra);

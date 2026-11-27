@@ -86,8 +86,24 @@ const MVHD_V1_NEXT_TRACK_ID_OFFSET: usize = 116;
 const MVHD_V1_LEN: usize = 120;
 /// Reserved bytes between `volume` and `matrix` (§8.2.2.2).
 const MVHD_RESERVED_LEN: usize = 10;
+/// `mvhd` v0 reserved-bytes offset, right after `volume` (§8.2.2.2).
+const MVHD_V0_RESERVED_OFFSET: usize = MVHD_V0_VOLUME_OFFSET + core::mem::size_of::<u16>();
+/// `mvhd` v0 `pre_defined` offset, right after the matrix (§8.2.2.2).
+const MVHD_V0_PRE_DEFINED_OFFSET: usize = MVHD_V0_MATRIX_OFFSET + MATRIX_WIRE_LEN;
+/// `mvhd` v1 reserved-bytes offset, right after `volume` (§8.2.2.2).
+const MVHD_V1_RESERVED_OFFSET: usize = MVHD_V1_VOLUME_OFFSET + core::mem::size_of::<u16>();
+/// `mvhd` v1 `pre_defined` offset, right after the matrix (§8.2.2.2).
+const MVHD_V1_PRE_DEFINED_OFFSET: usize = MVHD_V1_MATRIX_OFFSET + MATRIX_WIRE_LEN;
 /// `pre_defined` bytes at the end of `mvhd` (§8.2.2.2).
 const MVHD_PRE_DEFINED_LEN: usize = 24;
+
+/// A fixed run of reserved bytes at `offset`, carried verbatim.
+fn bytes_for<const N: usize>(bytes: &[u8], offset: usize, what: &'static str) -> Result<[u8; N]> {
+    need_in(bytes, offset + N, what)?;
+    let mut out = [0u8; N];
+    out.copy_from_slice(&bytes[offset..offset + N]);
+    Ok(out)
+}
 
 /// Four-CC of the Movie Header Box (`mvhd`, ISO/IEC 14496-12:2026 §8.2.2).
 pub const MVHD: [u8; 4] = *b"mvhd";
@@ -107,7 +123,11 @@ pub struct MovieHeaderBox {
     pub duration: u64,
     pub rate: u32,
     pub volume: u16,
+    /// The reserved bytes after `volume` (§8.2.2.2), carried verbatim.
+    pub reserved: [u8; MVHD_RESERVED_LEN],
     pub matrix: [i32; MATRIX_VALUES],
+    /// `pre_defined[6]` after the matrix (§8.2.2.2), carried verbatim.
+    pub pre_defined: [u8; MVHD_PRE_DEFINED_LEN],
     pub next_track_id: TrackId,
 }
 
@@ -120,7 +140,7 @@ impl<'a> Parse<'a> for MovieHeaderBox {
         if ver == 0 {
             need_in(bytes, MVHD_V0_LEN, "mvhd v0")?;
             Ok(Self {
-                version: 0,
+                version: ver,
                 flags,
                 creation_time: u64::from(u32_at(bytes, MVHD_V0_CREATION_TIME_OFFSET)),
                 modification_time: u64::from(u32_at(bytes, MVHD_V0_MODIFICATION_TIME_OFFSET)),
@@ -128,9 +148,19 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                 duration: u64::from(u32_at(bytes, MVHD_V0_DURATION_OFFSET)),
                 rate: u32_at(bytes, MVHD_V0_RATE_OFFSET),
                 volume: u16_at(bytes, MVHD_V0_VOLUME_OFFSET),
+                reserved: bytes_for::<MVHD_RESERVED_LEN>(
+                    bytes,
+                    MVHD_V0_RESERVED_OFFSET,
+                    "mvhd reserved",
+                )?,
                 matrix: matrix_from_bytes(
                     &bytes[MVHD_V0_MATRIX_OFFSET..MVHD_V0_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
+                pre_defined: bytes_for::<MVHD_PRE_DEFINED_LEN>(
+                    bytes,
+                    MVHD_V0_PRE_DEFINED_OFFSET,
+                    "mvhd pre_defined",
+                )?,
                 next_track_id: TrackId::new(u32_at(bytes, MVHD_V0_NEXT_TRACK_ID_OFFSET)),
             })
         } else {
@@ -141,7 +171,7 @@ impl<'a> Parse<'a> for MovieHeaderBox {
             // **120** bytes, not 124 (issue #1015).
             need_in(bytes, MVHD_V1_LEN, "mvhd v1")?;
             Ok(Self {
-                version: 1,
+                version: ver,
                 flags,
                 creation_time: broadcast_core::wire::be_u64(
                     bytes,
@@ -157,9 +187,19 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                 duration: broadcast_core::wire::be_u64(bytes, MVHD_V1_DURATION_OFFSET, "mvhd v1")?,
                 rate: u32_at(bytes, MVHD_V1_RATE_OFFSET),
                 volume: u16_at(bytes, MVHD_V1_VOLUME_OFFSET),
+                reserved: bytes_for::<MVHD_RESERVED_LEN>(
+                    bytes,
+                    MVHD_V1_RESERVED_OFFSET,
+                    "mvhd reserved",
+                )?,
                 matrix: matrix_from_bytes(
                     &bytes[MVHD_V1_MATRIX_OFFSET..MVHD_V1_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
+                pre_defined: bytes_for::<MVHD_PRE_DEFINED_LEN>(
+                    bytes,
+                    MVHD_V1_PRE_DEFINED_OFFSET,
+                    "mvhd pre_defined",
+                )?,
                 next_track_id: TrackId::new(u32_at(bytes, MVHD_V1_NEXT_TRACK_ID_OFFSET)),
             })
         }
@@ -225,14 +265,14 @@ impl Serialize for MovieHeaderBox {
         let u16_len = core::mem::size_of::<u16>();
         buf[c..c + u16_len].copy_from_slice(&self.volume.to_be_bytes());
         c += u16_len;
-        buf[c..c + MVHD_RESERVED_LEN].fill(0);
-        c += MVHD_RESERVED_LEN; // reserved
+        buf[c..c + MVHD_RESERVED_LEN].copy_from_slice(&self.reserved);
+        c += MVHD_RESERVED_LEN;
         for &m in &self.matrix {
             buf[c..c + MATRIX_VALUE_LEN].copy_from_slice(&m.to_be_bytes());
             c += MATRIX_VALUE_LEN;
         }
-        buf[c..c + MVHD_PRE_DEFINED_LEN].fill(0);
-        c += MVHD_PRE_DEFINED_LEN; // pre_defined
+        buf[c..c + MVHD_PRE_DEFINED_LEN].copy_from_slice(&self.pre_defined);
+        c += MVHD_PRE_DEFINED_LEN;
         buf[c..c + u32_len].copy_from_slice(&self.next_track_id.value().to_be_bytes());
         c += u32_len;
         Ok(c)
@@ -295,6 +335,18 @@ const TKHD_RESERVED_LEN: usize = 4;
 const TKHD_RESERVED_PAIR_LEN: usize = 8;
 /// The reserved field after `volume` in `tkhd` (§8.3.2.2).
 const TKHD_TRAILING_RESERVED_LEN: usize = 2;
+/// `tkhd` v0 reserved-word offset, right after `track_ID` (§8.3.2.2).
+const TKHD_V0_RESERVED_OFFSET: usize = TKHD_V0_TRACK_ID_OFFSET + core::mem::size_of::<u32>();
+/// `tkhd` v0 reserved-pair offset, right after `duration` (§8.3.2.2).
+const TKHD_V0_RESERVED_PAIR_OFFSET: usize = TKHD_V0_DURATION_OFFSET + core::mem::size_of::<u32>();
+/// `tkhd` v0 trailing-reserved offset, right after `volume` (§8.3.2.2).
+const TKHD_V0_TRAILING_RESERVED_OFFSET: usize = TKHD_V0_VOLUME_OFFSET + core::mem::size_of::<i16>();
+/// `tkhd` v1 reserved-word offset, right after `track_ID` (§8.3.2.2).
+const TKHD_V1_RESERVED_OFFSET: usize = TKHD_V1_TRACK_ID_OFFSET + core::mem::size_of::<u32>();
+/// `tkhd` v1 reserved-pair offset, right after `duration` (§8.3.2.2).
+const TKHD_V1_RESERVED_PAIR_OFFSET: usize = TKHD_V1_DURATION_OFFSET + core::mem::size_of::<u64>();
+/// `tkhd` v1 trailing-reserved offset, right after `volume` (§8.3.2.2).
+const TKHD_V1_TRAILING_RESERVED_OFFSET: usize = TKHD_V1_VOLUME_OFFSET + core::mem::size_of::<i16>();
 
 /// Four-CC of the Track Header Box (`tkhd`, ISO/IEC 14496-12:2026 §8.3.2).
 pub const TKHD: [u8; 4] = *b"tkhd";
@@ -310,10 +362,16 @@ pub struct TrackHeaderBox {
     pub creation_time: u64,
     pub modification_time: u64,
     pub track_id: TrackId,
+    /// The reserved word after `track_ID` (§8.3.2.2), carried verbatim.
+    pub reserved: [u8; TKHD_RESERVED_LEN],
     pub duration: u64,
+    /// The two reserved words after `duration` (§8.3.2.2), carried verbatim.
+    pub reserved_2: [u8; TKHD_RESERVED_PAIR_LEN],
     pub layer: i16,
     pub alternate_group: i16,
     pub volume: i16,
+    /// The reserved field after `volume` (§8.3.2.2), carried verbatim.
+    pub reserved_3: [u8; TKHD_TRAILING_RESERVED_LEN],
     pub matrix: [i32; MATRIX_VALUES],
     pub width: u32,
     pub height: u32,
@@ -332,15 +390,30 @@ impl<'a> Parse<'a> for TrackHeaderBox {
             let tid = u32_at(bytes, TKHD_V0_TRACK_ID_OFFSET);
             let dur = u64::from(u32_at(bytes, TKHD_V0_DURATION_OFFSET));
             Ok(Self {
-                version: 0,
+                version: ver,
                 flags,
                 creation_time: ct,
                 modification_time: mt,
                 track_id: TrackId::new(tid),
+                reserved: bytes_for::<TKHD_RESERVED_LEN>(
+                    bytes,
+                    TKHD_V0_RESERVED_OFFSET,
+                    "tkhd reserved",
+                )?,
                 duration: dur,
+                reserved_2: bytes_for::<TKHD_RESERVED_PAIR_LEN>(
+                    bytes,
+                    TKHD_V0_RESERVED_PAIR_OFFSET,
+                    "tkhd reserved_2",
+                )?,
                 layer: i16_at(bytes, TKHD_V0_LAYER_OFFSET),
                 alternate_group: i16_at(bytes, TKHD_V0_ALTERNATE_GROUP_OFFSET),
                 volume: i16_at(bytes, TKHD_V0_VOLUME_OFFSET),
+                reserved_3: bytes_for::<TKHD_TRAILING_RESERVED_LEN>(
+                    bytes,
+                    TKHD_V0_TRAILING_RESERVED_OFFSET,
+                    "tkhd reserved_3",
+                )?,
                 matrix: matrix_from_bytes(
                     &bytes[TKHD_V0_MATRIX_OFFSET..TKHD_V0_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
@@ -360,15 +433,30 @@ impl<'a> Parse<'a> for TrackHeaderBox {
             let tid = u32_at(bytes, TKHD_V1_TRACK_ID_OFFSET);
             let dur = broadcast_core::wire::be_u64(bytes, TKHD_V1_DURATION_OFFSET, "tkhd v1")?;
             Ok(Self {
-                version: 1,
+                version: ver,
                 flags,
                 creation_time: ct,
                 modification_time: mt,
                 track_id: TrackId::new(tid),
+                reserved: bytes_for::<TKHD_RESERVED_LEN>(
+                    bytes,
+                    TKHD_V1_RESERVED_OFFSET,
+                    "tkhd reserved",
+                )?,
                 duration: dur,
+                reserved_2: bytes_for::<TKHD_RESERVED_PAIR_LEN>(
+                    bytes,
+                    TKHD_V1_RESERVED_PAIR_OFFSET,
+                    "tkhd reserved_2",
+                )?,
                 layer: i16_at(bytes, TKHD_V1_LAYER_OFFSET),
                 alternate_group: i16_at(bytes, TKHD_V1_ALTERNATE_GROUP_OFFSET),
                 volume: i16_at(bytes, TKHD_V1_VOLUME_OFFSET),
+                reserved_3: bytes_for::<TKHD_TRAILING_RESERVED_LEN>(
+                    bytes,
+                    TKHD_V1_TRAILING_RESERVED_OFFSET,
+                    "tkhd reserved_3",
+                )?,
                 matrix: matrix_from_bytes(
                     &bytes[TKHD_V1_MATRIX_OFFSET..TKHD_V1_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
@@ -432,23 +520,23 @@ impl Serialize for TrackHeaderBox {
             c += u32_len;
             buf[c..c + u32_len].copy_from_slice(&self.track_id.value().to_be_bytes());
             c += u32_len;
-            buf[c..c + TKHD_RESERVED_LEN].fill(0);
-            c += TKHD_RESERVED_LEN; // reserved
+            buf[c..c + TKHD_RESERVED_LEN].copy_from_slice(&self.reserved);
+            c += TKHD_RESERVED_LEN;
             buf[c..c + u32_len].copy_from_slice(
                 &(broadcast_core::len::fit_bits(self.duration, u32::BITS, "tkhd duration")? as u32)
                     .to_be_bytes(),
             );
             c += u32_len;
-            buf[c..c + TKHD_RESERVED_PAIR_LEN].fill(0);
-            c += TKHD_RESERVED_PAIR_LEN; // reserved * 2
+            buf[c..c + TKHD_RESERVED_PAIR_LEN].copy_from_slice(&self.reserved_2);
+            c += TKHD_RESERVED_PAIR_LEN;
             buf[c..c + i16_len].copy_from_slice(&self.layer.to_be_bytes());
             c += i16_len;
             buf[c..c + i16_len].copy_from_slice(&self.alternate_group.to_be_bytes());
             c += i16_len;
             buf[c..c + i16_len].copy_from_slice(&self.volume.to_be_bytes());
             c += i16_len;
-            buf[c..c + TKHD_TRAILING_RESERVED_LEN].fill(0);
-            c += TKHD_TRAILING_RESERVED_LEN; // reserved
+            buf[c..c + TKHD_TRAILING_RESERVED_LEN].copy_from_slice(&self.reserved_3);
+            c += TKHD_TRAILING_RESERVED_LEN;
         } else {
             buf[c..c + u64_len].copy_from_slice(&self.creation_time.to_be_bytes());
             c += u64_len;
@@ -456,20 +544,20 @@ impl Serialize for TrackHeaderBox {
             c += u64_len;
             buf[c..c + u32_len].copy_from_slice(&self.track_id.value().to_be_bytes());
             c += u32_len;
-            buf[c..c + TKHD_RESERVED_LEN].fill(0);
-            c += TKHD_RESERVED_LEN; // reserved
+            buf[c..c + TKHD_RESERVED_LEN].copy_from_slice(&self.reserved);
+            c += TKHD_RESERVED_LEN;
             buf[c..c + u64_len].copy_from_slice(&self.duration.to_be_bytes());
             c += u64_len;
-            buf[c..c + TKHD_RESERVED_PAIR_LEN].fill(0);
-            c += TKHD_RESERVED_PAIR_LEN; // reserved * 2
+            buf[c..c + TKHD_RESERVED_PAIR_LEN].copy_from_slice(&self.reserved_2);
+            c += TKHD_RESERVED_PAIR_LEN;
             buf[c..c + i16_len].copy_from_slice(&self.layer.to_be_bytes());
             c += i16_len;
             buf[c..c + i16_len].copy_from_slice(&self.alternate_group.to_be_bytes());
             c += i16_len;
             buf[c..c + i16_len].copy_from_slice(&self.volume.to_be_bytes());
             c += i16_len;
-            buf[c..c + TKHD_TRAILING_RESERVED_LEN].fill(0);
-            c += TKHD_TRAILING_RESERVED_LEN; // reserved
+            buf[c..c + TKHD_TRAILING_RESERVED_LEN].copy_from_slice(&self.reserved_3);
+            c += TKHD_TRAILING_RESERVED_LEN;
         }
         for &m in &self.matrix {
             buf[c..c + MATRIX_VALUE_LEN].copy_from_slice(&m.to_be_bytes());
@@ -501,6 +589,8 @@ const MDHD_V0_DURATION_OFFSET: usize = 24;
 const MDHD_V0_LANGUAGE_OFFSET: usize = 28;
 /// `mdhd` v0 box length (§8.4.2.2).
 const MDHD_V0_LEN: usize = 32;
+/// `mdhd` v0 `quality` offset, right after `language` (§8.4.2.2).
+const MDHD_V0_QUALITY_OFFSET: usize = MDHD_V0_LANGUAGE_OFFSET + core::mem::size_of::<u16>();
 /// `mdhd` v1 creation_time offset (§8.4.2.2).
 const MDHD_V1_CREATION_TIME_OFFSET: usize = 12;
 /// `mdhd` v1 modification_time offset (§8.4.2.2).
@@ -513,6 +603,8 @@ const MDHD_V1_DURATION_OFFSET: usize = 32;
 const MDHD_V1_LANGUAGE_OFFSET: usize = 40;
 /// `mdhd` v1 box length (§8.4.2.2).
 const MDHD_V1_LEN: usize = 44;
+/// `mdhd` v1 `quality` offset, right after `language` (§8.4.2.2).
+const MDHD_V1_QUALITY_OFFSET: usize = MDHD_V1_LANGUAGE_OFFSET + core::mem::size_of::<u16>();
 /// `quality` and reserved fields after `language` (§8.4.2.2).
 const MDHD_QUALITY_RESERVED_LEN: usize = 2;
 
@@ -529,6 +621,9 @@ pub struct MediaHeaderBox {
     pub timescale: Timescale,
     pub duration: u64,
     pub language: u16,
+    /// The trailing `quality`/`pre_defined` field (§8.4.2.2), carried
+    /// verbatim.
+    pub quality: u16,
 }
 
 impl<'a> Parse<'a> for MediaHeaderBox {
@@ -540,18 +635,19 @@ impl<'a> Parse<'a> for MediaHeaderBox {
         if ver == 0 {
             need_in(bytes, MDHD_V0_LEN, "mdhd v0")?;
             Ok(Self {
-                version: 0,
+                version: ver,
                 flags,
                 creation_time: u64::from(u32_at(bytes, MDHD_V0_CREATION_TIME_OFFSET)),
                 modification_time: u64::from(u32_at(bytes, MDHD_V0_MODIFICATION_TIME_OFFSET)),
                 timescale: Timescale::try_new(u32_at(bytes, MDHD_V0_TIMESCALE_OFFSET))?,
                 duration: u64::from(u32_at(bytes, MDHD_V0_DURATION_OFFSET)),
                 language: u16_at(bytes, MDHD_V0_LANGUAGE_OFFSET),
+                quality: u16_at(bytes, MDHD_V0_QUALITY_OFFSET),
             })
         } else {
             need_in(bytes, MDHD_V1_LEN, "mdhd v1")?;
             Ok(Self {
-                version: 1,
+                version: ver,
                 flags,
                 creation_time: broadcast_core::wire::be_u64(
                     bytes,
@@ -566,6 +662,7 @@ impl<'a> Parse<'a> for MediaHeaderBox {
                 timescale: Timescale::try_new(u32_at(bytes, MDHD_V1_TIMESCALE_OFFSET))?,
                 duration: broadcast_core::wire::be_u64(bytes, MDHD_V1_DURATION_OFFSET, "mdhd v1")?,
                 language: u16_at(bytes, MDHD_V1_LANGUAGE_OFFSET),
+                quality: u16_at(bytes, MDHD_V1_QUALITY_OFFSET),
             })
         }
     }
@@ -635,9 +732,7 @@ impl Serialize for MediaHeaderBox {
             buf[c..c + u16_len].copy_from_slice(&self.language.to_be_bytes());
             c += u16_len;
         }
-        // quality(16), reserved = 0 — written, not just counted, so a reused
-        // caller buffer cannot keep garbage there (r04-W45).
-        buf[c..c + MDHD_QUALITY_RESERVED_LEN].fill(0);
+        buf[c..c + MDHD_QUALITY_RESERVED_LEN].copy_from_slice(&self.quality.to_be_bytes());
         Ok(c + MDHD_QUALITY_RESERVED_LEN)
     }
 }
@@ -690,7 +785,8 @@ impl HandlerBox {
 impl<'a> Parse<'a> for HandlerBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, HDLR_MIN_LEN, "hdlr")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
@@ -843,6 +939,8 @@ const SMHD_BALANCE_OFFSET: usize = 12;
 const SMHD_BODY_LEN: usize = 4;
 /// Reserved field after `balance` (§12.2.2).
 const SMHD_RESERVED_LEN: usize = 2;
+/// `smhd` reserved-field offset, right after `balance` (§12.2.2).
+const SMHD_RESERVED_OFFSET: usize = SMHD_BALANCE_OFFSET + core::mem::size_of::<i16>();
 
 /// Sound Media Header Box (`smhd`) — §12.2.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -851,6 +949,8 @@ pub struct SoundMediaHeaderBox {
     pub version: u8,
     pub flags: u32,
     pub balance: i16,
+    /// The reserved field after `balance` (§12.2.2), carried verbatim.
+    pub reserved: [u8; SMHD_RESERVED_LEN],
 }
 
 impl<'a> Parse<'a> for SoundMediaHeaderBox {
@@ -863,6 +963,7 @@ impl<'a> Parse<'a> for SoundMediaHeaderBox {
             version: ver,
             flags,
             balance: i16_at(bytes, SMHD_BALANCE_OFFSET),
+            reserved: bytes_for::<SMHD_RESERVED_LEN>(bytes, SMHD_RESERVED_OFFSET, "smhd reserved")?,
         })
     }
 }
@@ -887,8 +988,7 @@ impl Serialize for SoundMediaHeaderBox {
         let i16_len = core::mem::size_of::<i16>();
         buf[c..c + i16_len].copy_from_slice(&self.balance.to_be_bytes());
         c += i16_len;
-        // reserved(16) = 0, written rather than skipped (r04-W45).
-        buf[c..c + SMHD_RESERVED_LEN].fill(0);
+        buf[c..c + SMHD_RESERVED_LEN].copy_from_slice(&self.reserved);
         c += SMHD_RESERVED_LEN;
         Ok(c)
     }
@@ -1310,6 +1410,35 @@ pub struct DataReferenceBox {
     pub version: u8,
     pub flags: u32,
     pub entries: Vec<DataEntry>,
+    /// Bytes after the last entry the count declares (§8.7.2.1), carried
+    /// verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
+}
+
+impl DataReferenceBox {
+    /// A `dref` of `entries` with no bytes past the declared table.
+    #[must_use]
+    pub fn new(version: u8, flags: u32, entries: Vec<DataEntry>) -> Self {
+        Self {
+            version,
+            flags,
+            entries,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last declared entry, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared entry table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
 }
 
 /// One entry of a `dref` (§8.7.2.2): the entry four-CC is preserved, so a
@@ -1382,7 +1511,8 @@ impl Serialize for DataEntry {
 impl<'a> Parse<'a> for DataReferenceBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "dref")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -1399,16 +1529,24 @@ impl<'a> Parse<'a> for DataReferenceBox {
             BOX_HEADER_MIN_SIZE,
             count,
         ));
-        for item in BoxIter::clamped(&bytes[FLAT_TABLE_HEADER_LEN..]).take(count) {
-            let Ok(item) = item else {
-                break;
-            };
+        let mut rest = &bytes[FLAT_TABLE_HEADER_LEN..];
+        let mut trailing = Vec::new();
+        for _ in 0..count {
+            let (item, used) = crate::box_types::parse_box(rest)?;
             entries.push(DataEntry::parse(item.bytes)?);
+            rest = &rest[used..];
+        }
+        if !rest.is_empty() {
+            // The declared table does not account for these bytes, but the box
+            // is one the readers need: carry them so the rewrite is exact
+            // rather than refusing a table that is still complete.
+            trailing = rest.to_vec();
         }
         Ok(Self {
             version: ver,
             flags,
             entries,
+            trailing,
         })
     }
 }
@@ -1420,7 +1558,7 @@ impl Serialize for DataReferenceBox {
         for e in &self.entries {
             n += e.serialized_len();
         }
-        crate::box_types::box_len(n)
+        crate::box_types::box_len(n + self.trailing.len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1441,7 +1579,8 @@ impl Serialize for DataReferenceBox {
         for entry in &self.entries {
             c += entry.serialize_into(&mut buf[c..])?;
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
@@ -1462,7 +1601,8 @@ pub struct DataEntryUrlBox {
 impl<'a> Parse<'a> for DataEntryUrlBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FULLBOX_BODY_OFFSET, "url")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
@@ -1722,7 +1862,8 @@ pub struct SampleToChunkBox {
 impl<'a> Parse<'a> for SampleToChunkBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "stsc")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -1823,12 +1964,50 @@ pub struct SampleSizeBox {
     pub sample_size: u32,
     pub sample_count: u32,
     pub entries: Vec<u32>,
+    /// Bytes after the last sample size the header accounts for (§8.7.3.2),
+    /// carried verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
+}
+
+impl SampleSizeBox {
+    /// An `stsz` of `entries` with no bytes past the declared table.
+    #[must_use]
+    pub fn new(
+        version: u8,
+        flags: u32,
+        sample_size: u32,
+        sample_count: u32,
+        entries: Vec<u32>,
+    ) -> Self {
+        Self {
+            version,
+            flags,
+            sample_size,
+            sample_count,
+            entries,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last declared sample size, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
 }
 
 impl<'a> Parse<'a> for SampleSizeBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, STSZ_PREFIX_LEN, "stsz")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
@@ -1858,7 +2037,7 @@ impl<'a> Parse<'a> for SampleSizeBox {
             0
         };
         let mut entries = Vec::with_capacity(capacity);
-        if sample_size == 0 {
+        let trailing = if sample_size == 0 {
             let mut off = STSZ_PREFIX_LEN;
             for _ in 0..count {
                 if off + entry_len > bytes.len() {
@@ -1867,13 +2046,17 @@ impl<'a> Parse<'a> for SampleSizeBox {
                 entries.push(u32_at(bytes, off));
                 off += entry_len;
             }
-        }
+            bytes[off..].to_vec()
+        } else {
+            bytes[STSZ_PREFIX_LEN..].to_vec()
+        };
         Ok(Self {
             version: ver,
             flags,
             sample_size,
             sample_count: count as u32,
             entries,
+            trailing,
         })
     }
 }
@@ -1886,7 +2069,9 @@ impl Serialize for SampleSizeBox {
         } else {
             0
         };
-        crate::box_types::box_len(STSZ_PREFIX_LEN + count * core::mem::size_of::<u32>())
+        crate::box_types::box_len(
+            STSZ_PREFIX_LEN + count * core::mem::size_of::<u32>() + self.trailing.len(),
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.sample_size == 0 && self.entries.len() != self.sample_count as usize {
@@ -1914,7 +2099,8 @@ impl Serialize for SampleSizeBox {
             buf[c..c + u32_len].copy_from_slice(&sz.to_be_bytes());
             c += u32_len;
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
@@ -2163,7 +2349,8 @@ pub struct CompactSampleSizeBox {
 impl<'a> Parse<'a> for CompactSampleSizeBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, STZ2_PREFIX_LEN, "stz2")?;
         let version = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -2358,7 +2545,8 @@ impl SampleDependencyTypeBox {
 impl<'a> Parse<'a> for SampleDependencyTypeBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, SDTP_MIN_LEN, "sdtp")?;
         Ok(Self {
@@ -3059,7 +3247,8 @@ impl Serialize for DtsSampleEntry {
 impl<'a> Parse<'a> for DtsSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, BOX_HEADER_MIN_SIZE, "DtsSampleEntry")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
@@ -3155,7 +3344,8 @@ impl Serialize for MhaSampleEntry {
 impl<'a> Parse<'a> for MhaSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, BOX_HEADER_MIN_SIZE, "MhaSampleEntry")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
@@ -3408,7 +3598,8 @@ fn write_audio_fixed_fields(buf: &mut [u8], c: &mut usize, f: &AudioSampleEntryF
 impl<'a> Parse<'a> for Mp4aSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         // bytes is a full box with 8-byte header; fields start at bytes[8]
         need_in(
@@ -3746,6 +3937,35 @@ pub struct SampleDescriptionBox {
     pub version: u8,
     pub flags: u32,
     pub entries: Vec<SampleEntryVariant>,
+    /// Bytes after the last entry the count declares (§8.5.2.2), carried
+    /// verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
+}
+
+impl SampleDescriptionBox {
+    /// An `stsd` of `entries` with no bytes past the declared table.
+    #[must_use]
+    pub fn new(version: u8, flags: u32, entries: Vec<SampleEntryVariant>) -> Self {
+        Self {
+            version,
+            flags,
+            entries,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last declared entry, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared entry table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
 }
 
 /// Parse one `stsd` entry's bytes into its typed variant.
@@ -3911,7 +4131,8 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
 impl<'a> Parse<'a> for SampleDescriptionBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "stsd")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -3928,18 +4149,20 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
             BOX_HEADER_MIN_SIZE,
             count,
         ));
-        for item in BoxIter::clamped(&bytes[FLAT_TABLE_HEADER_LEN..]).take(count) {
-            let Ok(item) = item else {
-                break;
-            };
-            let box_bytes = item.bytes;
-            let entry = sample_entry_variant(box_bytes)?;
-            entries.push(entry);
+        let mut rest = &bytes[FLAT_TABLE_HEADER_LEN..];
+        for _ in 0..count {
+            let (item, used) = crate::box_types::parse_box(rest)?;
+            entries.push(sample_entry_variant(item.bytes)?);
+            rest = &rest[used..];
         }
+        // A count smaller than the bytes present leaves the rest unaccounted
+        // for; the table a reader needs is complete, so the bytes are carried.
+        let trailing = rest.to_vec();
         Ok(Self {
             version: ver,
             flags,
             entries,
+            trailing,
         })
     }
 }
@@ -3951,7 +4174,7 @@ impl Serialize for SampleDescriptionBox {
         for e in &self.entries {
             n += e.serialized_len();
         }
-        crate::box_types::box_len(n)
+        crate::box_types::box_len(n + self.trailing.len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3972,7 +4195,8 @@ impl Serialize for SampleDescriptionBox {
         for e in &self.entries {
             c += e.serialize_into(&mut buf[c..])?;
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
@@ -4006,13 +4230,16 @@ pub enum StblChild {
     Opaque(Vec<u8>),
 }
 
-fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
+fn parse_stbl_children_notes(
+    body: &[u8],
+    mut notes: Option<&mut crate::box_support::Notes<'_>>,
+) -> Result<Vec<StblChild>> {
     let mut children = Vec::new();
     for child in BoxIter::new(body) {
         let child = child?;
         let box_bytes = child.bytes;
         let boxtype = child.four_cc();
-        children.push(match &boxtype {
+        let parsed = match &boxtype {
             // A `stsd` that fails to parse (e.g. an `avcC` with a malformed
             // trailer) is kept as raw bytes rather than defaulted to an empty
             // box — an empty `entries: Vec::new()` would later present to
@@ -4087,7 +4314,15 @@ fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
                 Err(_) => StblChild::Opaque(box_bytes.to_vec()),
             },
             _ => StblChild::Opaque(box_bytes.to_vec()),
-        });
+        };
+        if let Some(notes) = notes.as_deref_mut() {
+            match &parsed {
+                StblChild::Stsd(stsd) => notes.trailing(box_bytes, stsd.trailing().len()),
+                StblChild::Stsz(stsz) => notes.trailing(box_bytes, stsz.trailing().len()),
+                _ => {}
+            }
+        }
+        children.push(parsed);
     }
     Ok(children)
 }
@@ -4154,14 +4389,23 @@ pub struct SampleTableBox {
     pub children: Vec<StblChild>,
 }
 
+impl SampleTableBox {
+    /// `SampleTableBox::parse`, reporting the bytes a structural table carried
+    /// past its declared fields.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
+        Ok(Self {
+            children: parse_stbl_children_notes(parse_box(bytes)?.0.body, notes)?,
+        })
+    }
+}
+
 impl<'a> Parse<'a> for SampleTableBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        // Expect full box bytes (size+type header then body)
-
-        Ok(Self {
-            children: parse_stbl_children(parse_box(bytes)?.0.body)?,
-        })
+        Self::parse_notes(bytes, None)
     }
 }
 
@@ -4239,9 +4483,13 @@ impl DataInformationBox {
     }
 }
 
-impl<'a> Parse<'a> for DataInformationBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl DataInformationBox {
+    /// `DataInformationBox::parse`, reporting the bytes `dref` carried past
+    /// its declared entry table.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut dref = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
@@ -4249,15 +4497,14 @@ impl<'a> Parse<'a> for DataInformationBox {
             let child = child?;
             if child.header.box_type.is(b"dref") {
                 order.push(child.four_cc());
-                dref = Some(DataReferenceBox::parse(child.bytes)?);
+                let parsed = DataReferenceBox::parse(child.bytes)?;
+                if let Some(notes) = notes.as_deref_mut() {
+                    notes.trailing(child.bytes, parsed.trailing().len());
+                }
+                dref = Some(parsed);
             } else {
                 order.push_opaque(child.four_cc());
-                opaque.push(OpaqueBox {
-                    box_type: child.four_cc(),
-                    data: child.payload().to_vec(),
-                    to_end: child.to_end(),
-                    largesize: child.has_largesize(),
-                });
+                opaque.push(crate::box_support::opaque_child(&child));
             }
         }
         Ok(Self {
@@ -4265,6 +4512,13 @@ impl<'a> Parse<'a> for DataInformationBox {
             opaque,
             order,
         })
+    }
+}
+
+impl<'a> Parse<'a> for DataInformationBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_notes(bytes, None)
     }
 }
 
@@ -4493,9 +4747,14 @@ impl MediaInformationBox {
     }
 }
 
-impl<'a> Parse<'a> for MediaInformationBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl MediaInformationBox {
+    /// `MediaInformationBox::parse`, keeping a media header or `gmhd` the
+    /// crate cannot represent opaque in its own position and reporting it, and
+    /// recursing into `dinf`/`stbl`.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut vmhd = None;
         let mut smhd = None;
         let mut nmhd = None;
@@ -4512,23 +4771,58 @@ impl<'a> Parse<'a> for MediaInformationBox {
             match &child.four_cc() {
                 b"vmhd" => {
                     order.push(child.four_cc());
-                    vmhd = Some(VideoMediaHeaderBox::parse(child.bytes)?);
+                    vmhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        |bytes| VideoMediaHeaderBox::parse(bytes),
+                    )?;
+                    if vmhd.is_none() {
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
                 }
                 b"smhd" => {
                     order.push(child.four_cc());
-                    smhd = Some(SoundMediaHeaderBox::parse(child.bytes)?);
+                    smhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        |bytes| SoundMediaHeaderBox::parse(bytes),
+                    )?;
+                    if smhd.is_none() {
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
                 }
                 b"nmhd" => {
                     order.push(child.four_cc());
-                    nmhd = Some(NullMediaHeaderBox::parse(child.bytes)?);
+                    nmhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        |bytes| NullMediaHeaderBox::parse(bytes),
+                    )?;
+                    if nmhd.is_none() {
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
                 }
                 b"hmhd" => {
                     order.push(child.four_cc());
-                    hmhd = Some(HintMediaHeaderBox::parse(child.bytes)?);
+                    hmhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        |bytes| HintMediaHeaderBox::parse(bytes),
+                    )?;
+                    if hmhd.is_none() {
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
                 }
                 b"vvhd" => {
                     order.push(child.four_cc());
-                    vvhd = Some(VolumetricVisualMediaHeaderBox::parse(child.bytes)?);
+                    vvhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        |bytes| VolumetricVisualMediaHeaderBox::parse(bytes),
+                    )?;
+                    if vvhd.is_none() {
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
                 }
                 b"sthd" => {
                     order.push(child.four_cc());
@@ -4536,15 +4830,28 @@ impl<'a> Parse<'a> for MediaInformationBox {
                 }
                 b"gmhd" => {
                     order.push(child.four_cc());
-                    gmhd = Some(crate::quicktime::gmhd::GmhdAtom::parse_box(child.bytes)?);
+                    gmhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        crate::quicktime::gmhd::GmhdAtom::parse_box,
+                    )?;
+                    if gmhd.is_none() {
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
                 }
                 b"dinf" => {
                     order.push(child.four_cc());
-                    dinf = Some(DataInformationBox::parse(child.bytes)?);
+                    dinf = Some(DataInformationBox::parse_notes(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                    )?);
                 }
                 b"stbl" => {
                     order.push(child.four_cc());
-                    stbl = Some(SampleTableBox::parse(child.bytes)?);
+                    stbl = Some(SampleTableBox::parse_notes(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                    )?);
                 }
                 // A subtitle track's `sthd` and a data track's `nmhd` are not
                 // modelled (no fields to carry — §12.6.2/§8.4.5.2 are both
@@ -4554,12 +4861,7 @@ impl<'a> Parse<'a> for MediaInformationBox {
                 // `stbl`, where strict readers reject them (audit r05-W12).
                 _ => {
                     order.push_opaque(child.four_cc());
-                    opaque.push(OpaqueBox {
-                        box_type: child.four_cc(),
-                        data: child.payload().to_vec(),
-                        to_end: child.to_end(),
-                        largesize: child.has_largesize(),
-                    });
+                    opaque.push(crate::box_support::opaque_child(&child));
                 }
             }
         }
@@ -4576,6 +4878,13 @@ impl<'a> Parse<'a> for MediaInformationBox {
             opaque,
             order,
         })
+    }
+}
+
+impl<'a> Parse<'a> for MediaInformationBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_notes(bytes, None)
     }
 }
 
@@ -4697,9 +5006,13 @@ impl MediaBox {
     }
 }
 
-impl<'a> Parse<'a> for MediaBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl MediaBox {
+    /// `MediaBox::parse`, keeping an `elng` the crate cannot represent opaque
+    /// in its own position and reporting it, and recursing into `minf`.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut mdhd = None;
         let mut hdlr = None;
         let mut minf = None;
@@ -4719,20 +5032,28 @@ impl<'a> Parse<'a> for MediaBox {
                 }
                 b"minf" => {
                     order.push(child.four_cc());
-                    minf = Some(MediaInformationBox::parse(child.bytes)?);
+                    minf = Some(MediaInformationBox::parse_notes(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                    )?);
                 }
-                b"elng" => {
-                    order.push(child.four_cc());
-                    elng = Some(crate::track_desc::ExtendedLanguageBox::parse(child.bytes)?);
-                }
+                b"elng" => match crate::box_support::keep_or_note(
+                    child.bytes,
+                    notes.as_deref_mut(),
+                    |bytes| crate::track_desc::ExtendedLanguageBox::parse(bytes),
+                )? {
+                    Some(parsed) => {
+                        order.push(child.four_cc());
+                        elng = Some(parsed);
+                    }
+                    None => {
+                        order.push_opaque(child.four_cc());
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
+                },
                 _ => {
                     order.push_opaque(child.four_cc());
-                    opaque.push(OpaqueBox {
-                        box_type: child.four_cc(),
-                        data: child.payload().to_vec(),
-                        to_end: child.to_end(),
-                        largesize: child.has_largesize(),
-                    });
+                    opaque.push(crate::box_support::opaque_child(&child));
                 }
             }
         }
@@ -4744,6 +5065,13 @@ impl<'a> Parse<'a> for MediaBox {
             opaque,
             order,
         })
+    }
+}
+
+impl<'a> Parse<'a> for MediaBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_notes(bytes, None)
     }
 }
 
@@ -5025,9 +5353,15 @@ impl TrackBox {
     }
 }
 
-impl<'a> Parse<'a> for TrackBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl TrackBox {
+    /// `TrackBox::parse`, keeping a non-structural child (`edts`, `trgr`) the
+    /// crate cannot represent opaque in its own position and reporting it, and
+    /// recursing into `mdia`.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+        limits: &Limits,
+    ) -> Result<Self> {
         let mut tkhd = None;
         let mut edts = None;
         let mut mdia = None;
@@ -5041,27 +5375,45 @@ impl<'a> Parse<'a> for TrackBox {
                     order.push(child.four_cc());
                     tkhd = Some(TrackHeaderBox::parse(child.bytes)?);
                 }
-                b"edts" => {
-                    order.push(child.four_cc());
-                    edts = Some(EditBox::parse(child.bytes)?);
-                }
+                b"edts" => match crate::box_support::keep_or_note(
+                    child.bytes,
+                    notes.as_deref_mut(),
+                    |bytes| EditBox::parse(bytes),
+                )? {
+                    Some(parsed) => {
+                        order.push(child.four_cc());
+                        edts = Some(parsed);
+                    }
+                    None => {
+                        order.push_opaque(child.four_cc());
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
+                },
                 b"mdia" => {
                     order.push(child.four_cc());
-                    mdia = Some(MediaBox::parse(child.bytes)?);
+                    mdia = Some(MediaBox::parse_notes(child.bytes, notes.as_deref_mut())?);
                 }
-                b"trgr" => {
-                    order.push(child.four_cc());
-                    trgr = Some(crate::track_desc::TrackGroupBox::parse(child.bytes)?);
-                }
+                b"trgr" => match crate::box_support::keep_or_note(
+                    child.bytes,
+                    notes.as_deref_mut(),
+                    |bytes| crate::track_desc::TrackGroupBox::parse(bytes),
+                )? {
+                    Some(parsed) => {
+                        order.push(child.four_cc());
+                        trgr = Some(parsed);
+                    }
+                    None => {
+                        order.push_opaque(child.four_cc());
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
+                },
                 // `tref`/`udta`/`meta` stay opaque, in place.
                 _ => {
+                    if let Some(notes) = notes.as_deref_mut() {
+                        crate::box_support::note_metadata_child(&child, limits, notes);
+                    }
                     order.push_opaque(child.four_cc());
-                    opaque.push(OpaqueBox {
-                        box_type: child.four_cc(),
-                        data: child.payload().to_vec(),
-                        to_end: child.to_end(),
-                        largesize: child.has_largesize(),
-                    });
+                    opaque.push(crate::box_support::opaque_child(&child));
                 }
             }
         }
@@ -5077,6 +5429,13 @@ impl<'a> Parse<'a> for TrackBox {
             opaque,
             order,
         })
+    }
+}
+
+impl<'a> Parse<'a> for TrackBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_notes(bytes, None, &Limits::default())
     }
 }
 
@@ -5613,9 +5972,16 @@ impl MovieBox {
     }
 }
 
-impl<'a> Parse<'a> for MovieBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl MovieBox {
+    /// `MovieBox::parse`, reporting through `notes` what a non-structural
+    /// child could not represent and what a structural child carried past its
+    /// declared fields. With a degrading sink such a child is kept opaque in
+    /// its own position; without one the parse is the strict one.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+        limits: &Limits,
+    ) -> Result<Self> {
         let mut mvhd = None;
         let mut tracks = Vec::new();
         let mut mvex = None;
@@ -5630,7 +5996,11 @@ impl<'a> Parse<'a> for MovieBox {
                 }
                 b"trak" => {
                     order.push(child.four_cc());
-                    tracks.push(TrackBox::parse(child.bytes)?);
+                    tracks.push(TrackBox::parse_notes(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        limits,
+                    )?);
                 }
                 b"mvex" => {
                     order.push(child.four_cc());
@@ -5640,13 +6010,11 @@ impl<'a> Parse<'a> for MovieBox {
                 // conventional layout writes `pssh` ahead of the `trak`s, and the
                 // old serializer always emitted it last.
                 _ => {
+                    if let Some(notes) = notes.as_deref_mut() {
+                        crate::box_support::note_metadata_child(&child, limits, notes);
+                    }
                     order.push_opaque(child.four_cc());
-                    opaque.push(OpaqueBox {
-                        box_type: child.four_cc(),
-                        data: child.payload().to_vec(),
-                        to_end: child.to_end(),
-                        largesize: child.has_largesize(),
-                    });
+                    opaque.push(crate::box_support::opaque_child(&child));
                 }
             }
         }
@@ -5661,6 +6029,13 @@ impl<'a> Parse<'a> for MovieBox {
             opaque,
             order,
         })
+    }
+}
+
+impl<'a> Parse<'a> for MovieBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_notes(bytes, None, &Limits::default())
     }
 }
 
@@ -5859,7 +6234,9 @@ mod tests {
             duration: 2000,
             rate: 0x00010000,
             volume: 0x0100,
+            reserved: Default::default(),
             matrix: [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000],
+            pre_defined: Default::default(),
             next_track_id: TrackId::new(3),
         }
     }
@@ -5892,10 +6269,13 @@ mod tests {
             creation_time: 0,
             modification_time: 0,
             track_id: TrackId::new(1),
+            reserved: Default::default(),
             duration: 2000,
+            reserved_2: Default::default(),
             layer: 0,
             alternate_group: 0,
             volume: 0,
+            reserved_3: Default::default(),
             matrix: [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000],
             width: 0,
             height: 0,
@@ -5938,10 +6318,13 @@ mod tests {
             creation_time: 0,
             modification_time: 0,
             track_id: TrackId::new(1),
+            reserved: Default::default(),
             duration: 0,
+            reserved_2: Default::default(),
             layer: 0,
             alternate_group: 0,
             volume: 0,
+            reserved_3: Default::default(),
             matrix,
             width: 0,
             height: 0,
@@ -6018,6 +6401,7 @@ mod tests {
             version: 0,
             flags: 0,
             entries: alloc::vec![DataEntry::Url(url)],
+            trailing: Vec::new(),
         };
         let bytes = dref.try_to_bytes().unwrap();
         let parsed = DataReferenceBox::parse(&bytes).unwrap();
@@ -6215,6 +6599,7 @@ mod tests {
             sample_size: 512,
             sample_count: 88,
             entries: alloc::vec![],
+            trailing: Vec::new(),
         };
         let bytes = s.try_to_bytes().unwrap();
         let parsed = SampleSizeBox::parse(&bytes).unwrap();
@@ -6304,6 +6689,7 @@ mod tests {
             version: 0,
             flags: 0,
             entries: alloc::vec![DataEntry::Url(url)],
+            trailing: Vec::new(),
         };
         let bytes = dref.try_to_bytes().unwrap();
         let parsed = DataReferenceBox::parse(&bytes).unwrap();
@@ -6327,7 +6713,7 @@ mod tests {
         body[0..4].copy_from_slice(&8u32.to_be_bytes());
         body[4..8].copy_from_slice(b"stsc");
 
-        let children = parse_stbl_children(&body).unwrap();
+        let children = parse_stbl_children_notes(&body, None).unwrap();
         assert_eq!(children.len(), 1);
         match &children[0] {
             StblChild::Opaque(raw) => assert_eq!(raw.as_slice(), body.as_slice()),
@@ -6351,7 +6737,7 @@ mod tests {
         body[4..8].copy_from_slice(b"stsc");
         // version/flags already zero; entry_count (bytes 12..16) already zero.
 
-        let children = parse_stbl_children(&body).unwrap();
+        let children = parse_stbl_children_notes(&body, None).unwrap();
         assert_eq!(children.len(), 1);
         match &children[0] {
             StblChild::Stsc(b) => assert!(b.entries.is_empty()),
@@ -6487,6 +6873,7 @@ mod tests {
                 timescale: timescale(90_000),
                 duration: 180_000,
                 language: 0x55C4,
+                quality: Default::default(),
             },
             "mdhd",
         );
@@ -6506,6 +6893,7 @@ mod tests {
                 version: 0,
                 flags: 0,
                 balance: 0,
+                reserved: Default::default(),
             },
             "smhd",
         );
@@ -6527,10 +6915,13 @@ mod tests {
                     creation_time: 1,
                     modification_time: 2,
                     track_id: TrackId::new(1),
+                    reserved: Default::default(),
                     duration: 1000,
+                    reserved_2: Default::default(),
                     layer: 0,
                     alternate_group: 0,
                     volume: 0x0100,
+                    reserved_3: Default::default(),
                     matrix: [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000],
                     width: 640 << 16,
                     height: 360 << 16,
@@ -6690,6 +7081,88 @@ mod compact_size_and_dependency_tests {
             i += 1;
         }
         None
+    }
+
+    /// The first `size|type` box with `fourcc`, and its length, inside `bytes`.
+    fn locate(bytes: &[u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<(usize, usize)> {
+        let mut at = 0usize;
+        while at + BOX_HEADER_MIN_SIZE <= bytes.len() {
+            if &bytes[at + BOX_TYPE_OFFSET..at + BOX_HEADER_MIN_SIZE] == fourcc {
+                let size =
+                    u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+                        as usize;
+                if size >= BOX_HEADER_MIN_SIZE && at + size <= bytes.len() {
+                    return Some((at, size));
+                }
+            }
+            at += 1;
+        }
+        None
+    }
+
+    /// A `moov` whose one non-structural box is unrepresentable still re-emits
+    /// byte-exact: the box is carried opaque in its own position, one note
+    /// says which one, and the strict parse (what `origin/main` does) refuses
+    /// it.
+    #[test]
+    fn a_degraded_movie_box_tree_re_emits_byte_exact() {
+        // (fixture, box to break, byte offset in its body, written value)
+        let cases: [(&str, [u8; BOX_TYPE_SIZE], usize, u8); 3] = [
+            ("mp4/boxes/track-group-ster.mp4", *b"trgr", 4, 0x0C),
+            ("mp4/progressive/av-prog.mp4", *b"elst", 4, 0xFF),
+            ("mp4/boxes/loudness.m4a", *b"ludt", 0, 0x7F),
+        ];
+        for (fixture, fourcc, body_at, value) in cases {
+            let file = test_fixtures::read(fixture);
+            let Some((moov_at, moov_len)) = locate(&file, b"moov") else {
+                panic!("{fixture}: no moov");
+            };
+            let mut moov = file[moov_at..moov_at + moov_len].to_vec();
+            let (target_at, target_len) =
+                locate(&moov, &fourcc).unwrap_or_else(|| panic!("{fixture}: no target"));
+            if fourcc == *b"trgr" {
+                // Cut the group's declared size below its own fixed fields.
+                moov[target_at + BOX_HEADER_MIN_SIZE..target_at + BOX_HEADER_MIN_SIZE + 4]
+                    .copy_from_slice(&12u32.to_be_bytes());
+            } else if fourcc == *b"elst" {
+                moov[target_at + BOX_HEADER_MIN_SIZE + body_at
+                    ..target_at + BOX_HEADER_MIN_SIZE + body_at + 2]
+                    .copy_from_slice(&[0xFF, 0xFF]);
+            } else {
+                moov[target_at + BOX_HEADER_MIN_SIZE + body_at] = value;
+            }
+            assert!(target_len >= BOX_HEADER_MIN_SIZE);
+            let mut notes = alloc::vec::Vec::new();
+            let movie = {
+                let mut sink = crate::box_support::Notes::new(&moov, 0, true, &mut notes);
+                MovieBox::parse_notes(&moov, Some(&mut sink), &Limits::default())
+            }
+            .unwrap_or_else(|e| panic!("{fixture}: degraded parse: {e}"));
+            assert_eq!(
+                movie.try_to_bytes().expect("re-emit"),
+                moov,
+                "{fixture}: the degraded tree re-emits byte-exact"
+            );
+            let unrepresentable = notes
+                .iter()
+                .filter(|note| matches!(note, crate::box_support::Note::Unrepresentable { .. }))
+                .count();
+            assert_eq!(unrepresentable, 1, "{fixture}: one note, got {notes:?}");
+            if fourcc == *b"ludt" {
+                // A track-level metadata atom is opaque to the box tree, so the
+                // strict refusal is the metadata view the reader asks for.
+                let track = &movie.tracks[0];
+                assert!(
+                    track.metadata(&Limits::default()).is_err(),
+                    "{fixture}: the strict metadata view still refuses it"
+                );
+            } else {
+                assert!(
+                    MovieBox::parse(&moov).is_err(),
+                    "{fixture}: the strict parse still refuses it"
+                );
+            }
+        }
     }
 
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

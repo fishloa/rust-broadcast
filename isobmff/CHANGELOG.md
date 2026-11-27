@@ -55,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `stpp`, so a protected `encu` entry round-trips. A struct literal must name
   it (or start from `new`).
 
+- `subtitle_entries::XmlSubtitleSampleEntry` gains a public `trailing` field:
+  the bytes after its last complete child box — a header cut short by the
+  entry's own size, or a region too small to frame one — are carried instead of
+  being dropped on a rewrite. A struct literal must name it (or start from
+  `new`).
+
 - `threegpp`: the 3GPP TS 26.244 code points — `ThreeGppAudioEntry`
   (`samr`/`sawb`/`sawp`/`sevs`, with `AmrDecoderSpecificBox` and
   `AmrwbPlusDecoderSpecificBox`), `H263SampleEntry` and
@@ -101,6 +107,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Every reserved or fixed field the box audit reached is now carried.** The
+  movie, track and media headers (`MovieHeaderBox` `reserved`/`pre_defined`,
+  `TrackHeaderBox` `reserved`/`reserved_2`/`reserved_3`, `MediaHeaderBox`
+  `quality`, `SoundMediaHeaderBox` `reserved`), `SegmentIndexBox`
+  `reserved`, `TrackFragmentRandomAccessBox` `reserved_widths`,
+  `MovieFragmentHeaderBox` `version`/`flags`, `TrackFragmentHeaderBox`
+  `version`, `MediaDataBox` `largesize`/`to_end`, `Av1ConfigurationBox`
+  `reserved`, `ImageRotation`/`ImageMirror` reserved bits, and the item entry's
+  final-string terminator hold what the file said instead of being rewritten.
+  A struct literal must state the new fields (`Default::default()` is the
+  spec-fill). Version bytes the headers used to normalise to 0/1 are carried
+  too.
+
+- **One opaque-child carrier.** `isobmff::sample_entries::OpaqueBox` is gone:
+  the sample entries' `extra_boxes` are `box_support::OpaqueBox` like every
+  other container's, so a child written with `size == 0` or `size == 1` +
+  `largesize` keeps that form instead of being normalised to the compact one.
+
+- **`subs` version 2 and `ssrt` carry every bit of their wire state.**
+  `SubsampleProperties` gains a `reserved` field for the two reserved bits of a
+  version-2 `subs` property byte (three in an `ssrt` entry),
+  `SubSampleInformationBoxV2` gains `reserved` for the six after
+  `is_short_ref`, and `SubSampleReferenceTableBox` gains `version`, which was
+  hard-coded to 0 on write. A struct literal must state them (parsed values
+  carry them already).
+
+- **A structural box carries the bytes its declared table does not account
+  for.** `DataReferenceBox`, `SampleDescriptionBox`, `SampleSizeBox`,
+  `SampleAuxInfoSizesBox`, `SegmentIndexBox`, `TrackFragmentRandomAccessBox`,
+  `ItemPropertyAssociationBox`, `TrackFragmentHeaderBox`,
+  `TrackFragmentRunBox` and `ChannelLayoutBox` gain a private `trailing`
+  field: bytes after the box's last declared field are kept verbatim and
+  written back, so the round trip is exact and the reader still gets the
+  table. A declared count or size that runs past the box is still a typed
+  error, as is a FullBox version the crate does not model. Build one through
+  its `new` (and `with_trailing`), and read the carried bytes through
+  `trailing()`; a struct literal can no longer name every field.
+
 - **Sample entries keep every parsed byte on a rewrite.** The audio sample
   entries (`Mp4aSampleEntry`, `Ac3SampleEntry`, `Ec3SampleEntry`,
   `Ac4SampleEntry`, `OpusSampleEntry`, `FlacSampleEntry`, `MhaSampleEntry`,
@@ -132,7 +176,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rewritten without them. `ColourFormatEnhancement::serialized_len` reports the
   byte its `serialize_into` writes.
 
+### Added
+
+- **Both readers degrade a box they cannot reproduce instead of refusing the
+  file.** `Reader` keeps a non-structural box (`edts`/`elst`, `trgr`, `elng`,
+  a media header, `gmhd`, a `udta`/`meta` atom) opaque in its own position,
+  byte-exact, and reports it as `Warning::UnrepresentableBox`; bytes a
+  structural box carries past its declared fields are reported as
+  `Warning::TrailingBytes`. The `Reader` docs table states the split. The item
+  reader does the same for item properties, entity groups, item references and
+  the derived/region/integrity item bodies, reporting
+  `ImageFinding::UnrepresentableBox`, and reports carried bytes as
+  `ImageFinding::TrailingBytes`. A second file-level `meta` box is carried and
+  reported as `ImageFinding::ExtraMetaBox`. `ItemPropertyContainerBox` gains
+  `parse_body_degrading`, `ItemPropertiesBox`, `ItemReferenceBox` and
+  `GroupsListBox` gain `parse_degrading`, and `item::DegradedChild` names what
+  was kept. Only structure a reader cannot walk (the sample tables, the item
+  location and information tables, the property association) remains an
+  error.
+
 ### Fixed
+
+- **A top-level box whose `largesize` cannot hold its own header is a typed
+  error.** It used to be kept as a zero-length payload, so a re-emit dropped
+  the bytes it claimed; the `isobmff_item_reader` target's new round-trip
+  assertion found it, and the input is a regression test.
+
+- **A second file-level `meta` box is carried, not refused.** The item reader
+  uses the first; a later one keeps its file position and re-emits byte-exact,
+  reported as `ImageFinding::ExtraMetaBox`. It used to be a typed error,
+  because only one body was kept. The whole-file round-trip assertion the
+  `isobmff_item_reader` fuzz target makes found the original rewrite; the
+  345-byte input stays as a regression test.
+
+- **A fixed-layout box refuses bytes its declared fields do not account
+  for.** `btrt`, `tims`, `tsro` and `snro` wrote back only the fields their
+  clause lists, so bytes past them were dropped on the way out. Each is now a
+  typed error, and the reader that meets one keeps it opaque. The box audit's
+  new trailing-byte pass appends four bytes past every occurrence's last
+  declared field and requires a carry or a refusal; the boxes that still do
+  neither are pinned in `tests/it/box_audit.rs`.
+
+- **A box whose declared table leaves bytes over keeps them.** `dref`, `stsd`,
+  `stsz`, `saiz`, `sidx`, `tfra`, `ipma`, `tfhd`, `trun` and `chnl` used to
+  drop those bytes on the way out (and a sample-info table a non-zero default
+  rules out was silently ignored); they are now carried verbatim. `chnl` still
+  refuses a FullBox version above 1 and a tail shorter than a byte. `cprt`
+  keeps its language field unmasked. The new `tests/it/box_audit.rs` walks
+  every committed media fixture, flips each byte of each typed box's fixed
+  part, and requires parse -> serialize identity or a typed error; it found
+  and pinned these.
+
+- **A `meta` child keeps the header form it was written with.** A child using
+  `size == 0` or `size == 1` + `largesize` was re-emitted with the compact
+  length, changing bytes the reader had accepted;
+  `isobmff_item_reader` found it on a 93-byte input, kept as a regression
+  test.
+
+- **A visual sample entry's opaque child keeps its header form.** A child of
+  an `avc1`/`hvc1`/`vvc1` entry written with `size == 0` or `size == 1` +
+  `largesize` was re-emitted with the compact length.
+
+- **`subs` version 2 and `ssrt` keep their reserved bits, and `ssrt` its
+  FullBox version.** The reserved bits were dropped and `ssrt` was always
+  written as version 0, so a rewrite changed bytes it had parsed.
+
+- **`sgpd` writes the `default_length` the file stated.** The serializer
+  re-derived it from the entries: a version-1 box whose `default_length` was 0
+  with uniform entries came back in the shared-length form, and a non-zero
+  value with no entries came back as 0. `default_length` is now carried, 0
+  still means a per-entry `description_length` prefix, and a shared value that
+  disagrees with an entry's width is a typed error. A box you build must state
+  `default_length` itself instead of leaving it 0 for the serializer to fill
+  in.
 
 - **A `udta`/`meta`/`ilst` child written with `size == 0` or `size == 1` +
   `largesize` keeps that header form.** A typed child serialises the compact

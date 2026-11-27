@@ -25,6 +25,19 @@
 //! `dac3`/`dec3`, DTS core-frame header → `ddts`) → length-prefixed video /
 //! raw audio samples.
 //!
+//! # Damaged input
+//!
+//! Best-effort by default: a damaged input plays as far as it can. A lost
+//! sync byte, an unparsable packet header, a bad continuity counter, a
+//! scrambled payload, a PES that ends short of its declared length and a
+//! rejected parameter set are all reported as [`DemuxEvent::InputDegraded`]
+//! and the demuxer carries on at the next lock. The one error is a sample
+//! whose timing cannot be represented in the IR (a negative time); it is
+//! unreachable from MPEG-2 TS today because a PES with a PTS and no DTS
+//! defaults DTS to PTS. A caller-set resource limit is not an error either:
+//! the PES-unit byte cap is a [`DemuxEvent::Discontinuity`] and the probe
+//! backlog cap a [`DemuxEvent::TrackAbandoned`].
+//!
 //! Config recovery happens incrementally, access unit by access unit: a
 //! track's `DemuxEvent::TrackAdded` fires as soon as its config is known —
 //! with an opaque [`CodecConfig::Data`] track (issue #557) firing on its very
@@ -232,7 +245,9 @@ use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use broadcast_core::damage::{ByteRange, Damage, DamageKind, MediaTimeRange, Severity};
+use broadcast_core::damage::{
+    ByteRange, Damage, DamageKind, DamagePolicy, MediaTimeRange, Severity,
+};
 use broadcast_core::timescale::Timescale;
 use core::num::NonZeroUsize;
 use mpeg_ts::pid::Pid;
@@ -246,6 +261,7 @@ use mpeg_ts::ts::{
     ContinuityCounter, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsPacket,
 };
 
+use crate::demux_damage;
 use crate::error::Result;
 use crate::media::lame_padding;
 use crate::nal_params::{ParamKind, parameter_set_is_valid};
@@ -3953,6 +3969,11 @@ fn abandon_backlog(
             program_number: None,
         },
     });
+    events.push_back(DemuxEvent::damage(Damage::new(
+        DamageKind::TrackDropped,
+        Severity::Degraded,
+        "elementary stream",
+    )));
     TrackState::Abandoned
 }
 
@@ -5053,6 +5074,8 @@ pub struct StreamingTsDemux {
     /// (the default) is unlimited. See
     /// [`with_max_pes_unit_bytes`](Self::with_max_pes_unit_bytes).
     max_pes_unit_bytes: Option<NonZeroUsize>,
+    /// What each [`Damage`] this demuxer publishes means to the caller.
+    damage_policy: DamagePolicy,
 }
 
 /// Per-PMT-PID reassembly + version-diffing state (issue #774): the
@@ -5113,6 +5136,7 @@ impl StreamingTsDemux {
             afd_persistence: AfdPersistence::UntilReplaced,
             strict_pmt_order: false,
             max_pes_unit_bytes: None,
+            damage_policy: DamagePolicy::new(),
         }
     }
 
@@ -5178,6 +5202,14 @@ impl StreamingTsDemux {
         self
     }
 
+    /// Set what each damage report this demuxer publishes means: the default
+    /// reports everything and fails on nothing.
+    #[must_use]
+    pub fn with_damage_policy(mut self, damage_policy: DamagePolicy) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
+
     /// The caller-supplied PES unit ceiling; `None` when unlimited.
     #[must_use]
     pub fn max_pes_unit_bytes(&self) -> Option<NonZeroUsize> {
@@ -5221,10 +5253,11 @@ impl StreamingTsDemux {
     /// diagnostic volume with
     /// [`with_max_degraded_events`](Self::with_max_degraded_events).
     pub fn feed(&mut self, data: &[u8]) -> Result<()> {
+        let from = self.events.len();
         let packets = self.resync.feed(data);
         self.process_resynced(&packets)?;
         self.enforce_degraded_cap();
-        Ok(())
+        demux_damage::admit_new(&self.events, &self.damage_policy, from)
     }
 
     /// Process `packets` the resynchroniser just emitted, interleaving the
@@ -5291,6 +5324,19 @@ impl StreamingTsDemux {
         self.packet_index += 1;
         (|| {
             let Ok(pkt) = TsPacket::parse(raw) else {
+                // A packet whose sync byte locked but whose header or
+                // adaptation field does not parse: dropped, reported, and the
+                // next packet is read normally.
+                report_degradation(
+                    &mut self.events,
+                    None,
+                    None,
+                    InputDegradation::MalformedUnit {
+                        position: idx
+                            .saturating_mul(u64::try_from(TS_PACKET_SIZE).unwrap_or(u64::MAX)),
+                    },
+                    EventProvenance::default(),
+                );
                 return Ok(());
             };
 
@@ -6669,6 +6715,7 @@ impl StreamingTsDemux {
     /// conclusion, which likewise needed the whole file), and emits the
     /// final one-behind pending sample for every live video/data track.
     pub fn finish(&mut self) -> Result<()> {
+        let from = self.events.len();
         self.flush_pes_tails()?;
         self.resolve_eac3_probes_from_tail();
         self.try_promote_ready()?;
@@ -6697,6 +6744,11 @@ impl StreamingTsDemux {
                             program_number: None,
                         },
                     });
+                    self.events.push_back(DemuxEvent::damage(Damage::new(
+                        DamageKind::TrackDropped,
+                        Severity::Degraded,
+                        "elementary stream",
+                    )));
                     self.try_promote_ready()?;
                 }
                 _ => break,
@@ -6705,7 +6757,7 @@ impl StreamingTsDemux {
 
         self.flush_live_tails()?;
         self.enforce_degraded_cap();
-        Ok(())
+        demux_damage::admit_new(&self.events, &self.damage_policy, from)
     }
 
     /// Declare that a new, unrelated timeline begins with the next input (an

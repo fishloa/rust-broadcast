@@ -1209,7 +1209,11 @@ fn build_smooth_fragment(
     for s in samples {
         mdat_data.extend_from_slice(&s.data);
     }
-    let mdat = MediaDataBox { data: mdat_data };
+    let mdat = MediaDataBox {
+        data: mdat_data,
+        largesize: false,
+        to_end: false,
+    };
 
     let total = styp.serialized_len() + with_tfxd.len() + mdat.serialized_len();
     let mut out = alloc::vec![0u8; total];
@@ -1341,6 +1345,8 @@ mod tests {
         let tfxd = TfxdBox::new(1, 2);
         let mdat = MediaDataBox {
             data: alloc::vec![0u8; 4],
+            largesize: false,
+            to_end: false,
         }
         .try_to_bytes()
         .unwrap();

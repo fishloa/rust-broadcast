@@ -656,12 +656,52 @@ pub struct SampleAuxInfoSizesBox {
     pub sample_count: u32,
     /// Same width as `default_sample_info_size`.
     pub sample_info_sizes: Vec<u32>,
+    /// Bytes after the last sample size the header accounts for (§8.7.8.2),
+    /// carried verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
 }
 
 impl SampleAuxInfoSizesBox {
+    /// A `saiz` with no bytes past the declared table.
+    #[must_use]
+    pub fn new(
+        version: u8,
+        flags: u32,
+        aux_info_type: Option<u32>,
+        aux_info_type_parameter: Option<u32>,
+        default_sample_info_size: u32,
+        sample_count: u32,
+        sample_info_sizes: Vec<u32>,
+    ) -> Self {
+        Self {
+            version,
+            flags,
+            aux_info_type,
+            aux_info_type_parameter,
+            default_sample_info_size,
+            sample_count,
+            sample_info_sizes,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last declared sample size, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
+
     /// Parse a `saiz` box from full box bytes (including 8-byte box header + FullBox).
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(
             bytes,
@@ -699,18 +739,19 @@ impl SampleAuxInfoSizesBox {
         offset += width;
         let sample_count_wire = u32_at(bytes, offset);
         offset += COUNT_FIELD_LEN;
-        let sample_info_sizes = if default_size == 0 {
+        let (sample_info_sizes, trailing) = if default_size == 0 {
             let sample_count = sample_count_wire as usize;
             let table = sample_count
                 .checked_mul(width)
                 .ok_or(Error::InvalidInput("saiz sample_count overflows the body"))?;
             need_in(bytes, offset + table, "saiz sample_info_size")?;
-            bytes[offset..offset + table]
+            let sizes = bytes[offset..offset + table]
                 .chunks_exact(width)
                 .map(read_be)
-                .collect()
+                .collect();
+            (sizes, bytes[offset + table..].to_vec())
         } else {
-            Vec::new()
+            (Vec::new(), bytes[offset..].to_vec())
         };
         Ok(Self {
             version,
@@ -720,6 +761,7 @@ impl SampleAuxInfoSizesBox {
             default_sample_info_size: default_size,
             sample_count: sample_count_wire,
             sample_info_sizes,
+            trailing,
         })
     }
 }
@@ -737,7 +779,7 @@ impl Serialize for SampleAuxInfoSizesBox {
         if self.default_sample_info_size == 0 {
             n += self.sample_info_sizes.len() * width;
         }
-        crate::box_types::box_len(n)
+        crate::box_types::box_len(n + self.trailing.len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -782,7 +824,8 @@ impl Serialize for SampleAuxInfoSizesBox {
                 write_be(buf, &mut c, v, width, "sample_info_size")?;
             }
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
@@ -807,7 +850,8 @@ pub struct SampleAuxInfoOffsetsBox {
 impl SampleAuxInfoOffsetsBox {
     /// Parse a `saio` box from full box bytes (including 8-byte box header + FullBox).
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(
             bytes,

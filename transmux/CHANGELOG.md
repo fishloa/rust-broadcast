@@ -17,6 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parse, a unit lost to a continuity gap, a bounded unit cut short at end of
   input) and the access units dropped by the caller's PES unit limit, with
   their byte range, track and media time.
+- Every streaming demuxer takes a `DamagePolicy`
+  (`with_damage_policy`): `Disposition::Fail` stops the run with `Error::Damage`
+  (`FlvError::Damage` for the FLV stage) carrying the same report, and the
+  default reports everything and fails on nothing. The FLV, Program Stream and
+  Matroska demuxers now publish `DemuxEvent::Damage` beside their existing
+  finding channels: a dropped FLV tag or damaged span, an unparsable PES or a
+  resynchronised Program Stream pack, a Matroska reader warning (its `Warning`
+  converts into a `Damage`), a Block whose NAL lengths do not fit, and a track
+  dropped at end of input. `StreamingPsDemux` also reports the bytes an input
+  leaves incomplete at end of stream as a truncation instead of dropping them
+  silently.
+- `StreamingFlvDemux::strict()`, which keeps the pre-best-effort contract
+  (a damaged header, backwards timestamp or too-large span is an error).
+- `StreamingFlvDemux::with_max_resync_bytes`: the caller's bound on the search
+  for a tag chain behind a damaged header (unlimited by default). A damaged
+  header is always reported and abandoned rather than waited for, so an absurd
+  declared `DataOffset` can never size a buffer or a scan; the walk resumes at
+  the first tag within the bytes actually supplied.
 - `flv::OnMetadata` and `flv::parse_on_metadata`: the typed view of an FLV
   script tag's `onMetaData` properties (duration, width, height, frame rate,
   codec ids, audio sample rate and size, stereo, file size, encoder) with
@@ -36,7 +54,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`TrackSpec::pre_roll` <-> `CodecParameters::pre_roll`), and
   `TranscodeStage` tells its decoder about a `MuxInput::Discontinuity` so the
   seam can drop the settling output after a splice.
-
+- Every non-ISOBMFF demuxer is best-effort by default: a damaged input plays
+  as far as it can. `StreamingFlvDemux` no longer returns `BadSignature` /
+  `HeaderTooLarge` / `Header` when a tag chain survives a damaged header, and a
+  backwards timestamp or too-large span is re-anchored with a
+  `DemuxEvent::DamagedSpan` finding. A truncated FLV tail is reported, not
+  silently dropped. `StreamingPsDemux` re-anchors every elementary-stream
+  splitter after a scanner resync (so the timeline stays monotonic) and
+  `MatroskaDemux` reports (instead of failing) a corrupt `TrackEntry`, a
+  Block outside a Cluster, an oversized element, a bad `Cluster/Timestamp`
+  and a Block whose NAL lengths do not fit. A `MatroskaDemux` track whose
+  known codec config is corrupt is `TrackAbandoned` when another track
+  survives, and a damaged gapless element (`CodecDelay`, `SeekPreRoll`,
+  `DiscardPadding`) costs that field, reported, rather than the track. See
+  `docs/demux-damage-matrix.md`.
 - The MPEG-2 video sequence layer moved to `broadcast-bitstream`:
   `transmux::{mpeg_legacy, h262}` are deleted with `Mpeg2SeqHeader`,
   `SEQUENCE_HEADER_CODE`, `SequenceHeaderGeometry` and

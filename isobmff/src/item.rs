@@ -23,7 +23,7 @@ use alloc::vec::Vec;
 
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::{fit_u32, need_in, need_out};
-use broadcast_core::wire::{be_u16, be_u32, be_u64, u24_at, u32_at};
+use broadcast_core::wire::{be_u16, be_u32, be_u64, fourcc_at, u24_at, u32_at};
 use broadcast_core::{Parse, Serialize};
 
 use crate::box_support::OpaqueBox;
@@ -1224,6 +1224,20 @@ impl ReferenceType {
 
 broadcast_core::impl_spec_display!(ReferenceType);
 
+/// One of an `infe` entry's trailing strings, in the order the payload writes
+/// them: only the last can lack its NUL terminator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InfeString {
+    /// `item_name`.
+    Name,
+    /// `content_type`.
+    ContentType,
+    /// `content_encoding`.
+    ContentEncoding,
+    /// `item_URI_type`.
+    UriType,
+}
+
 /// One entry of the [`ItemInfoBox`] (`infe`) — ISO/IEC 14496-12:2026 §8.11.6.
 ///
 /// Versions 0 and 1 carry symbolic names and MIME types; versions 2 and 3
@@ -1245,6 +1259,7 @@ pub struct ItemInfoEntry {
     item_uri_type: Option<Vec<u8>>,
     extension_type: Option<[u8; BOX_TYPE_SIZE]>,
     trailing: Vec<u8>,
+    last_string_unterminated: bool,
 }
 
 impl ItemInfoEntry {
@@ -1263,6 +1278,7 @@ impl ItemInfoEntry {
             item_uri_type: None,
             extension_type: None,
             trailing: Vec::new(),
+            last_string_unterminated: false,
         }
     }
 
@@ -1433,15 +1449,21 @@ impl ItemInfoEntry {
         let item_protection_index = be_u16(body, cursor, "infe item_protection_index")?;
         cursor += U16_LEN;
         if version < INFE_VERSION_TYPED {
-            let item_name = crate::box_support::take_c_string(body, &mut cursor, "infe item_name")?;
-            let content_type =
-                crate::box_support::take_c_string(body, &mut cursor, "infe content_type")?;
+            let (item_name, _) =
+                crate::box_support::take_c_string_terminated(body, &mut cursor, "infe item_name")?;
+            let (content_type, mut terminated) = crate::box_support::take_c_string_terminated(
+                body,
+                &mut cursor,
+                "infe content_type",
+            )?;
             let content_encoding = if cursor < body.len() {
-                Some(crate::box_support::take_c_string(
+                let (encoding, encoding_terminated) = crate::box_support::take_c_string_terminated(
                     body,
                     &mut cursor,
                     "infe content_encoding",
-                )?)
+                )?;
+                terminated = encoding_terminated;
+                Some(encoding)
             } else {
                 None
             };
@@ -1465,35 +1487,43 @@ impl ItemInfoEntry {
                 item_uri_type: None,
                 extension_type,
                 trailing,
+                last_string_unterminated: !terminated && cursor == body.len(),
             });
         }
         let mut item_type_fourcc = [0u8; BOX_TYPE_SIZE];
         item_type_fourcc.copy_from_slice(&body[cursor..cursor + BOX_TYPE_SIZE]);
         let item_type = ItemType::from_fourcc(item_type_fourcc);
         cursor += BOX_TYPE_SIZE;
-        let item_name = crate::box_support::take_c_string(body, &mut cursor, "infe item_name")?;
+        let (item_name, mut terminated) =
+            crate::box_support::take_c_string_terminated(body, &mut cursor, "infe item_name")?;
         let mut content_type = None;
         let mut content_encoding = None;
         let mut item_uri_type = None;
         if item_type.fourcc() == ITEM_TYPE_MIME {
-            content_type = Some(crate::box_support::take_c_string(
+            let (value, value_terminated) = crate::box_support::take_c_string_terminated(
                 body,
                 &mut cursor,
                 "infe content_type",
-            )?);
+            )?;
+            terminated = value_terminated;
+            content_type = Some(value);
             if cursor < body.len() {
-                content_encoding = Some(crate::box_support::take_c_string(
+                let (encoding, encoding_terminated) = crate::box_support::take_c_string_terminated(
                     body,
                     &mut cursor,
                     "infe content_encoding",
-                )?);
+                )?;
+                terminated = encoding_terminated;
+                content_encoding = Some(encoding);
             }
         } else if item_type.fourcc() == ITEM_TYPE_URI {
-            item_uri_type = Some(crate::box_support::take_c_string(
+            let (value, value_terminated) = crate::box_support::take_c_string_terminated(
                 body,
                 &mut cursor,
                 "infe item_uri_type",
-            )?);
+            )?;
+            terminated = value_terminated;
+            item_uri_type = Some(value);
         }
         Ok(Self {
             version,
@@ -1507,7 +1537,35 @@ impl ItemInfoEntry {
             item_uri_type,
             extension_type: None,
             trailing: body[cursor..].to_vec(),
+            last_string_unterminated: !terminated && cursor == body.len(),
         })
+    }
+
+    /// Which string this entry writes last: the only one whose NUL terminator
+    /// a source may have omitted.
+    fn last_string(&self) -> InfeString {
+        if self.is_typed() {
+            match self.item_type.fourcc() {
+                ITEM_TYPE_MIME if self.content_encoding.is_some() => InfeString::ContentEncoding,
+                ITEM_TYPE_MIME => InfeString::ContentType,
+                ITEM_TYPE_URI => InfeString::UriType,
+                _ => InfeString::Name,
+            }
+        } else if self.content_encoding.is_some() {
+            InfeString::ContentEncoding
+        } else {
+            InfeString::ContentType
+        }
+    }
+
+    /// Whether the NUL after `which` is written.
+    fn string_terminated(&self, which: InfeString) -> bool {
+        !(self.last_string_unterminated && self.last_string() == which)
+    }
+
+    /// The bytes one string field occupies, terminator included when written.
+    fn string_len(&self, value: Option<&Vec<u8>>, which: InfeString) -> usize {
+        value.map_or(0, Vec::len) + usize::from(self.string_terminated(which))
     }
 
     /// The file-delivery extension (`fdel`, §8.11.6.1) this version-1 entry
@@ -1526,29 +1584,21 @@ impl ItemInfoEntry {
         if self.is_typed() {
             len += BOX_TYPE_SIZE;
         }
-        len += self.item_name.len() + 1;
+        len += self.string_len(Some(&self.item_name), InfeString::Name);
         if self.is_typed() {
             if self.item_type.fourcc() == ITEM_TYPE_MIME {
-                len += self
-                    .content_type
-                    .as_ref()
-                    .map_or(1, |value| value.len() + 1);
-                if let Some(encoding) = &self.content_encoding {
-                    len += encoding.len() + 1;
+                len += self.string_len(self.content_type.as_ref(), InfeString::ContentType);
+                if self.content_encoding.is_some() {
+                    len += self
+                        .string_len(self.content_encoding.as_ref(), InfeString::ContentEncoding);
                 }
             } else if self.item_type.fourcc() == ITEM_TYPE_URI {
-                len += self
-                    .item_uri_type
-                    .as_ref()
-                    .map_or(1, |value| value.len() + 1);
+                len += self.string_len(self.item_uri_type.as_ref(), InfeString::UriType);
             }
         } else {
-            len += self
-                .content_type
-                .as_ref()
-                .map_or(1, |value| value.len() + 1);
-            if let Some(encoding) = &self.content_encoding {
-                len += encoding.len() + 1;
+            len += self.string_len(self.content_type.as_ref(), InfeString::ContentType);
+            if self.content_encoding.is_some() {
+                len += self.string_len(self.content_encoding.as_ref(), InfeString::ContentEncoding);
             }
             if self.extension_type.is_some() {
                 len += U32_LEN;
@@ -1579,23 +1629,53 @@ impl ItemInfoEntry {
             buf[cursor..cursor + BOX_TYPE_SIZE].copy_from_slice(&self.item_type.fourcc());
             cursor += BOX_TYPE_SIZE;
         }
-        cursor += crate::box_support::write_c_string(buf, cursor, &self.item_name)?;
+        cursor += crate::box_support::write_c_string_terminated(
+            buf,
+            cursor,
+            &self.item_name,
+            self.string_terminated(InfeString::Name),
+        )?;
         if self.is_typed() {
             if self.item_type.fourcc() == ITEM_TYPE_MIME {
                 let content_type = self.content_type.as_deref().unwrap_or(&[]);
-                cursor += crate::box_support::write_c_string(buf, cursor, content_type)?;
+                cursor += crate::box_support::write_c_string_terminated(
+                    buf,
+                    cursor,
+                    content_type,
+                    self.string_terminated(InfeString::ContentType),
+                )?;
                 if let Some(encoding) = &self.content_encoding {
-                    cursor += crate::box_support::write_c_string(buf, cursor, encoding)?;
+                    cursor += crate::box_support::write_c_string_terminated(
+                        buf,
+                        cursor,
+                        encoding,
+                        self.string_terminated(InfeString::ContentEncoding),
+                    )?;
                 }
             } else if self.item_type.fourcc() == ITEM_TYPE_URI {
                 let uri = self.item_uri_type.as_deref().unwrap_or(&[]);
-                cursor += crate::box_support::write_c_string(buf, cursor, uri)?;
+                cursor += crate::box_support::write_c_string_terminated(
+                    buf,
+                    cursor,
+                    uri,
+                    self.string_terminated(InfeString::UriType),
+                )?;
             }
         } else {
             let content_type = self.content_type.as_deref().unwrap_or(&[]);
-            cursor += crate::box_support::write_c_string(buf, cursor, content_type)?;
+            cursor += crate::box_support::write_c_string_terminated(
+                buf,
+                cursor,
+                content_type,
+                self.string_terminated(InfeString::ContentType),
+            )?;
             if let Some(encoding) = &self.content_encoding {
-                cursor += crate::box_support::write_c_string(buf, cursor, encoding)?;
+                cursor += crate::box_support::write_c_string_terminated(
+                    buf,
+                    cursor,
+                    encoding,
+                    self.string_terminated(InfeString::ContentEncoding),
+                )?;
             }
             if let Some(extension) = self.extension_type {
                 buf[cursor..cursor + BOX_TYPE_SIZE].copy_from_slice(&extension);
@@ -1867,6 +1947,9 @@ pub struct ItemReferenceBox {
     version: u8,
     flags: u32,
     references: Vec<SingleItemTypeReferenceBox>,
+    /// Children the typed parse refused, each with its position among all the
+    /// box's children, so a rewrite keeps the wire order.
+    opaque: Vec<(usize, OpaqueBox)>,
 }
 
 impl ItemReferenceBox {
@@ -1877,6 +1960,7 @@ impl ItemReferenceBox {
             version: 0,
             flags: 0,
             references: Vec::new(),
+            opaque: Vec::new(),
         }
     }
 
@@ -1918,10 +2002,15 @@ impl ItemReferenceBox {
     }
 }
 
-impl<'a> Parse<'a> for ItemReferenceBox {
-    type Error = Error;
+impl ItemReferenceBox {
+    /// [`ItemReferenceBox`]'s parse, keeping a reference whose typed parse
+    /// fails as an opaque child of its own kind and reporting it. `base` is the
+    /// box's absolute file offset, for the report.
+    pub fn parse_degrading(bytes: &[u8], base: u64) -> Result<(Self, Vec<DegradedChild>)> {
+        Self::parse_inner(bytes, Some(base))
+    }
 
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+    fn parse_inner(bytes: &[u8], base: Option<u64>) -> Result<(Self, Vec<DegradedChild>)> {
         expect_type(bytes, &IREF, "expected iref")?;
         let body = body_of(bytes, FULLBOX_EXTRA_SIZE, "iref")?;
         let version = body[0];
@@ -1930,7 +2019,9 @@ impl<'a> Parse<'a> for ItemReferenceBox {
             version,
             flags,
             references: Vec::new(),
+            opaque: Vec::new(),
         };
+        let mut degraded = Vec::new();
         if version > IREF_VERSION_WIDE_ID {
             return Err(Error::UnsupportedVersion(
                 broadcast_core::error::UnsupportedVersion {
@@ -1940,6 +2031,7 @@ impl<'a> Parse<'a> for ItemReferenceBox {
             ));
         }
         let mut rest = &body[FULLBOX_EXTRA_SIZE..];
+        let mut position = 0usize;
         while !rest.is_empty() {
             if rest.len() < BOX_HEADER_MIN_SIZE {
                 return Err(Error::BufferTooShort(BufferTooShort {
@@ -1950,12 +2042,33 @@ impl<'a> Parse<'a> for ItemReferenceBox {
             }
             let (item, used) = crate::box_types::parse_box(rest)?;
             let usertype = item.header.usertype;
-            let mut reference = this.parse_reference(item.four_cc(), item.body)?;
-            reference.usertype = usertype;
-            this.references.push(reference);
+            match this.parse_reference(item.four_cc(), item.body) {
+                Ok(mut reference) => {
+                    reference.usertype = usertype;
+                    this.references.push(reference);
+                }
+                Err(err) => {
+                    let mut opaque = OpaqueBox::new(item.four_cc(), item.payload().to_vec());
+                    opaque.to_end = item.to_end();
+                    opaque.largesize = item.has_largesize();
+                    this.opaque.push((position, opaque));
+                    if let Some(base) = base {
+                        degraded.push(child_report(bytes, item.bytes, base, &err));
+                    }
+                }
+            }
+            position += 1;
             rest = &rest[used..];
         }
-        Ok(this)
+        Ok((this, degraded))
+    }
+}
+
+impl<'a> Parse<'a> for ItemReferenceBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Ok(Self::parse_inner(bytes, None)?.0)
     }
 }
 
@@ -2039,6 +2152,9 @@ impl Serialize for ItemReferenceBox {
         for reference in &self.references {
             len += self.child_len(reference);
         }
+        for (_, opaque) in &self.opaque {
+            len += opaque.serialized_len();
+        }
         box_len(len)
     }
 
@@ -2046,7 +2162,17 @@ impl Serialize for ItemReferenceBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = write_full_box_header(buf, &IREF, need, self.version, self.flags, false)?;
-        for reference in &self.references {
+        let children = self.references.len() + self.opaque.len();
+        let mut typed = self.references.iter();
+        for position in 0..children {
+            if let Some((_, opaque)) = self.opaque.iter().find(|(at, _)| *at == position) {
+                let is_last = position + 1 == children;
+                cursor += opaque.serialize_child_into(&mut buf[cursor..], is_last)?;
+                continue;
+            }
+            let reference = typed
+                .next()
+                .ok_or(Error::InvalidInput("iref child positions disagree"))?;
             let child_need = self.child_len(reference);
             let header = write_box_header(&mut buf[cursor..], &reference.box_type(), child_need)?;
             let mut at = cursor + header;
@@ -2702,13 +2828,19 @@ impl Serialize for EntityToGroupBox {
 #[non_exhaustive]
 pub struct GroupsListBox {
     groups: Vec<EntityToGroupBox>,
+    /// Children the typed parse refused, each with its position among all the
+    /// box's children, so a rewrite keeps the wire order.
+    opaque: Vec<(usize, OpaqueBox)>,
 }
 
 impl GroupsListBox {
     /// An empty box.
     #[must_use]
     pub fn new() -> Self {
-        Self { groups: Vec::new() }
+        Self {
+            groups: Vec::new(),
+            opaque: Vec::new(),
+        }
     }
 
     /// Append one entity group.
@@ -2731,14 +2863,24 @@ impl GroupsListBox {
     }
 }
 
-impl<'a> Parse<'a> for GroupsListBox {
-    type Error = Error;
+impl GroupsListBox {
+    /// [`GroupsListBox`]'s parse, keeping a group whose typed parse fails as
+    /// an opaque child of its own kind and reporting it. `base` is the box's
+    /// absolute file offset, for the report.
+    pub fn parse_degrading(bytes: &[u8], base: u64) -> Result<(Self, Vec<DegradedChild>)> {
+        Self::parse_inner(bytes, Some(base))
+    }
 
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+    fn parse_inner(bytes: &[u8], base: Option<u64>) -> Result<(Self, Vec<DegradedChild>)> {
         expect_type(bytes, &GRPL, "expected grpl")?;
         let body = body_of(bytes, 0, "grpl")?;
-        let mut groups = Vec::new();
+        let mut this = Self {
+            groups: Vec::new(),
+            opaque: Vec::new(),
+        };
+        let mut degraded = Vec::new();
         let mut rest = body;
+        let mut position = 0usize;
         while !rest.is_empty() {
             if rest.len() < BOX_HEADER_MIN_SIZE {
                 return Err(Error::BufferTooShort(BufferTooShort {
@@ -2748,10 +2890,30 @@ impl<'a> Parse<'a> for GroupsListBox {
                 }));
             }
             let (item, used) = crate::box_types::parse_box(rest)?;
-            groups.push(EntityToGroupBox::parse(item.bytes)?);
+            match EntityToGroupBox::parse(item.bytes) {
+                Ok(group) => this.groups.push(group),
+                Err(err) => {
+                    let mut opaque = OpaqueBox::new(item.four_cc(), item.payload().to_vec());
+                    opaque.to_end = item.to_end();
+                    opaque.largesize = item.has_largesize();
+                    this.opaque.push((position, opaque));
+                    if let Some(base) = base {
+                        degraded.push(child_report(bytes, item.bytes, base, &err));
+                    }
+                }
+            }
+            position += 1;
             rest = &rest[used..];
         }
-        Ok(Self { groups })
+        Ok((this, degraded))
+    }
+}
+
+impl<'a> Parse<'a> for GroupsListBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Ok(Self::parse_inner(bytes, None)?.0)
     }
 }
 
@@ -2763,6 +2925,9 @@ impl Serialize for GroupsListBox {
         for group in &self.groups {
             len += group.serialized_len();
         }
+        for (_, opaque) in &self.opaque {
+            len += opaque.serialized_len();
+        }
         box_len(len)
     }
 
@@ -2770,7 +2935,17 @@ impl Serialize for GroupsListBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = write_box_header(buf, &GRPL, need)?;
-        for group in &self.groups {
+        let children = self.groups.len() + self.opaque.len();
+        let mut typed = self.groups.iter();
+        for position in 0..children {
+            if let Some((_, opaque)) = self.opaque.iter().find(|(at, _)| *at == position) {
+                let is_last = position + 1 == children;
+                cursor += opaque.serialize_child_into(&mut buf[cursor..], is_last)?;
+                continue;
+            }
+            let group = typed
+                .next()
+                .ok_or(Error::InvalidInput("grpl child positions disagree"))?;
             cursor += group.serialize_into(&mut buf[cursor..])?;
         }
         Ok(cursor)
@@ -2976,6 +3151,10 @@ pub struct ItemPropertyAssociationBox {
     version: u8,
     flags: u32,
     entries: Vec<ItemPropertyEntry>,
+    /// Bytes after the last association record the entry count declares
+    /// (§8.11.14.2), carried verbatim so a rewrite is exact. Not a field of
+    /// the box.
+    trailing: Vec<u8>,
 }
 
 impl ItemPropertyAssociationBox {
@@ -2986,7 +3165,21 @@ impl ItemPropertyAssociationBox {
             version: 0,
             flags: 0,
             entries: Vec::new(),
+            trailing: Vec::new(),
         }
+    }
+
+    /// The bytes after the last declared association record, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
     }
 
     /// Append one item's associations.
@@ -3070,7 +3263,7 @@ impl ItemPropertyAssociationBox {
     }
 
     fn body_len(&self) -> usize {
-        let mut len = FULLBOX_EXTRA_SIZE + U32_LEN;
+        let mut len = FULLBOX_EXTRA_SIZE + U32_LEN + self.trailing.len();
         for entry in &self.entries {
             len += self.id_width() + 1 + entry.associations.len() * self.index_width();
         }
@@ -3093,6 +3286,7 @@ impl<'a> Parse<'a> for ItemPropertyAssociationBox {
             version,
             flags,
             entries: Vec::new(),
+            trailing: Vec::new(),
         };
         crate::box_support::check_entry_count(
             body.len() - cursor,
@@ -3156,6 +3350,7 @@ impl<'a> Parse<'a> for ItemPropertyAssociationBox {
                 associations,
             });
         }
+        this.trailing = body[cursor..].to_vec();
         Ok(this)
     }
 }
@@ -3214,7 +3409,51 @@ impl Serialize for ItemPropertyAssociationBox {
                 }
             }
         }
-        Ok(cursor)
+        buf[cursor..cursor + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(cursor + self.trailing.len())
+    }
+}
+
+/// One container child kept opaque because the crate's typed parse of it
+/// failed: the reader reports it rather than failing the whole file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct DegradedChild {
+    box_type: [u8; BOX_TYPE_SIZE],
+    offset: u64,
+    reason: crate::error::OpaqueReason,
+}
+
+impl DegradedChild {
+    /// The child's four-CC.
+    #[must_use]
+    pub const fn box_type(&self) -> [u8; BOX_TYPE_SIZE] {
+        self.box_type
+    }
+
+    /// The child's absolute byte offset in the file.
+    #[must_use]
+    pub const fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// Why the typed parse did not represent it.
+    #[must_use]
+    pub const fn reason(&self) -> crate::error::OpaqueReason {
+        self.reason
+    }
+}
+
+/// The report for one child the typed parse refused, at its absolute offset:
+/// `bytes` is the container the child was sliced from and `base` that
+/// container's own absolute offset.
+fn child_report(container: &[u8], child: &[u8], base: u64, error: &Error) -> DegradedChild {
+    let delta = (child.as_ptr() as usize).saturating_sub(container.as_ptr() as usize);
+    DegradedChild {
+        box_type: fourcc_at(child, BOX_TYPE_OFFSET),
+        offset: base.saturating_add(u64::try_from(delta).unwrap_or(u64::MAX)),
+        reason: crate::error::OpaqueReason::of(error),
     }
 }
 
@@ -3267,8 +3506,22 @@ impl ItemPropertyContainerBox {
 
     /// Parse the container's children from the payload after its header.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
+        Ok(Self::walk(body, 0, false)?.0)
+    }
+
+    /// [`ItemPropertyContainerBox::parse_body`], keeping a property whose typed
+    /// parse fails as an opaque one of its own kind and reporting it, so a file
+    /// with one property in a form the crate cannot reproduce still reads.
+    /// `base` is the body's absolute file offset, for the report.
+    pub fn parse_body_degrading(body: &[u8], base: u64) -> Result<(Self, Vec<DegradedChild>)> {
+        Self::walk(body, base, true)
+    }
+
+    fn walk(body: &[u8], base: u64, degrade: bool) -> Result<(Self, Vec<DegradedChild>)> {
         let mut properties = Vec::new();
+        let mut degraded = Vec::new();
         let mut rest = body;
+        let mut at = 0usize;
         while !rest.is_empty() {
             if rest.len() < BOX_HEADER_MIN_SIZE {
                 return Err(Error::BufferTooShort(BufferTooShort {
@@ -3278,10 +3531,26 @@ impl ItemPropertyContainerBox {
                 }));
             }
             let (item, used) = crate::box_types::parse_box(rest)?;
-            properties.push(crate::image::ItemProperty::parse_box(item.bytes)?);
+            match crate::image::ItemProperty::parse_box(item.bytes) {
+                Ok(property) => properties.push(property),
+                Err(err) if !degrade => return Err(err),
+                Err(err) => {
+                    let mut opaque =
+                        crate::box_support::OpaqueBox::new(item.four_cc(), item.payload().to_vec());
+                    opaque.to_end = item.to_end();
+                    opaque.largesize = item.has_largesize();
+                    properties.push(crate::image::ItemProperty::Opaque(opaque));
+                    degraded.push(DegradedChild {
+                        box_type: item.four_cc(),
+                        offset: base.saturating_add(at as u64),
+                        reason: crate::error::OpaqueReason::of(&err),
+                    });
+                }
+            }
             rest = &rest[used..];
+            at = at.saturating_add(used);
         }
-        Ok(Self { properties })
+        Ok((Self { properties }, degraded))
     }
 }
 
@@ -3392,6 +3661,43 @@ impl ItemPropertiesBox {
             associations.validate(self.container.properties().len())?;
         }
         Ok(())
+    }
+}
+
+impl ItemPropertiesBox {
+    /// [`ItemPropertiesBox`]'s parse, keeping a property whose typed parse fails
+    /// as an opaque one and reporting it. The association tables stay
+    /// structural: an `ipma` this crate cannot walk is still an error.
+    pub fn parse_degrading(bytes: &[u8], base: u64) -> Result<(Self, Vec<DegradedChild>)> {
+        expect_type(bytes, &IPRP, "expected iprp")?;
+        let body = body_of(bytes, BOX_HEADER_MIN_SIZE, "iprp")?;
+        let (first, used) = crate::box_types::parse_box(body)?;
+        let ipco_body = body_of(first.bytes, BOX_HEADER_MIN_SIZE, "ipco")?;
+        let ipco_offset = base
+            .saturating_add(BOX_HEADER_MIN_SIZE as u64)
+            .saturating_add(first.header.header_size() as u64);
+        let (container, degraded) =
+            ItemPropertyContainerBox::parse_body_degrading(ipco_body, ipco_offset)?;
+        let mut associations = Vec::new();
+        let mut rest = &body[used..];
+        while !rest.is_empty() {
+            if rest.len() < BOX_HEADER_MIN_SIZE {
+                return Err(Error::BufferTooShort(BufferTooShort {
+                    need: BOX_HEADER_MIN_SIZE,
+                    have: rest.len(),
+                    what: "iprp child header",
+                }));
+            }
+            let (item, used) = crate::box_types::parse_box(rest)?;
+            associations.push(ItemPropertyAssociationBox::parse(item.bytes)?);
+            rest = &rest[used..];
+        }
+        let this = Self {
+            container,
+            associations,
+        };
+        this.validate()?;
+        Ok((this, degraded))
     }
 }
 

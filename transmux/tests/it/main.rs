@@ -39,6 +39,7 @@ mod codec_tail;
 mod codecs_new;
 #[cfg(feature = "cli")]
 mod common;
+mod damage_matrix;
 #[cfg(feature = "rtp")]
 mod damage_report;
 mod damaged_unit_resync;

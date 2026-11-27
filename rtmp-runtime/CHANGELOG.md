@@ -42,6 +42,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the session: the rest of the connection still frames, so only the affected
   message is lost (and reported). A chunk stream that cannot be framed at all
   is still a `ChunkStreamState` error.
+
+### Fixed
+- `flv::resync_decision` at end of input no longer answers `Need` forever for
+  a plausible tag header whose declared body cannot arrive: it scans for a
+  complete tag chain and, when none exists, consumes the damaged tail
+  (`Skip`), so a streaming caller can report it and finish.
 ### Added
 - `amf0::amf0_parse_values`: parse a sequence of AMF0 values that fill a
   body, the inverse of `amf0_values`, for a caller that reads a whole
