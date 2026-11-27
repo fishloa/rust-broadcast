@@ -227,7 +227,7 @@ impl DamageLocation {
 /// adds a variant.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DamageKind {
     /// Metadata was skipped: the reader left it out of its output.
     MetadataSkipped,
@@ -278,7 +278,7 @@ crate::impl_spec_display!(DamageKind);
 /// not a report.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Severity {
     /// Nothing a viewer would notice (an uninterpreted tag, a repaired
     /// timestamp, a skipped reserved field).
@@ -560,7 +560,7 @@ impl core::fmt::Display for Damage {
 /// What a [`DamagePolicy`] says to do with one report.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Disposition {
     /// Continue, and publish the report.
     #[default]
@@ -600,7 +600,7 @@ crate::impl_spec_display!(Disposition);
 /// ```
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DamagePolicy {
     informational: Disposition,
     degraded: Disposition,

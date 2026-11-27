@@ -307,6 +307,19 @@ impl TsHttpPolicy {
         self.events.push_back(event);
     }
 
+    /// The event queue itself, for a host that drains a demuxer straight into
+    /// it (`crate::tshttp::TsHttpClient`), so one drain needs no per-event call.
+    pub(crate) fn events_mut(&mut self) -> &mut VecDeque<Event> {
+        &mut self.events
+    }
+
+    /// Enter the terminal `Ended` phase: the caller's damage policy refused a
+    /// report, so the session stops here rather than reconnecting
+    /// (`docs/API-CONVENTIONS.md` § Best-effort reading).
+    pub(crate) fn stop(&mut self) {
+        self.phase = Phase::Ended;
+    }
+
     /// A chunk of `len` body bytes arrived (T5, T14). `sampled` is true when
     /// the bytes produced at least one sample.
     pub fn on_bytes(&mut self, len: usize, now: Timestamp, sampled: bool) {

@@ -484,6 +484,9 @@ impl TsHttpSource {
                 }
                 _ => {}
             },
+            crate::tshttp::Event::Damage(damage) => {
+                self.push(Event::Damage(damage));
+            }
             crate::tshttp::Event::StallNotice { stalled } => {
                 self.release_hold();
                 self.push(Event::Status(Status::Stalled { stalled }));
