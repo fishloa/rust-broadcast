@@ -162,7 +162,7 @@ all_codes=set()
 for t in TABLES:
     for c,_ in rows[t]: all_codes.add(c)
 
-FORCE_UNHELD={('boxes-qt','csgm'),('boxes-udta','diap'),('sample-entries','tx3g'),('sample-entries','dts+'),('sample-entries','dts-'),('sample-entries','evte'),('sample-entries-boxes','dvwC'),('sample-entries-boxes','silb'),('sample-entries','hvc3'),('sample-entries','hev3'),('sample-entries','hvt2'),('sample-entries','hvt3'),('sample-entries','lhe1'),('sample-entries','lvc1'),('sample-entries','vvs1')}
+FORCE_UNHELD={('boxes-qt','csgm'),('boxes-udta','diap'),('sample-entries','tx3g'),('sample-entries','dts+'),('sample-entries','dts-'),('sample-entries','evte'),('sample-entries-boxes','dvwC'),('sample-entries-boxes','silb'),('sample-entries','hvc3'),('sample-entries','hev3'),('sample-entries','hvt2'),('sample-entries','hvt3'),('sample-entries','lhe1'),('sample-entries','lvc1'),('sample-entries','vvs1'),('boxes','mini'),('item-properties','evcC'),('item-properties','lhvC'),('sample-entries-boxes','dhec'),('sample-entries-boxes','lvcC'),('sample-entries-boxes','vvnC'),('sample-entries-boxes','lhvC')}
 
 def classify(t):
     typed=set()

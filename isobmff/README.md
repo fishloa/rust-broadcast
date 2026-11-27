@@ -166,7 +166,7 @@ structure this crate parses). A code in no list, or in two, fails the test.
 | Table | Codes | Typed | Held, untyped | Not held | Not applicable |
 |---|---:|---:|---:|---:|---:|
 | `aux-info-types.csv` | 7 | 2 | 0 | 5 | 0 |
-| `boxes.csv` | 281 | 130 | 24 | 111 | 16 |
+| `boxes.csv` | 281 | 130 | 23 | 112 | 16 |
 | `boxes-qt.csv` | 16 | 7 | 0 | 2 | 7 |
 | `boxes-udta.csv` | 42 | 24 | 0 | 18 | 0 |
 | `brands.csv` | 291 | 95 | 0 | 196 | 0 |
@@ -175,7 +175,7 @@ structure this crate parses). A code in no list, or in two, fails the test.
 | `data-references.csv` | 4 | 4 | 0 | 0 | 0 |
 | `entity-groups.csv` | 29 | 20 | 0 | 9 | 0 |
 | `handlers.csv` | 49 | 17 | 0 | 32 | 0 |
-| `item-properties.csv` | 85 | 48 | 3 | 34 | 0 |
+| `item-properties.csv` | 85 | 48 | 1 | 36 | 0 |
 | `item-references.csv` | 19 | 18 | 0 | 1 | 0 |
 | `item-types.csv` | 27 | 21 | 0 | 6 | 0 |
 | `key-namespaces.csv` | 4 | 4 | 0 | 0 | 0 |
@@ -183,7 +183,7 @@ structure this crate parses). A code in no list, or in two, fails the test.
 | `multiview-attributes.csv` | 14 | 4 | 10 | 0 | 0 |
 | `oti.csv` | 55 | 0 | 0 | 0 | 55 |
 | `sample-entries.csv` | 191 | 103 | 1 | 87 | 0 |
-| `sample-entries-boxes.csv` | 100 | 32 | 20 | 48 | 0 |
+| `sample-entries-boxes.csv` | 100 | 32 | 16 | 52 | 0 |
 | `sample-entries-qt.csv` | 59 | 45 | 0 | 14 | 0 |
 | `sample-groups.csv` | 67 | 44 | 0 | 23 | 0 |
 | `schemes.csv` | 24 | 5 | 0 | 19 | 0 |
@@ -195,7 +195,7 @@ structure this crate parses). A code in no list, or in two, fails the test.
 | `track-selection.csv` | 18 | 17 | 0 | 1 | 0 |
 | `uncv-profiles.csv` | 17 | 0 | 0 | 0 | 17 |
 | `unlisted.csv` | 61 | 45 | 1 | 9 | 6 |
-| **Total** | 1566 | 719 | 59 | 645 | 143 |
+| **Total** | 1566 | 719 | 52 | 652 | 143 |
 
 Trailing spaces are trimmed in these tables: a four-CC such as `rap ` is shown as
 `rap` and space-padded back to four bytes for its proof. Duplicate CSV rows (one code
