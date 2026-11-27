@@ -8,7 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-
 - `DemuxEvent::Damage(broadcast_core::damage::Damage)`: every skip the
   streaming demuxers tolerate reaches the caller as the workspace's one
   damage report (see `broadcast_core::damage` and
@@ -18,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parse, a unit lost to a continuity gap, a bounded unit cut short at end of
   input) and the access units dropped by the caller's PES unit limit, with
   their byte range, track and media time.
+- `flv::OnMetadata` and `flv::parse_on_metadata`: the typed view of an FLV
+  script tag's `onMetaData` properties (duration, width, height, frame rate,
+  codec ids, audio sample rate and size, stereo, file size, encoder) with
+  every other property kept as the AMF0 value the file carried and the
+  original body retained for a byte-exact rewrite. `StreamingFlvDemux`
+  exposes the file's tag through `on_metadata()`, and
+  `FlvMuxStage::with_metadata_body` writes a caller's body back verbatim.
 
 ### Breaking
 
