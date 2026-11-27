@@ -531,6 +531,20 @@ pub enum SessionEvent {
         /// for why this is a full snapshot rather than a delta.
         tracks: Vec<TrackSpec>,
     },
+    /// Content the session's reader skipped, altered or repaired — the one
+    /// [`broadcast_core::damage::Damage`] report every reader publishes.
+    ///
+    /// Carried through to the host unchanged: this layer decides nothing about
+    /// what a report means (see `docs/API-CONVENTIONS.md` § Best-effort
+    /// reading). `program` is the report's track's program when the track has
+    /// already been announced, `None` otherwise — never fabricated.
+    #[non_exhaustive]
+    Damage {
+        /// The program the damaged track belongs to, when it is known.
+        program: Option<ProgramId>,
+        /// The report itself.
+        damage: broadcast_core::damage::Damage,
+    },
 }
 
 /// The sans-IO ingress drive contract: a specialisation of [`Stage`] whose
@@ -809,6 +823,10 @@ pub struct IngestDriver<S: IngestSession> {
     /// A counter, not a stored list, so this field is itself `O(1)` no
     /// matter how large a flood of refused programs is.
     refused_programs: u64,
+    /// How many [`SessionEvent::Damage`] reports the session has produced.
+    /// Counted rather than stored: the report is the session's own output, and
+    /// a driver that kept every one would grow with a lossy input.
+    damage_reports: u64,
     health: HealthState<S::Error>,
     /// Whether the last [`Self::feed`] delivered input from the peer. A
     /// transport-timer wake or a control signal leaves this `false`, which is
@@ -835,6 +853,7 @@ impl<S: IngestSession> IngestDriver<S> {
             programs: BTreeMap::new(),
             writers: HashMap::new(),
             refused_programs: 0,
+            damage_reports: 0,
             health: HealthState::Establishing,
             touched: false,
         }
@@ -858,6 +877,12 @@ impl<S: IngestSession> IngestDriver<S> {
     /// Monotonically increasing; never resets.
     pub fn refused_program_count(&self) -> u64 {
         self.refused_programs
+    }
+
+    /// How many damage reports this session has produced — see
+    /// [`SessionEvent::Damage`]. Monotonically increasing; never resets.
+    pub fn damage_report_count(&self) -> u64 {
+        self.damage_reports
     }
 
     /// Feed more input read from this session's connection — a handshake
@@ -1130,6 +1155,11 @@ impl<S: IngestSession> IngestDriver<S> {
                         writer.set_tracks(tracks);
                     }
                 }
+                SessionEvent::Damage { .. } => {
+                    // Counted, not interpreted: what a report means is the
+                    // host's decision (`docs/API-CONVENTIONS.md`).
+                    self.damage_reports = self.damage_reports.saturating_add(1);
+                }
             }
         }
     }
@@ -1333,6 +1363,15 @@ impl<L: Listener> ListenDriver<L> {
         self.sessions
             .get(&id)
             .map(IngestDriver::refused_program_count)
+    }
+
+    /// How many damage reports session `id` has produced — see
+    /// [`IngestDriver::damage_report_count`]. `None` for an unknown or
+    /// already-reaped `id`.
+    pub fn damage_report_count(&self, id: SessionId) -> Option<u64> {
+        self.sessions
+            .get(&id)
+            .map(IngestDriver::damage_report_count)
     }
 
     /// Currently-admitted (not yet terminated) session count. Never exceeds

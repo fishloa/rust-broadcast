@@ -162,11 +162,20 @@ pub const TABLE: &[Crate] = &[
         scope: Scope::Crate,
         matcher: Matcher::Strict,
         // `BitError` is a structured error (hand-written `Display`), not a
-        // spec/field label; `CencScheme` and `Rounding` carry `name()` +
-        // `impl_spec_display!`, so the set is pinned below.
-        skip: &["BitError"],
-        expected: Some(&["CencScheme", "Rounding"]),
-        min_enums: Some(2),
+        // spec/field label; `DamageCause` is a typed cause carrying the shared
+        // error kinds (also hand-written `Display`, no single static token per
+        // variant). `CencScheme`, `Rounding`, `DamageKind`, `Severity` and
+        // `Disposition` carry `name()` + `impl_spec_display!`, so the set is
+        // pinned below.
+        skip: &["BitError", "DamageCause"],
+        expected: Some(&[
+            "CencScheme",
+            "Rounding",
+            "DamageKind",
+            "Severity",
+            "Disposition",
+        ]),
+        min_enums: Some(5),
     },
     Crate {
         name: "broadcast-bitstream",
