@@ -4301,7 +4301,7 @@ impl DataInformationBox {
                 dref = Some(parsed);
             } else {
                 order.push_opaque(child.four_cc());
-                opaque.push(crate::box_support::Notes::opaque_child(&child));
+                opaque.push(crate::box_support::opaque_child(&child));
             }
         }
         Ok(Self {
@@ -4558,7 +4558,7 @@ impl MediaInformationBox {
                         |bytes| VideoMediaHeaderBox::parse(bytes),
                     )?;
                     if vmhd.is_none() {
-                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                        opaque.push(crate::box_support::opaque_child(&child));
                     }
                 }
                 b"smhd" => {
@@ -4569,7 +4569,7 @@ impl MediaInformationBox {
                         |bytes| SoundMediaHeaderBox::parse(bytes),
                     )?;
                     if smhd.is_none() {
-                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                        opaque.push(crate::box_support::opaque_child(&child));
                     }
                 }
                 b"nmhd" => {
@@ -4580,7 +4580,7 @@ impl MediaInformationBox {
                         |bytes| NullMediaHeaderBox::parse(bytes),
                     )?;
                     if nmhd.is_none() {
-                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                        opaque.push(crate::box_support::opaque_child(&child));
                     }
                 }
                 b"hmhd" => {
@@ -4591,7 +4591,7 @@ impl MediaInformationBox {
                         |bytes| HintMediaHeaderBox::parse(bytes),
                     )?;
                     if hmhd.is_none() {
-                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                        opaque.push(crate::box_support::opaque_child(&child));
                     }
                 }
                 b"vvhd" => {
@@ -4602,7 +4602,7 @@ impl MediaInformationBox {
                         |bytes| VolumetricVisualMediaHeaderBox::parse(bytes),
                     )?;
                     if vvhd.is_none() {
-                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                        opaque.push(crate::box_support::opaque_child(&child));
                     }
                 }
                 b"gmhd" => {
@@ -4613,7 +4613,7 @@ impl MediaInformationBox {
                         crate::quicktime::gmhd::GmhdAtom::parse_box,
                     )?;
                     if gmhd.is_none() {
-                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                        opaque.push(crate::box_support::opaque_child(&child));
                     }
                 }
                 b"dinf" => {
@@ -4638,7 +4638,7 @@ impl MediaInformationBox {
                 // `stbl`, where strict readers reject them (audit r05-W12).
                 _ => {
                     order.push_opaque(child.four_cc());
-                    opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    opaque.push(crate::box_support::opaque_child(&child));
                 }
             }
         }
@@ -4824,12 +4824,12 @@ impl MediaBox {
                     }
                     None => {
                         order.push_opaque(child.four_cc());
-                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                        opaque.push(crate::box_support::opaque_child(&child));
                     }
                 },
                 _ => {
                     order.push_opaque(child.four_cc());
-                    opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    opaque.push(crate::box_support::opaque_child(&child));
                 }
             }
         }
@@ -5162,7 +5162,7 @@ impl TrackBox {
                     }
                     None => {
                         order.push_opaque(child.four_cc());
-                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                        opaque.push(crate::box_support::opaque_child(&child));
                     }
                 },
                 b"mdia" => {
@@ -5180,7 +5180,7 @@ impl TrackBox {
                     }
                     None => {
                         order.push_opaque(child.four_cc());
-                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                        opaque.push(crate::box_support::opaque_child(&child));
                     }
                 },
                 // `tref`/`udta`/`meta` stay opaque, in place.
@@ -5189,7 +5189,7 @@ impl TrackBox {
                         crate::box_support::note_metadata_child(&child, limits, notes);
                     }
                     order.push_opaque(child.four_cc());
-                    opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    opaque.push(crate::box_support::opaque_child(&child));
                 }
             }
         }
@@ -5790,7 +5790,7 @@ impl MovieBox {
                         crate::box_support::note_metadata_child(&child, limits, notes);
                     }
                     order.push_opaque(child.four_cc());
-                    opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    opaque.push(crate::box_support::opaque_child(&child));
                 }
             }
         }

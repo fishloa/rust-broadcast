@@ -343,6 +343,8 @@ pub enum OpaqueReason {
     UnexpectedBox,
     /// A count exceeded the caller's limit.
     LimitExceeded,
+    /// The typed form would not reproduce the bytes it parsed.
+    NotReproducible,
     /// A fault outside the classes above.
     Other,
 }
@@ -374,6 +376,7 @@ impl OpaqueReason {
             Self::UnsupportedVersion => "unsupported-version",
             Self::UnexpectedBox => "unexpected-box",
             Self::LimitExceeded => "limit-exceeded",
+            Self::NotReproducible => "not-reproducible",
             Self::Other => "other",
         }
     }

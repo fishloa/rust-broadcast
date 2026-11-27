@@ -454,6 +454,18 @@ impl<'a> Notes<'a> {
         });
     }
 
+    /// Report a typed child that would not write its own bytes back.
+    pub(crate) fn not_reproducible(&mut self, bytes: &[u8]) {
+        let box_type = crate::box_types::parse_box(bytes)
+            .map(|(item, _)| item.four_cc())
+            .unwrap_or([0u8; BOX_TYPE_SIZE]);
+        self.out.push(Note::Unrepresentable {
+            box_type,
+            offset: self.offset_of(bytes),
+            reason: crate::error::OpaqueReason::NotReproducible,
+        });
+    }
+
     /// Report bytes a typed parse carried past its last declared field.
     pub(crate) fn trailing(&mut self, bytes: &[u8], carried: usize) {
         if carried == 0 {
@@ -468,15 +480,15 @@ impl<'a> Notes<'a> {
             carried,
         });
     }
+}
 
-    /// A sibling the crate does not type, kept opaque with its header form.
-    pub(crate) fn opaque_child(item: &crate::box_types::BoxItem<'_>) -> OpaqueBox {
-        OpaqueBox {
-            box_type: item.four_cc(),
-            data: item.payload().to_vec(),
-            to_end: item.to_end(),
-            largesize: item.has_largesize(),
-        }
+/// A sibling the crate does not type, kept opaque with its header form.
+pub(crate) fn opaque_child(item: &crate::box_types::BoxItem<'_>) -> OpaqueBox {
+    OpaqueBox {
+        box_type: item.four_cc(),
+        data: item.payload().to_vec(),
+        to_end: item.to_end(),
+        largesize: item.has_largesize(),
     }
 }
 
@@ -490,6 +502,9 @@ pub(crate) fn note_metadata_child(
     limits: &crate::limits::Limits,
     notes: &mut Notes<'_>,
 ) {
+    if !notes.degrades() {
+        return;
+    }
     let fourcc = child.four_cc();
     let base = notes.offset_of(child.bytes);
     let mut sub = notes.anchored(child.bytes, base);

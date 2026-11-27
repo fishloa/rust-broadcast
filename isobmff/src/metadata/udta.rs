@@ -312,6 +312,19 @@ impl Udta {
                 }
                 _ => None,
             };
+            // A typed child that would not write its own bytes back — a
+            // dropped tail, a re-derived count — is kept opaque instead, so a
+            // rewrite stays exact.
+            let typed = match typed {
+                Some(value) if reproduces(&value, &child) => Some(value),
+                Some(_) => {
+                    if let Some(notes) = notes.as_deref_mut() {
+                        notes.not_reproducible(child.bytes);
+                    }
+                    None
+                }
+                None => None,
+            };
             let parsed = typed.unwrap_or_else(|| {
                 let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
                 opaque.to_end = child.to_end();
@@ -322,6 +335,30 @@ impl Udta {
         }
         Ok(Self { children })
     }
+}
+
+/// Whether a typed `udta` child writes back the type and body it parsed. The
+/// header form (`size == 0`, `size == 1` + `largesize`) is carried by the
+/// opaque child instead, so only the four-CC and the bytes after the header
+/// are compared.
+fn reproduces(parsed: &UdtaChild, child: &crate::box_types::BoxItem<'_>) -> bool {
+    if matches!(parsed, UdtaChild::Opaque(_)) {
+        return true;
+    }
+    let Ok(bytes) = parsed.try_to_bytes() else {
+        return false;
+    };
+    let Some(body) = bytes.get(BOX_HEADER_MIN_SIZE..) else {
+        return false;
+    };
+    if bytes.get(crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
+        != child
+            .bytes
+            .get(crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
+    {
+        return false;
+    }
+    child.bytes.get(child.header.header_size()..) == Some(body)
 }
 
 /// Parse a text atom body: QuickTime international text for a `©`-prefixed

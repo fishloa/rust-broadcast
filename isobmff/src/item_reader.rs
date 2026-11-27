@@ -240,6 +240,33 @@ pub struct MetaRecord {
     version: u8,
     flags: u32,
     children: Vec<MetaChild>,
+    /// The wire header form of each child, parallel to `children`: a child
+    /// written with `size == 0` or `size == 1` + `largesize` keeps that form
+    /// on a rewrite (§4.2). A record a caller built carries no forms, so every
+    /// child is written compact.
+    forms: Vec<BoxForm>,
+}
+
+/// The header form one `meta` child was written with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+enum BoxForm {
+    /// A 32-bit `size`.
+    Compact,
+    /// `size == 0`: the box runs to the end of its container.
+    ToEnd,
+    /// `size == 1` and a 64-bit `largesize`.
+    LargeSize,
+}
+
+impl BoxForm {
+    /// The extra bytes this form adds to a compact 8-byte header.
+    const fn extra_header(self) -> usize {
+        match self {
+            Self::Compact | Self::ToEnd => 0,
+            Self::LargeSize => LARGESIZE_SIZE,
+        }
+    }
 }
 
 impl MetaRecord {
@@ -250,6 +277,7 @@ impl MetaRecord {
             version,
             flags,
             children,
+            forms: Vec::new(),
         }
     }
 
@@ -276,17 +304,29 @@ impl MetaRecord {
         Ok(BOX_HEADER_MIN_SIZE + self.body_len()?)
     }
 
+    /// The header form recorded for the child at `index`. An opaque child
+    /// writes its own header (it carries `to_end`/`largesize`), so its form is
+    /// only needed for the `size == 0` rewrite.
+    fn form(&self, index: usize) -> BoxForm {
+        match (self.children.get(index), self.forms.get(index).copied()) {
+            (Some(MetaChild::Opaque(_)), Some(BoxForm::LargeSize)) | (_, None) => BoxForm::Compact,
+            (_, Some(form)) => form,
+        }
+    }
+
     fn body_len(&self) -> Result<usize> {
         let mut len = FULLBOX_EXTRA_SIZE;
-        for child in &self.children {
+        for (index, child) in self.children.iter().enumerate() {
             len = len
                 .checked_add(child.serialized_len())
+                .and_then(|len| len.checked_add(self.form(index).extra_header()))
                 .ok_or(Error::InvalidInput("meta body length overflow"))?;
         }
         Ok(len)
     }
 
-    /// Rebuild the `meta` body (FullBox word plus children).
+    /// Rebuild the `meta` body (FullBox word plus children), each child in the
+    /// header form it was parsed with.
     pub fn to_body(&self) -> Result<Vec<u8>> {
         let need = self.body_len()?;
         let mut out = alloc::vec![0u8; need];
@@ -294,8 +334,46 @@ impl MetaRecord {
         let flags = self.flags.to_be_bytes();
         out[1..FULLBOX_EXTRA_SIZE].copy_from_slice(&flags[1..]);
         let mut cursor = FULLBOX_EXTRA_SIZE;
-        for child in &self.children {
-            cursor += child.serialize_into(&mut out[cursor..])?;
+        for (index, child) in self.children.iter().enumerate() {
+            let compact = child.serialized_len();
+            let form = self.form(index);
+            match form {
+                BoxForm::Compact => {
+                    cursor += child.serialize_into(&mut out[cursor..])?;
+                }
+                BoxForm::ToEnd => {
+                    cursor += child.serialize_into(&mut out[cursor..])?;
+                    let size_at = cursor - compact;
+                    let size = out
+                        .get_mut(size_at..size_at.saturating_add(core::mem::size_of::<u32>()))
+                        .ok_or(Error::InvalidInput("meta child header"))?;
+                    size.copy_from_slice(&0u32.to_be_bytes());
+                }
+                BoxForm::LargeSize => {
+                    if out.len() < cursor.saturating_add(BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE) {
+                        return Err(Error::InvalidInput("meta child header"));
+                    }
+                    let mut scratch = alloc::vec![0u8; compact];
+                    let written = child.serialize_into(&mut scratch)?;
+                    let body = scratch
+                        .get(BOX_HEADER_MIN_SIZE..written)
+                        .ok_or(Error::InvalidInput("meta child body"))?;
+                    // `size == 1` means a 64-bit `largesize` follows (§4.2).
+                    let type_at = cursor + core::mem::size_of::<u32>();
+                    let sentinel = crate::box_types::SIZE_INDICATES_LARGESIZE;
+                    out[cursor..type_at].copy_from_slice(&sentinel.to_be_bytes());
+                    out[type_at..cursor + BOX_HEADER_MIN_SIZE]
+                        .copy_from_slice(&scratch[type_at..BOX_HEADER_MIN_SIZE]);
+                    let total = u64::try_from(compact.saturating_add(LARGESIZE_SIZE))
+                        .map_err(|_| Error::InvalidInput("meta child size"))?;
+                    out[cursor + BOX_HEADER_MIN_SIZE
+                        ..cursor + BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE]
+                        .copy_from_slice(&total.to_be_bytes());
+                    let start = cursor + BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
+                    out[start..start + body.len()].copy_from_slice(body);
+                    cursor = start + body.len();
+                }
+            }
         }
         if cursor != need {
             return Err(Error::InvalidInput("meta body length changed"));
@@ -2039,6 +2117,27 @@ fn ipma_trailing_findings(
     findings
 }
 
+/// Whether a typed `meta` child writes back the type and body it parsed. The
+/// header form (`size == 0`, `size == 1` + `largesize`) is carried separately,
+/// so only the four-CC and the bytes after the header are compared.
+fn reproducible(parsed: &MetaChild, child: &crate::box_types::BoxItem<'_>) -> bool {
+    let Ok(bytes) = parsed.try_to_bytes() else {
+        return false;
+    };
+    let Some(body) = bytes.get(BOX_HEADER_MIN_SIZE..) else {
+        return false;
+    };
+    if bytes.get(crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
+        != child
+            .bytes
+            .get(crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
+    {
+        return false;
+    }
+    let source_body = child.bytes.get(child.header.header_size()..);
+    source_body == Some(body)
+}
+
 /// One `item::DegradedChild` as the finding the item reader reports.
 fn unrepresentable_finding(child: crate::item::DegradedChild) -> ImageFinding {
     ImageFinding::UnrepresentableBox {
@@ -2074,6 +2173,7 @@ fn parse_meta(
     let flags = broadcast_core::wire::u24_at(body, crate::box_types::FULLBOX_FLAGS_OFFSET)
         & crate::box_types::FULLBOX_FLAGS_MASK;
     let mut children = Vec::new();
+    let mut forms = Vec::new();
     let mut idat = None;
     let mut rest = &body[FULLBOX_EXTRA_SIZE..];
     let children_start = payload_abs.saturating_add(FULLBOX_EXTRA_SIZE as u64);
@@ -2093,6 +2193,13 @@ fn parse_meta(
             .saturating_add(consumed_total as u64)
             .saturating_add(child.start as u64);
         let fourcc = child.four_cc();
+        forms.push(if child.to_end() {
+            BoxForm::ToEnd
+        } else if child.has_largesize() {
+            BoxForm::LargeSize
+        } else {
+            BoxForm::Compact
+        });
         let parsed = match &fourcc {
             b"hdlr" => MetaChild::Hdlr(Hdlr::parse_box(child.bytes)?),
             b"pitm" => MetaChild::Pitm(PrimaryItemBox::parse(child.bytes)?),
@@ -2132,6 +2239,22 @@ fn parse_meta(
                 MetaChild::Opaque(opaque)
             }
         };
+        // A typed child that would not write its own bytes back — a dropped
+        // tail, a re-derived count — is kept opaque instead, so a rewrite
+        // stays exact; the finding says which one.
+        let parsed = if reproducible(&parsed, &child) {
+            parsed
+        } else {
+            degraded.push(ImageFinding::UnrepresentableBox {
+                box_type: fourcc,
+                offset: absolute,
+                reason: crate::error::OpaqueReason::NotReproducible,
+            });
+            let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
+            opaque.to_end = child.to_end();
+            opaque.largesize = child.has_largesize();
+            MetaChild::Opaque(opaque)
+        };
         children.push(parsed);
         rest = &rest[used..];
         consumed_total = consumed_total.saturating_add(used);
@@ -2141,6 +2264,7 @@ fn parse_meta(
             version,
             flags,
             children,
+            forms,
         },
         idat,
     ))

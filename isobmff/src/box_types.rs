@@ -496,7 +496,12 @@ impl<'a> Parse<'a> for BoxHeader {
             raw_size as u64
         };
 
-        if size != 0 && size < cursor as u64 {
+        // `size == 0` in the 32-bit field means "to the end of the container"
+        // (§4.2), but a `largesize` has no such value: a 64-bit length below
+        // its own header cannot describe a box, and reading it as to-the-end
+        // would silently swallow the container's remaining bytes.
+        let has_largesize = raw_size == SIZE_INDICATES_LARGESIZE;
+        if size < cursor as u64 && (has_largesize || size != 0) {
             return Err(Error::BoxSizeUnderflow {
                 size,
                 header_size: cursor,
@@ -517,9 +522,6 @@ impl<'a> Parse<'a> for BoxHeader {
         } else {
             None
         };
-
-        // Determine if largesize was actually used on the wire.
-        let has_largesize = raw_size == SIZE_INDICATES_LARGESIZE;
 
         Ok(Self {
             size,

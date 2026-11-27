@@ -142,6 +142,161 @@ fn item_boxes_crash_4ef54280_is_a_typed_error() {
     assert!(isobmff::integrity::IntegrityItem::parse(&artifact).is_err());
 }
 
+/// The exact 29-byte input `isobmff_item_reader` failed on after the degrade
+/// policy landed: a `meta` box of size 0 whose only child states `size == 1`
+/// with a `largesize` of 0. A 64-bit length below its own header cannot
+/// describe a box (§4.2), and reading it as "to the end of the container"
+/// rewrote the header the input carried.
+const META_LARGESIZE_ZERO: [u8; 29] = [
+    0, 0, 0, 0, 109, 101, 116, 97, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 65,
+];
+
+#[test]
+fn item_reader_zero_largesize_child_is_a_typed_error() {
+    use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
+
+    let data = &META_LARGESIZE_ZERO;
+    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
+    let mut reader = ItemReader::new(config);
+    loop {
+        match reader.step() {
+            Ok(ItemStep::Need(range)) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let len = usize::try_from(range.len).expect("length");
+                if let Err(err) = reader.supply(range.offset, &data[start..start + len]) {
+                    assert!(
+                        matches!(err, Error::BoxSizeUnderflow { .. }),
+                        "expected BoxSizeUnderflow, got {err:?}"
+                    );
+                    return;
+                }
+            }
+            Ok(ItemStep::Loaded(_)) => panic!("a zero largesize must not load"),
+            Ok(ItemStep::Done) => panic!("done without an error"),
+            Ok(_) => {}
+            Err(err) => {
+                assert!(
+                    matches!(err, Error::BoxSizeUnderflow { .. }),
+                    "expected BoxSizeUnderflow, got {err:?}"
+                );
+                return;
+            }
+        }
+    }
+}
+
+const META_LARGESIZE_CHILD: [u8; 134] = [
+    0, 0, 0, 0, 109, 101, 116, 97, 128, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 122,
+    0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 57, 57, 57, 57, 57, 57, 57, 9, 0, 0, 0, 0, 0, 0, 0, 57,
+    57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 122, 57, 57, 57, 57, 57, 57, 57, 57,
+    57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 254, 255, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+    255, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 65,
+];
+
+#[test]
+fn item_reader_keeps_a_largesize_meta_child_form() {
+    use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
+
+    let data = &META_LARGESIZE_CHILD;
+    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
+    let mut reader = ItemReader::new(config);
+    loop {
+        match reader.step().expect("step") {
+            ItemStep::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let len = usize::try_from(range.len).expect("length");
+                reader
+                    .supply(range.offset, &data[start..start + len])
+                    .expect("supply");
+            }
+            ItemStep::Loaded(image) => {
+                assert_eq!(
+                    image.reemit_into(data).expect("re-emit"),
+                    data,
+                    "the largesize form is written back"
+                );
+                assert!(matches!(reader.step().expect("step"), ItemStep::Done));
+                return;
+            }
+            ItemStep::Done => panic!("done without a model"),
+            _ => {}
+        }
+    }
+}
+
+const META_NON_REPRODUCIBLE_CHILD: [u8; 180] = [
+    0, 0, 0, 0, 109, 101, 116, 97, 0, 0, 0, 0, 0, 0, 0, 38, 105, 112, 114, 111, 0, 0, 109, 38, 0,
+    0, 0, 0, 109, 101, 116, 97, 0, 0, 0, 0, 0, 0, 0, 38, 105, 112, 117, 207, 44, 0, 0, 0, 0, 97, 0,
+    0, 0, 105, 128, 38, 0, 0, 0, 112, 117, 207, 0, 0, 0, 0, 0, 0, 41, 1, 0, 0, 186, 0, 0, 0, 0, 38,
+    105, 112, 117, 207, 0, 0, 109, 101, 116, 97, 0, 0, 0, 105, 0, 38, 0, 0, 0, 112, 0, 0, 0, 207,
+    0, 117, 0, 0, 41, 1, 0, 0, 186, 0, 105, 0, 41, 1, 0, 0, 186, 0, 0, 0, 38, 105, 112, 117, 207,
+    0, 0, 0, 0, 0, 0, 0, 0, 124, 124, 124, 126, 116, 0, 0, 38, 37, 0, 248, 254, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 101, 116, 97, 0, 0, 0, 0, 183, 124, 0, 109, 101, 0, 38, 124, 109, 101, 43, 0,
+    43, 0,
+];
+
+#[test]
+fn item_reader_keeps_a_meta_child_it_cannot_reproduce() {
+    use isobmff::image_brands::ImageFinding;
+    use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
+
+    let data = &META_NON_REPRODUCIBLE_CHILD;
+    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
+    let mut reader = ItemReader::new(config);
+    loop {
+        match reader.step().expect("step") {
+            ItemStep::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let len = usize::try_from(range.len).expect("length");
+                reader
+                    .supply(range.offset, &data[start..start + len])
+                    .expect("supply");
+            }
+            ItemStep::Loaded(image) => {
+                assert_eq!(
+                    image.reemit_into(data).expect("re-emit"),
+                    data,
+                    "a child the typed form would rewrite is carried verbatim"
+                );
+                assert!(
+                    image
+                        .structure_findings()
+                        .iter()
+                        .any(|finding| matches!(finding, ImageFinding::UnrepresentableBox { .. })),
+                    "the carried child is reported"
+                );
+                assert!(matches!(reader.step().expect("step"), ItemStep::Done));
+                return;
+            }
+            ItemStep::Done => panic!("done without a model"),
+            _ => {}
+        }
+    }
+}
+
+const UDTA_TSEL_TAIL: [u8; 131] = [
+    0, 0, 0, 131, 117, 100, 116, 97, 0, 0, 0, 29, 52, 101, 116, 97, 97, 0, 0, 0, 29, 52, 101, 116,
+    97, 0, 0, 0, 28, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 10, 107, 101, 121, 0, 72, 0, 0, 0, 0, 38,
+    116, 115, 101, 108, 0, 105, 116, 0, 0, 0, 0, 1, 255, 255, 109, 101, 116, 0, 8, 105, 108, 117,
+    100, 116, 97, 0, 0, 0, 29, 52, 101, 116, 97, 97, 0, 0, 0, 29, 52, 101, 116, 97, 0, 0, 0, 28, 0,
+    0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 10, 107, 101, 121, 0, 72, 0, 0, 0, 0, 38, 116, 115, 101, 108, 0,
+    105, 116, 0, 0, 0, 0, 1,
+];
+
+#[test]
+fn udta_keeps_a_child_the_typed_form_would_rewrite() {
+    use broadcast_core::{Parse, Serialize};
+
+    let data = &UDTA_TSEL_TAIL;
+    let udta = isobmff::metadata::Udta::parse(data).expect("udta parses");
+    assert_eq!(
+        udta.try_to_bytes().expect("re-emit"),
+        data,
+        "a child the typed form would shorten is carried verbatim"
+    );
+}
+
 /// The exact 345-byte input `isobmff_item_reader` failed on: a file carrying
 /// two top-level `meta` boxes. The reader kept only one body, so a re-emit
 /// wrote the second body under both headers — the whole-file round trip now

@@ -121,6 +121,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   part, and requires parse -> serialize identity or a typed error; it found
   and pinned these.
 
+- **A `meta` child keeps the header form it was written with.** A child using
+  `size == 0` or `size == 1` + `largesize` was re-emitted with the compact
+  length, changing bytes the reader had accepted;
+  `isobmff_item_reader` found it on a 93-byte input, kept as a regression
+  test.
+
 - **A visual sample entry's opaque child keeps its header form.** A child of
   an `avc1`/`hvc1`/`vvc1` entry written with `size == 0` or `size == 1` +
   `largesize` was re-emitted with the compact length.
