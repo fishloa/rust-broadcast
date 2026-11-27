@@ -80,6 +80,13 @@
 //!   sample entries, and the `esds` descriptor chain.
 //! - [`emsg`] — the MPEG-DASH Event Message Box (ISO/IEC 23009-1 §5.10.3.3,
 //!   version 0 and 1) and its version enum.
+//! - [`item`], [`image`], [`item_reader`], [`item_writer`] — the still-image
+//!   item layer: the ISO/IEC 14496-12:2026 §8.11/§8.15 item boxes, the
+//!   ISO/IEC 23008-12:2017 (HEIF) image properties, derived image item bodies
+//!   and AVIF v1.2.0 properties and brands, the sans-IO [`item_reader::ItemReader`]
+//!   that yields a [`item_reader::StillImage`] without holding the file, and
+//!   the [`item_writer::ItemWriter`] that builds one. Coded item data is
+//!   opaque and reported as byte ranges.
 //! - [`metadata`] — typed `udta`/`meta` metadata: QuickTime user-data text and
 //!   `©xyz`, 3GPP `loci`, `keys`/`ilst`/`data`/`mean`/`name` (iTunes
 //!   four-character and Apple `mdta` items), Nero `chpl`, and the logical
@@ -93,6 +100,9 @@
 //! - **Skip-unknown rule**: §4.2 — unknown type → ignore + skip via `size`.
 //! - **CENC boxes**: ISO/IEC 23001-7 §12.
 //! - **`emsg`**: ISO/IEC 23009-1 §5.10.3.3; DASH-IF IOP Part 10 §6.1.
+//! - **Item layer**: ISO/IEC 14496-12:2026 §8.11, §8.15; ISO/IEC
+//!   23008-12:2017 clause 6 with ISO/IEC 23008-12:2017/Cor.1:2020; AVIF
+//!   v1.2.0.
 //!
 //! # Feature flags
 //!
@@ -130,8 +140,12 @@ pub mod frag_layout;
 pub mod frag_offsets;
 pub mod hdr_boxes;
 pub mod hevc_config;
+pub mod image;
 pub mod index_boxes;
 pub mod init_segment;
+pub mod item;
+pub mod item_reader;
+pub mod item_writer;
 pub mod limits;
 pub mod metadata;
 pub mod movie_fragment;
@@ -195,6 +209,12 @@ pub use hdr_boxes::{
     CLLI_FOURCC, ChromaticityXy, ContentLightLevel, MDCV_FOURCC, MasteringDisplayColourVolume,
 };
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+pub use image::{
+    AuxiliaryTypeProperty, Av1LayeredImageIndexingProperty, DerivedImage, IdentityDerivation,
+    ImageGrid, ImageMirror, ImageMirrorAxis, ImageOverlay, ImageRotation,
+    ImageSpatialExtentsProperty, ItemProperty, LayerSelectorProperty,
+    OperatingPointSelectorProperty, PixelInformationProperty, RelativeLocationProperty,
+};
 pub use index_boxes::{
     LEVA, LevelAssignmentBox, LevelAssignmentEntry, LevelAssignmentType, PDIN,
     ProgressiveDownloadEntry, ProgressiveDownloadInfoBox, SSIX, SubsegmentIndexBox,
@@ -210,6 +230,18 @@ pub use init_segment::{
     SampleTableBox, SampleToChunkBox, SamplingRateBox, SoundMediaHeaderBox, StblChild, StscEntry,
     SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
+pub use item::{
+    BrandProperty, ConstructionMethod, EntityGroupType, EntityToGroupBox, GroupId, GroupsListBox,
+    HandlerProperty, ItemDataBox, ItemExtent, ItemId, ItemInfoBox, ItemInfoEntry, ItemLocationBox,
+    ItemLocationEntry, ItemPropertiesBox, ItemPropertyAssociationBox, ItemPropertyContainerBox,
+    ItemProtectionBox, ItemReferenceBox, ItemType, PrimaryItemBox, PropertyAssociation,
+    PropertyIndex, ReferenceType, SingleItemTypeReferenceBox,
+};
+pub use item_reader::{
+    AssociatedProperty, Item, ItemReader, ItemReaderConfig, ItemReferenceIn, ItemReferenceOut,
+    ItemStep, MetaChild, MetaRecord, ReemitOp, StillImage, TopLevelBox,
+};
+pub use item_writer::ItemWriter;
 pub use limits::Limits;
 pub use mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG1_AUDIO,

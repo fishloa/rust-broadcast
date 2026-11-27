@@ -22,6 +22,8 @@ const TOPIC_DIRS: &[&str] = &[
     "ps",
     "pes",
     "mp4",
+    "heif",
+    "avif",
     "mkv",
     "flv",
     "mxf",

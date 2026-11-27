@@ -16,11 +16,6 @@ use std::collections::BTreeSet;
 
 use isobmff::coverage::TYPED_BOXES;
 
-/// Registry types still untyped, tier 2 of issue #4167 (the item layer).
-const UNTYPED_TIER_2: &[&str] = &[
-    "brnd", "grpl", "idat", "iinf", "iloc", "infe", "ipco", "ipma", "ipro", "iprp", "iref", "pitm",
-];
-
 /// Tier 3: metadata tracks.
 const UNTYPED_TIER_3: &[&str] = &[
     "bxml", "cprt", "etyp", "hmhd", "imda", "keyd", "loca", "nmhd", "otyp", "setu", "strd", "stri",
@@ -66,9 +61,8 @@ fn typed_names() -> BTreeSet<String> {
 }
 
 fn pinned_untyped() -> BTreeSet<String> {
-    UNTYPED_TIER_2
+    UNTYPED_TIER_3
         .iter()
-        .chain(UNTYPED_TIER_3)
         .chain(UNTYPED_TIER_4)
         .chain(UNTYPED_TIER_5)
         .map(|name| (*name).to_string())

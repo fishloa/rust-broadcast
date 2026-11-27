@@ -2004,6 +2004,15 @@ pub const TABLE: &[Crate] = &[
             "MetaChild",
             "MetaFlavor",
             "UdtaChild",
+            // The still-image item layer: `ItemProperty` and `DerivedImage`
+            // are data-carrying ADTs over structured boxes/bodies, and
+            // `ItemStep`/`ReemitOp` are the reader's step and the writer's
+            // re-emit run, not spec/field codes.
+            "ItemProperty",
+            "DerivedImage",
+            "ItemStep",
+            "ReemitOp",
+            "MetaChild",
         ],
         expected: None,
         min_enums: None,

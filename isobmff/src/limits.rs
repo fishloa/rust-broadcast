@@ -37,6 +37,14 @@ pub const DEFAULT_MAX_SAMPLE_BYTES: u32 = (64 * MIB) as u32;
 pub const DEFAULT_MAX_FRAGMENT_BYTES: u64 = 64 * MIB;
 /// Default maximum size of one metadata item, in bytes (16 MiB).
 pub const DEFAULT_MAX_METADATA_ITEM_BYTES: u64 = 16 * MIB;
+/// Default maximum number of items in one `MetaBox` — unlimited; the item
+/// layer's counts are supplied by the caller and this crate picks no policy
+/// number for them.
+pub const DEFAULT_UNLIMITED_ITEM_COUNT: u32 = u32::MAX;
+/// Default maximum number of item properties in one `ipco` — unlimited.
+pub const DEFAULT_UNLIMITED_PROPERTY_COUNT: u32 = u32::MAX;
+/// Default maximum number of item references — unlimited.
+pub const DEFAULT_UNLIMITED_REFERENCE_COUNT: u32 = u32::MAX;
 
 /// Hostile-input caps for the reader and writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +55,9 @@ pub struct Limits {
     max_sample_bytes: u32,
     max_fragment_bytes: u64,
     max_metadata_item_bytes: u64,
+    max_items: u32,
+    max_properties: u32,
+    max_references: u32,
 }
 
 impl Default for Limits {
@@ -58,6 +69,9 @@ impl Default for Limits {
             max_sample_bytes: DEFAULT_MAX_SAMPLE_BYTES,
             max_fragment_bytes: DEFAULT_MAX_FRAGMENT_BYTES,
             max_metadata_item_bytes: DEFAULT_MAX_METADATA_ITEM_BYTES,
+            max_items: DEFAULT_UNLIMITED_ITEM_COUNT,
+            max_properties: DEFAULT_UNLIMITED_PROPERTY_COUNT,
+            max_references: DEFAULT_UNLIMITED_REFERENCE_COUNT,
         }
     }
 }
@@ -105,6 +119,29 @@ impl Limits {
         self
     }
 
+    /// Set the maximum number of items in one `MetaBox` (unlimited by
+    /// default).
+    #[must_use]
+    pub const fn with_max_items(mut self, max_items: u32) -> Self {
+        self.max_items = max_items;
+        self
+    }
+
+    /// Set the maximum number of item properties in one `ipco` (unlimited by
+    /// default).
+    #[must_use]
+    pub const fn with_max_properties(mut self, max_properties: u32) -> Self {
+        self.max_properties = max_properties;
+        self
+    }
+
+    /// Set the maximum number of item references (unlimited by default).
+    #[must_use]
+    pub const fn with_max_references(mut self, max_references: u32) -> Self {
+        self.max_references = max_references;
+        self
+    }
+
     /// The maximum box-tree walk depth.
     #[must_use]
     pub const fn max_depth(&self) -> u32 {
@@ -141,6 +178,24 @@ impl Limits {
         self.max_metadata_item_bytes
     }
 
+    /// The maximum number of items in one `MetaBox`.
+    #[must_use]
+    pub const fn max_items(&self) -> u32 {
+        self.max_items
+    }
+
+    /// The maximum number of item properties in one `ipco`.
+    #[must_use]
+    pub const fn max_properties(&self) -> u32 {
+        self.max_properties
+    }
+
+    /// The maximum number of item references.
+    #[must_use]
+    pub const fn max_references(&self) -> u32 {
+        self.max_references
+    }
+
     /// The largest structure range the reader can demand: the larger of a
     /// whole `moov`/index box and a whole fragment.
     #[must_use]
@@ -166,6 +221,9 @@ mod tests {
         assert_eq!(limits.max_sample_bytes(), 64 * 1024 * 1024);
         assert_eq!(limits.max_fragment_bytes(), 64 * 1024 * 1024);
         assert_eq!(limits.max_metadata_item_bytes(), 16 * 1024 * 1024);
+        assert_eq!(limits.max_items(), u32::MAX);
+        assert_eq!(limits.max_properties(), u32::MAX);
+        assert_eq!(limits.max_references(), u32::MAX);
     }
 
     #[test]
@@ -176,12 +234,18 @@ mod tests {
             .with_max_samples_per_track(7)
             .with_max_sample_bytes(9)
             .with_max_fragment_bytes(11)
-            .with_max_metadata_item_bytes(13);
+            .with_max_metadata_item_bytes(13)
+            .with_max_items(15)
+            .with_max_properties(17)
+            .with_max_references(19);
         assert_eq!(limits.max_depth(), 3);
         assert_eq!(limits.max_moov_bytes(), 1024);
         assert_eq!(limits.max_samples_per_track(), 7);
         assert_eq!(limits.max_sample_bytes(), 9);
         assert_eq!(limits.max_fragment_bytes(), 11);
         assert_eq!(limits.max_metadata_item_bytes(), 13);
+        assert_eq!(limits.max_items(), 15);
+        assert_eq!(limits.max_properties(), 17);
+        assert_eq!(limits.max_references(), 19);
     }
 }

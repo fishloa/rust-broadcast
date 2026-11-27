@@ -1994,3 +1994,43 @@ impl Serialize for LabelBox {
         Ok(c)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alou_round_trips_from_the_clause() {
+        let entry = LoudnessEntry::new(7, 6, -100, -50, 1, 2)
+            .with_eq_set_id(5)
+            .with_measurements(alloc::vec![LoudnessMeasurement::new(3, 9, 4, 5)]);
+        let base = LoudnessBaseBox::new(LoudnessKind::Album)
+            .with_version(2)
+            .with_loudness_info_type(1)
+            .with_mae_ids(Some(11), None)
+            .with_entries(alloc::vec![entry]);
+        let alou = AlbumLoudnessInfo::from_base(base);
+        let bytes = alou.try_to_bytes().expect("alou serializes");
+        assert_eq!(&bytes[4..8], &ALOU);
+        let parsed = AlbumLoudnessInfo::parse(&bytes).expect("alou parses");
+        assert_eq!(parsed, alou);
+        assert_eq!(parsed.base().kind(), LoudnessKind::Album);
+        assert_eq!(parsed.base().version(), 2);
+        assert_eq!(parsed.base().loudness_info_type(), Some(1));
+        assert_eq!(parsed.base().mae_group_id(), Some(11));
+        assert_eq!(parsed.base().mae_group_preset_id(), None);
+        let entries = parsed.base().entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].eq_set_id(), Some(5));
+        assert_eq!(entries[0].downmix_id(), 7);
+        assert_eq!(entries[0].drc_set_id(), 6);
+        assert_eq!(entries[0].sample_peak_level(), -100);
+        assert_eq!(entries[0].true_peak_level(), -50);
+        assert_eq!(entries[0].measurements().len(), 1);
+        assert_eq!(entries[0].measurements()[0].method_definition(), 3);
+        let mut again = alloc::vec![0u8; parsed.serialized_len()];
+        let written = parsed.serialize_into(&mut again).expect("re-serializes");
+        assert_eq!(written, bytes.len());
+        assert_eq!(again, bytes);
+    }
+}

@@ -277,4 +277,47 @@ pub enum Error {
         /// Why the registration was refused.
         reason: &'static str,
     },
+
+    /// An `ipma` association named a property index past the `ipco` container
+    /// that holds it (ISO/IEC 14496-12:2026 §8.11.14.3: `property_index` "shall
+    /// not be greater than the number of boxes").
+    #[error("item property index {index} is past the {available}-property container")]
+    PropertyIndexOutOfRange {
+        /// The 1-based index the association named.
+        index: u16,
+        /// How many properties the container holds.
+        available: usize,
+    },
+
+    /// A derived image item's reference chain returned to an item it already
+    /// visited (ISO/IEC 14496-12:2026 §8.15.3.3 requires cycles be avoided).
+    #[error("derived image item {item} refers back to itself through its inputs")]
+    ReferenceCycle {
+        /// The item the cycle was detected at.
+        item: u32,
+    },
+
+    /// An item extent addressed bytes past the end of the file it was resolved
+    /// against (ISO/IEC 14496-12:2026 §8.11.3.2.4).
+    #[error("item {item} extent [{offset}, +{length}) is outside the {file_len}-byte file")]
+    ExtentOutOfRange {
+        /// The item whose extent it is.
+        item: u32,
+        /// The extent's first byte.
+        offset: u64,
+        /// The extent's declared length.
+        length: u64,
+        /// The file length the extent was checked against.
+        file_len: u64,
+    },
+
+    /// An item's `iloc` entry names a data reference other than "this file";
+    /// this crate does not open a second file.
+    #[error("item {item} names data_reference_index {index}, which is not the same file")]
+    DataReferenceUnsupported {
+        /// The item whose data lives elsewhere.
+        item: u32,
+        /// The `data_reference_index` it named.
+        index: u16,
+    },
 }
