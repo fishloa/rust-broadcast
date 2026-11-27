@@ -358,13 +358,158 @@ pub const TABLE: &[Banned] = &[
         issue: "broadcast-bitstream bs1",
     },
     Banned {
-        name: "transmux::sps",
-        reason: "the SPS decoders live in broadcast_bitstream::sps",
-        issue: "broadcast-bitstream bs2a",
+        name: "transmux::nalu_ext",
+        reason: "the ISOBMFF NAL-unit codec-info traits live in broadcast_bitstream::nalu_ext",
+        issue: "broadcast-bitstream bs2d",
     },
     Banned {
-        name: "crate::sps",
-        reason: "transmux has no sps module; the decoders are broadcast_bitstream::sps",
+        name: "transmux::codec_config_ext",
+        reason: "the ISOBMFF record codec-info traits live in broadcast_bitstream::codec_config_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::AvcSpsCodecInfo",
+        reason: "AvcSpsCodecInfo lives in broadcast_bitstream::nalu_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::HevcNalUnitCodecInfo",
+        reason: "HevcNalUnitCodecInfo lives in broadcast_bitstream::nalu_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::HevcRecordCodecInfo",
+        reason: "HevcRecordCodecInfo lives in broadcast_bitstream::codec_config_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::VvcRecordCodecInfo",
+        reason: "VvcRecordCodecInfo lives in broadcast_bitstream::codec_config_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::avc_config_from_sps_pps",
+        reason: "avc_config_from_sps_pps lives in broadcast_bitstream::codec_config_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::hdr10plus",
+        reason: "the HDR10+ ST 2094-40 model and its SEI codec live in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::Hdr10PlusMetadata",
+        reason: "Hdr10PlusMetadata lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::WindowRegion",
+        reason: "WindowRegion lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::ColorVolumeTransform",
+        reason: "ColorVolumeTransform lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::PeakLuminanceTable",
+        reason: "PeakLuminanceTable lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::BezierToneMapping",
+        reason: "BezierToneMapping lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::DistributionPoint",
+        reason: "DistributionPoint lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::AdditionalWindow",
+        reason: "AdditionalWindow lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::OverlapProcessOption",
+        reason: "OverlapProcessOption lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::HdrStaticMetadata",
+        reason: "HdrStaticMetadata lives in broadcast_bitstream::hdr",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::hdr",
+        reason: "the HDR static metadata type and its SEI codec live in broadcast_bitstream::hdr",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::VideoScan",
+        reason: "the coded interlace facts live in broadcast_bitstream::interlace",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::PicStruct",
+        reason: "the coded interlace facts live in broadcast_bitstream::interlace",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::SourceScanType",
+        reason: "the coded interlace facts live in broadcast_bitstream::interlace",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::PictureFacts",
+        reason: "the coded interlace facts live in broadcast_bitstream::interlace",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::slice_header",
+        reason: "the H.264 slice-header and PPS parsers live in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::AvcSliceHeader",
+        reason: "AvcSliceHeader lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::AvcSlicePps",
+        reason: "AvcSlicePps lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::AvcParamSets",
+        reason: "AvcParamSets lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::AvcPicture",
+        reason: "AvcPicture lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::AvcFieldInfo",
+        reason: "AvcFieldInfo lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::parse_avc_slice_header",
+        reason: "parse_avc_slice_header lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::decode_avc_slice_pps",
+        reason: "decode_avc_slice_pps lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::sps",
+        reason: "the SPS decoders live in broadcast_bitstream::sps",
         issue: "broadcast-bitstream bs2a",
     },
     Banned {

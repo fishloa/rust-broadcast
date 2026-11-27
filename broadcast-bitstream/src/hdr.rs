@@ -11,15 +11,17 @@
 //!   both and the box header is added by the sample-entry writer.
 
 use crate::error::Result;
+use crate::nal::{
+    HEVC_NAL_HEADER_LEN, HEVC_PREFIX_SEI_NUT, NalCodec, hevc_prefix_sei_nal, nal_unit_type,
+    sei_messages,
+};
 use alloc::vec::Vec;
-use broadcast_bitstream::nal::HEVC_NAL_HEADER_LEN;
 use broadcast_core::{Parse, Serialize};
 use isobmff::hdr_boxes::{
     BOX_TYPE_LEN, CLLI_FOURCC, ContentLightLevel, MDCV_FOURCC, MasteringDisplayColourVolume,
 };
 use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
 
-pub const HEVC_PREFIX_SEI_NUT: u8 = 39;
 /// SEI `payloadType` of `mastering_display_colour_volume` (H.265 D.2.28).
 pub const SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME: u32 = 137;
 /// SEI `payloadType` of `content_light_level_info` (H.265 D.2.35).
@@ -28,15 +30,39 @@ pub const SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO: u32 = 144;
 /// The static HDR10 metadata a video track carries: whichever of the two SEI
 /// messages were seen (the first occurrence of each is kept).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct HdrStaticMetadata {
-    /// `mastering_display_colour_volume`, when signalled.
-    pub mastering_display: Option<MasteringDisplayColourVolume>,
-    /// `content_light_level_info`, when signalled.
-    pub content_light_level: Option<ContentLightLevel>,
+    mastering_display: Option<MasteringDisplayColourVolume>,
+    content_light_level: Option<ContentLightLevel>,
 }
 
 impl HdrStaticMetadata {
+    /// The metadata these messages state.
+    #[must_use]
+    pub fn new(
+        mastering_display: Option<MasteringDisplayColourVolume>,
+        content_light_level: Option<ContentLightLevel>,
+    ) -> Self {
+        Self {
+            mastering_display,
+            content_light_level,
+        }
+    }
+
+    /// `mastering_display_colour_volume`, when signalled.
+    #[must_use]
+    pub fn mastering_display(&self) -> Option<&MasteringDisplayColourVolume> {
+        self.mastering_display.as_ref()
+    }
+
+    /// `content_light_level_info`, when signalled.
+    #[must_use]
+    pub fn content_light_level(&self) -> Option<&ContentLightLevel> {
+        self.content_light_level.as_ref()
+    }
+
     /// No metadata present.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.mastering_display.is_none() && self.content_light_level.is_none()
     }
@@ -45,16 +71,11 @@ impl HdrStaticMetadata {
     /// included) into `self`, keeping any value already present.
     pub fn absorb_hevc_sei_nal(&mut self, nal: &[u8]) {
         if nal.len() <= HEVC_NAL_HEADER_LEN
-            || broadcast_bitstream::nal::nal_unit_type(
-                broadcast_bitstream::nal::NalCodec::Hevc,
-                nal,
-            ) != Some(HEVC_PREFIX_SEI_NUT)
+            || nal_unit_type(NalCodec::Hevc, nal) != Some(HEVC_PREFIX_SEI_NUT)
         {
             return;
         }
-        for (payload_type, payload) in
-            broadcast_bitstream::nal::sei_messages(&nal[HEVC_NAL_HEADER_LEN..])
-        {
+        for (payload_type, payload) in sei_messages(&nal[HEVC_NAL_HEADER_LEN..]) {
             match payload_type {
                 SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME if self.mastering_display.is_none() => {
                     self.mastering_display = MasteringDisplayColourVolume::parse(&payload).ok();
@@ -86,9 +107,7 @@ impl HdrStaticMetadata {
         }
         let messages: Vec<(u32, &[u8])> =
             payloads.iter().map(|(t, p)| (*t, p.as_slice())).collect();
-        Ok(Some(broadcast_bitstream::nal::hevc_prefix_sei_nal(
-            &messages,
-        )))
+        Ok(Some(hevc_prefix_sei_nal(&messages)))
     }
 
     /// Whether a prefix SEI NAL unit carries either HDR static message.
@@ -247,7 +266,7 @@ mod tests {
         let mdcv = [0x11u8; MDCV_PAYLOAD_LEN];
         let clli = [0x03, 0xE8, 0x01, 0x90];
         let other = [0xA5u8; 6];
-        let bundled = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[
+        let bundled = hevc_prefix_sei_nal(&[
             (SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &mdcv),
             (4, &other),
             (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &clli),
@@ -256,11 +275,10 @@ mod tests {
         m.absorb_hevc_sei_nal(&bundled);
         assert!(m.mastering_display.is_some() && m.content_light_level.is_some());
         let rebuilt = m.to_hevc_declarative_sei_nal().unwrap().unwrap();
-        let types: Vec<u32> =
-            broadcast_bitstream::nal::sei_messages(&rebuilt[HEVC_NAL_HEADER_LEN..])
-                .into_iter()
-                .map(|(t, _)| t)
-                .collect();
+        let types: Vec<u32> = sei_messages(&rebuilt[HEVC_NAL_HEADER_LEN..])
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
         assert_eq!(
             types,
             [
@@ -278,15 +296,13 @@ mod tests {
 
     #[test]
     fn one_message_is_not_empty() {
-        let mdcv_only = HdrStaticMetadata {
-            mastering_display: Some(MasteringDisplayColourVolume::parse(&MDCV_BODY).unwrap()),
-            content_light_level: None,
-        };
+        let mdcv_only = HdrStaticMetadata::new(
+            Some(MasteringDisplayColourVolume::parse(&MDCV_BODY).unwrap()),
+            None,
+        );
         assert!(!mdcv_only.is_empty(), "only mastering_display present");
-        let clli_only = HdrStaticMetadata {
-            mastering_display: None,
-            content_light_level: Some(ContentLightLevel::parse(&CLLI_BODY).unwrap()),
-        };
+        let clli_only =
+            HdrStaticMetadata::new(None, Some(ContentLightLevel::parse(&CLLI_BODY).unwrap()));
         assert!(!clli_only.is_empty(), "only content_light_level present");
         assert!(HdrStaticMetadata::default().is_empty());
     }
@@ -314,10 +330,8 @@ mod tests {
         // H.265 Table 7-1: `SUFFIX_SEI_NUT`.
         const HEVC_SUFFIX_SEI_NUT: u8 = 40;
         let mdcv = [0x11u8; MDCV_PAYLOAD_LEN];
-        let mut suffix = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[(
-            SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME,
-            &mdcv,
-        )]);
+        let mut suffix =
+            hevc_prefix_sei_nal(&[(SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &mdcv)]);
         suffix[0] = HEVC_SUFFIX_SEI_NUT << 1;
         let mut m = HdrStaticMetadata::default();
         m.absorb_hevc_sei_nal(&suffix);
@@ -332,11 +346,11 @@ mod tests {
     fn the_first_message_of_each_kind_is_kept() {
         const MDCV_OTHER: [u8; 24] = [0x22; 24];
         const CLLI_OTHER: [u8; 4] = [0x00, 0x64, 0x00, 0x32];
-        let first = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[
+        let first = hevc_prefix_sei_nal(&[
             (SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &MDCV_BODY),
             (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &CLLI_BODY),
         ]);
-        let second = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[
+        let second = hevc_prefix_sei_nal(&[
             (SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &MDCV_OTHER),
             (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &CLLI_OTHER),
         ]);

@@ -35,7 +35,7 @@
 //! `avcC` config starts empty and is installed only once real parameter sets
 //! arrive: [`broadcast_bitstream::avc_access_unit_parameter_sets`] walks a real IDR's
 //! length-prefixed NAL units for a genuine SPS (type 7) + PPS (type 8) pair,
-//! [`transmux::avc_config_from_sps_pps`] builds the real
+//! [`broadcast_bitstream::avc_config_from_sps_pps`] builds the real
 //! [`isobmff::AVCConfigurationBox`] from it, and
 //! `RtpStreamDepacketiser::set_track_config` installs it on the track.
 //! [`SessionEvent::NewProgram`] is deferred until that has happened —
@@ -98,9 +98,10 @@ use media_plane::ingress::{
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 
+use broadcast_bitstream::avc_config_from_sps_pps;
 use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{RtpStreamDepacketiser, RtpStreamTrack, avc_config_from_sps_pps};
+use transmux::{RtpStreamDepacketiser, RtpStreamTrack};
 
 use webrtc_runtime::media::{
     Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
@@ -1326,7 +1327,7 @@ impl WhipIngestSession {
     /// if found, captures the real `avcC` for `track_id` — see the module
     /// doc. The walk and the record are transmux's own
     /// ([`broadcast_bitstream::avc_access_unit_parameter_sets`],
-    /// [`transmux::avc_config_from_sps_pps`]), so a WebRTC keyframe is read by
+    /// [`broadcast_bitstream::avc_config_from_sps_pps`]), so a WebRTC keyframe is read by
     /// exactly the code that reads one out of a TS or fMP4 sample.
     fn try_capture_config(&mut self, track_id: TrackId, sample: &Sample) {
         if self.captured.get(&track_id).cloned().flatten().is_some() {

@@ -63,7 +63,7 @@
 //! durations and exact PES-boundary timestamps survive into the IR.
 //! **Field-coded (PAFF) H.264 (issue #1161).** Broadcast PAFF carries one coded
 //! field per PES, but an ISO/IEC 14496-15:2017 sample is a whole access unit; the
-//! video path parses each access unit's slice header ([`crate::slice_header`])
+//! video path parses each access unit's slice header ([`broadcast_bitstream::slice_header`])
 //! and merges the second field of a complementary field pair (ITU-T H.264
 //! §3.35-3.37) into the first field's sample, which keeps the first field's
 //! PTS/DTS. Unpaired fields and fields across a timestamp jump are emitted
@@ -253,14 +253,15 @@ use crate::ac3_syncframe::{
 };
 use crate::dts_core::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
 use crate::error::{Error, Result};
-use crate::hdr::{HEVC_PREFIX_SEI_NUT, HdrStaticMetadata};
 use crate::mhas::find_mpegh3da_config;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
 use crate::nal_params::{ParamKind, parameter_set_is_valid};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
+use broadcast_bitstream::HdrStaticMetadata;
 use broadcast_bitstream::annexb::{
     NAL_LENGTH_SIZE_MINUS_ONE, annexb_to_length_prefixed, iter_annexb_nals,
 };
+use broadcast_bitstream::nal::HEVC_PREFIX_SEI_NUT;
 use broadcast_bitstream::nal::{
     AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, access_unit_is_rap, is_keyframe_nal,
     nal_unit_type,
@@ -1534,9 +1535,9 @@ struct PendingDisplayEvents {
 #[derive(Default)]
 struct PaffPairing {
     /// In-band SPS/PPS, for parsing slice headers.
-    params: crate::slice_header::AvcParamSets,
+    params: broadcast_bitstream::slice_header::AvcParamSets,
     /// The pending sample is a first field still awaiting its second field.
-    first_field: Option<crate::slice_header::AvcFieldInfo>,
+    first_field: Option<broadcast_bitstream::slice_header::AvcFieldInfo>,
 }
 
 /// Largest first-field to second-field DTS distance accepted as one frame: a
@@ -2311,8 +2312,9 @@ fn flush_one_behind(
 fn annexb_to_length_prefixed_no_aud(annexb: &[u8]) -> Vec<u8> {
     broadcast_bitstream::annexb::length_prefix(
         annexb.len(),
-        iter_annexb_nals(annexb)
-            .filter(|nal| nal_unit_type(NalCodec::Avc, nal) != Some(crate::slice_header::NAL_AUD)),
+        iter_annexb_nals(annexb).filter(|nal| {
+            nal_unit_type(NalCodec::Avc, nal) != Some(broadcast_bitstream::nal::AVC_NAL_AUD)
+        }),
     )
 }
 
@@ -2858,7 +2860,7 @@ fn push_live_au(
                 codec,
                 paff,
             } => {
-                use crate::slice_header::AvcPicture;
+                use broadcast_bitstream::slice_header::AvcPicture;
                 // The events this access unit raises travel with its own slot and
                 // are pushed immediately before its Sample (design §6.5). A PAFF
                 // second field merges into the first field's slot below, so its
@@ -6139,7 +6141,7 @@ impl StreamingTsDemux {
                     // anchor value needs computing here at all.
                     let hdr10plus = matches!(config, CodecConfig::Hevc { .. })
                         && backlog.first().is_some_and(|au| {
-                            crate::hdr10plus::Hdr10PlusMetadata::annexb_access_unit_carries_hdr10plus(
+                            broadcast_bitstream::Hdr10PlusMetadata::annexb_access_unit_carries_hdr10plus(
                                 &au.data,
                             )
                         });

@@ -10,24 +10,14 @@
 //! of the slice header (through `redundant_pic_cnt`) is parsed. MBAFF pictures
 //! are *frames* (`field_pic_flag == 0`) and classify as [`AvcPicture::Frame`].
 
+use crate::annexb::iter_annexb_nals;
+use crate::bitreader::BitReader;
 use crate::error::{Error, Result};
+use crate::nal::{AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SLICE, AVC_NAL_SPS, NAL_TYPE_MASK};
+use crate::sps::{AvcSliceSps, decode_avc_slice_sps};
 use alloc::collections::BTreeMap;
-use broadcast_bitstream::annexb::iter_annexb_nals;
-use broadcast_bitstream::bitreader::BitReader;
-use broadcast_bitstream::nal::NAL_TYPE_MASK;
-use broadcast_bitstream::sps::{AvcSliceSps, decode_avc_slice_sps};
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 
-/// `nal_unit_type` of a non-IDR coded slice (Table 7-1).
-const NAL_SLICE: u8 = 1;
-/// `nal_unit_type` of an IDR coded slice (Table 7-1).
-const NAL_IDR: u8 = 5;
-/// `nal_unit_type` of a sequence parameter set.
-const NAL_SPS: u8 = 7;
-/// `nal_unit_type` of a picture parameter set.
-const NAL_PPS: u8 = 8;
-/// `nal_unit_type` of an access unit delimiter.
-pub(crate) const NAL_AUD: u8 = 9;
 /// `nal_ref_idc` bits of the NAL header byte.
 const NAL_REF_IDC_MASK: u8 = 0x60;
 /// Shift of `nal_ref_idc` in the NAL header byte.
@@ -53,17 +43,63 @@ const SLICE_TYPE_MAX: u64 = 9;
 
 /// The PPS fields a slice-header parser needs (§7.3.2.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AvcSlicePps {
+    pps_id: u8,
+    sps_id: u8,
+    entropy_coding_mode: bool,
+    bottom_field_pic_order_in_frame_present: bool,
+    redundant_pic_cnt_present: bool,
+}
+
+impl AvcSlicePps {
+    /// The fields a slice-header parser needs from a PPS.
+    #[must_use]
+    pub fn new(
+        pps_id: u8,
+        sps_id: u8,
+        entropy_coding_mode: bool,
+        bottom_field_pic_order_in_frame_present: bool,
+        redundant_pic_cnt_present: bool,
+    ) -> Self {
+        Self {
+            pps_id,
+            sps_id,
+            entropy_coding_mode,
+            bottom_field_pic_order_in_frame_present,
+            redundant_pic_cnt_present,
+        }
+    }
+
     /// `pic_parameter_set_id`.
-    pub pps_id: u8,
+    #[must_use]
+    pub fn pps_id(&self) -> u8 {
+        self.pps_id
+    }
+
     /// `seq_parameter_set_id`.
-    pub sps_id: u8,
+    #[must_use]
+    pub fn sps_id(&self) -> u8 {
+        self.sps_id
+    }
+
     /// `entropy_coding_mode_flag`.
-    pub entropy_coding_mode: bool,
+    #[must_use]
+    pub fn entropy_coding_mode(&self) -> bool {
+        self.entropy_coding_mode
+    }
+
     /// `bottom_field_pic_order_in_frame_present_flag`.
-    pub bottom_field_pic_order_in_frame_present: bool,
+    #[must_use]
+    pub fn bottom_field_pic_order_in_frame_present(&self) -> bool {
+        self.bottom_field_pic_order_in_frame_present
+    }
+
     /// `redundant_pic_cnt_present_flag`.
-    pub redundant_pic_cnt_present: bool,
+    #[must_use]
+    pub fn redundant_pic_cnt_present(&self) -> bool {
+        self.redundant_pic_cnt_present
+    }
 }
 
 /// Decode the slice-header-relevant prefix of a PPS NAL unit (1-byte NAL
@@ -133,47 +169,120 @@ pub fn decode_avc_slice_pps(pps_nal: &[u8]) -> Result<AvcSlicePps> {
     r.read_flag("deblocking_filter_control_present_flag")?;
     r.read_flag("constrained_intra_pred_flag")?;
     let redundant_pic_cnt_present = r.read_flag("redundant_pic_cnt_present_flag")?;
-    Ok(AvcSlicePps {
-        pps_id: pps_id as u8,
-        sps_id: sps_id as u8,
+    Ok(AvcSlicePps::new(
+        pps_id as u8,
+        sps_id as u8,
         entropy_coding_mode,
         bottom_field_pic_order_in_frame_present,
         redundant_pic_cnt_present,
-    })
+    ))
 }
 
 /// The slice-header prefix of one coded slice NAL (§7.3.3 through
 /// `redundant_pic_cnt`), plus the NAL-header facts the §7.4.1.2.4 test uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AvcSliceHeader {
+    nal_ref_idc: u8,
+    idr: bool,
+    first_mb_in_slice: u32,
+    slice_type: u8,
+    pps_id: u8,
+    colour_plane_id: Option<u8>,
+    frame_num: u32,
+    field_pic_flag: bool,
+    bottom_field_flag: bool,
+    idr_pic_id: Option<u32>,
+    pic_order_cnt_lsb: Option<u32>,
+    delta_pic_order_cnt_bottom: i32,
+    delta_pic_order_cnt: [i32; DELTA_PIC_ORDER_CNT_LEN],
+    redundant_pic_cnt: u32,
+}
+
+impl AvcSliceHeader {
     /// `nal_ref_idc` (0 = non-reference).
-    pub nal_ref_idc: u8,
+    #[must_use]
+    pub fn nal_ref_idc(&self) -> u8 {
+        self.nal_ref_idc
+    }
+
     /// `IdrPicFlag` (`nal_unit_type == 5`).
-    pub idr: bool,
+    #[must_use]
+    pub fn idr(&self) -> bool {
+        self.idr
+    }
+
     /// `first_mb_in_slice`.
-    pub first_mb_in_slice: u32,
+    #[must_use]
+    pub fn first_mb_in_slice(&self) -> u32 {
+        self.first_mb_in_slice
+    }
+
     /// `slice_type` as coded (0..=9, Table 7-6).
-    pub slice_type: u8,
+    #[must_use]
+    pub fn slice_type(&self) -> u8 {
+        self.slice_type
+    }
+
     /// `pic_parameter_set_id`.
-    pub pps_id: u8,
+    #[must_use]
+    pub fn pps_id(&self) -> u8 {
+        self.pps_id
+    }
+
     /// `colour_plane_id` (only when `separate_colour_plane_flag`).
-    pub colour_plane_id: Option<u8>,
+    #[must_use]
+    pub fn colour_plane_id(&self) -> Option<u8> {
+        self.colour_plane_id
+    }
+
     /// `frame_num`.
-    pub frame_num: u32,
+    #[must_use]
+    pub fn frame_num(&self) -> u32 {
+        self.frame_num
+    }
+
     /// `field_pic_flag` (inferred `false` when absent).
-    pub field_pic_flag: bool,
+    #[must_use]
+    pub fn field_pic_flag(&self) -> bool {
+        self.field_pic_flag
+    }
+
     /// `bottom_field_flag` (inferred `false` when absent).
-    pub bottom_field_flag: bool,
+    #[must_use]
+    pub fn bottom_field_flag(&self) -> bool {
+        self.bottom_field_flag
+    }
+
     /// `idr_pic_id` (IDR slices only).
-    pub idr_pic_id: Option<u32>,
+    #[must_use]
+    pub fn idr_pic_id(&self) -> Option<u32> {
+        self.idr_pic_id
+    }
+
     /// `pic_order_cnt_lsb` (POC type 0 only).
-    pub pic_order_cnt_lsb: Option<u32>,
+    #[must_use]
+    pub fn pic_order_cnt_lsb(&self) -> Option<u32> {
+        self.pic_order_cnt_lsb
+    }
+
     /// `delta_pic_order_cnt_bottom` (inferred 0).
-    pub delta_pic_order_cnt_bottom: i32,
+    #[must_use]
+    pub fn delta_pic_order_cnt_bottom(&self) -> i32 {
+        self.delta_pic_order_cnt_bottom
+    }
+
     /// `delta_pic_order_cnt[0..=1]` (inferred 0).
-    pub delta_pic_order_cnt: [i32; DELTA_PIC_ORDER_CNT_LEN],
+    #[must_use]
+    pub fn delta_pic_order_cnt(&self) -> [i32; DELTA_PIC_ORDER_CNT_LEN] {
+        self.delta_pic_order_cnt
+    }
+
     /// `redundant_pic_cnt` (inferred 0).
-    pub redundant_pic_cnt: u32,
+    #[must_use]
+    pub fn redundant_pic_cnt(&self) -> u32 {
+        self.redundant_pic_cnt
+    }
 }
 
 fn to_u32(v: u64, field: &'static str) -> Result<u32> {
@@ -209,14 +318,14 @@ pub fn parse_avc_slice_header(
         what: "H.264 slice NAL header",
     }))?;
     let nal_type = header & NAL_TYPE_MASK;
-    if nal_type != NAL_SLICE && nal_type != NAL_IDR {
+    if nal_type != AVC_NAL_SLICE && nal_type != AVC_NAL_IDR {
         return Err(Error::InvalidValue(InvalidValue {
             field: "nal_unit_type",
             value: nal_type as u64,
             reason: "not a non-partitioned coded slice (1 or 5)",
         }));
     }
-    let idr = nal_type == NAL_IDR;
+    let idr = nal_type == AVC_NAL_IDR;
     let nal_ref_idc = (header & NAL_REF_IDC_MASK) >> NAL_REF_IDC_SHIFT;
     let end = nal.len().min(1 + SLICE_PREFIX_BYTES);
     let mut r = BitReader::with_unescape(&nal[1..end], "H.264 slice header")?;
@@ -323,14 +432,10 @@ pub enum AvcPicture {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AvcFieldInfo {
-    /// `bottom_field_flag`.
-    pub bottom: bool,
-    /// `frame_num`.
-    pub frame_num: u32,
-    /// `nal_ref_idc != 0`.
-    pub is_reference: bool,
-    /// The field is an IDR picture.
-    pub idr: bool,
+    bottom: bool,
+    frame_num: u32,
+    is_reference: bool,
+    idr: bool,
 }
 
 impl AvcFieldInfo {
@@ -343,6 +448,30 @@ impl AvcFieldInfo {
             is_reference,
             idr,
         }
+    }
+
+    /// `bottom_field_flag`.
+    #[must_use]
+    pub fn bottom(&self) -> bool {
+        self.bottom
+    }
+
+    /// `frame_num`.
+    #[must_use]
+    pub fn frame_num(&self) -> u32 {
+        self.frame_num
+    }
+
+    /// `nal_ref_idc != 0`.
+    #[must_use]
+    pub fn is_reference(&self) -> bool {
+        self.is_reference
+    }
+
+    /// The field is an IDR picture.
+    #[must_use]
+    pub fn idr(&self) -> bool {
+        self.idr
     }
 
     /// Whether `second` (the next access unit in decoding order) completes
@@ -377,12 +506,12 @@ impl AvcParamSets {
     /// is ignored; the previous entry for that id is kept on a parse failure).
     pub fn observe_nal(&mut self, nal: &[u8]) {
         match nal.first().map(|b| b & NAL_TYPE_MASK) {
-            Some(NAL_SPS) => {
+            Some(AVC_NAL_SPS) => {
                 if let Ok(s) = decode_avc_slice_sps(nal) {
                     self.sps.insert(s.sps_id(), s);
                 }
             }
-            Some(NAL_PPS) => {
+            Some(AVC_NAL_PPS) => {
                 if let Ok(p) = decode_avc_slice_pps(nal) {
                     self.pps.insert(p.pps_id, p);
                 }
@@ -407,8 +536,8 @@ impl AvcParamSets {
         for nal in nals {
             let t = nal.first().map(|b| b & NAL_TYPE_MASK);
             match t {
-                Some(NAL_SPS) | Some(NAL_PPS) => self.observe_nal(nal),
-                Some(NAL_SLICE) | Some(NAL_IDR) => {
+                Some(AVC_NAL_SPS) | Some(AVC_NAL_PPS) => self.observe_nal(nal),
+                Some(AVC_NAL_SLICE) | Some(AVC_NAL_IDR) => {
                     let this = self.classify_slice(nal);
                     result = Some(match (result, this) {
                         (None, p) => p,
@@ -425,7 +554,8 @@ impl AvcParamSets {
     /// Parse a slice NAL's header against the cached parameter sets, returning
     /// it with its SPS, or `None` when a parameter set is missing or the header
     /// is malformed.
-    pub(crate) fn parse_slice(&self, nal: &[u8]) -> Option<(AvcSliceHeader, AvcSliceSps)> {
+    #[must_use]
+    pub fn parse_slice(&self, nal: &[u8]) -> Option<(AvcSliceHeader, AvcSliceSps)> {
         let pps = self.pps.get(&peek_pps_id(nal)?)?;
         let sps = self.sps.get(&pps.sps_id)?;
         parse_avc_slice_header(nal, sps, pps)
@@ -672,7 +802,7 @@ mod tests {
         // No parameter sets seen yet: Unknown.
         let f = slice(1, false, 2, Some(false), 4, &|_| {});
         assert_eq!(
-            ps.classify_au(&annexb(std::slice::from_ref(&f))),
+            ps.classify_au(&annexb(core::slice::from_ref(&f))),
             AvcPicture::Unknown
         );
         // With them: a field...

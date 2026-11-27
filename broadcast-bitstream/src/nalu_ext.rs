@@ -1,15 +1,23 @@
-//! Codec-metadata extension methods over the moved NAL-unit newtypes.
+//! Codec-metadata extension methods over the ISOBMFF NAL-unit newtypes
+//! (`isobmff` feature).
 //!
 //! The newtypes (`AvcSps`, `HevcNalUnit`) are pure box syntax; decoding their
-//! payloads and formatting the RFC 6381 codec string need the SPS bitstream
-//! parsers in `broadcast-bitstream`. These traits keep the call sites unchanged.
+//! payloads and formatting the RFC 6381 codec string need this crate's SPS
+//! bitstream parsers. These traits keep the call sites concise.
 
 use crate::error::Result;
+#[cfg(feature = "hevc")]
+use crate::nal::{HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK};
+use crate::rfc6381::rfc6381_avc1;
+#[cfg(feature = "hevc")]
+use crate::rfc6381::rfc6381_hvc1;
+use crate::sps::{AvcSpsInfo, decode_avc_sps};
+#[cfg(feature = "hevc")]
+use crate::sps::{HevcSpsInfo, decode_hevc_sps};
 use alloc::string::String;
-use broadcast_bitstream::nal::{HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK};
-use broadcast_bitstream::rfc6381::{rfc6381_avc1, rfc6381_hvc1};
-use broadcast_bitstream::sps::{AvcSpsInfo, HevcSpsInfo, decode_avc_sps, decode_hevc_sps};
-use isobmff::nalu_types::{AvcSps, HEVC_SPS_NUT, HevcNalUnit};
+use isobmff::nalu_types::AvcSps;
+#[cfg(feature = "hevc")]
+use isobmff::nalu_types::{HEVC_SPS_NUT, HevcNalUnit};
 
 /// Decode an AVC SPS NAL unit and format its RFC 6381 codec string.
 pub trait AvcSpsCodecInfo {
@@ -22,7 +30,7 @@ pub trait AvcSpsCodecInfo {
 
 impl AvcSpsCodecInfo for AvcSps {
     fn decode(&self) -> Result<AvcSpsInfo> {
-        decode_avc_sps(&self.0).map_err(Into::into)
+        decode_avc_sps(&self.0)
     }
 
     fn rfc6381(&self) -> Result<String> {
@@ -36,6 +44,7 @@ impl AvcSpsCodecInfo for AvcSps {
 }
 
 /// Decode an HEVC NAL unit when it is an SPS and format its RFC 6381 string.
+#[cfg(feature = "hevc")]
 pub trait HevcNalUnitCodecInfo {
     /// Decode the SPS fields if this NAL unit is an SPS (NAL unit type 33).
     fn decode_sps(&self) -> Result<Option<HevcSpsInfo>>;
@@ -44,6 +53,7 @@ pub trait HevcNalUnitCodecInfo {
     fn rfc6381(&self) -> Result<Option<String>>;
 }
 
+#[cfg(feature = "hevc")]
 impl HevcNalUnitCodecInfo for HevcNalUnit {
     fn decode_sps(&self) -> Result<Option<HevcSpsInfo>> {
         if self.0.len() < HEVC_NAL_HEADER_LEN {
@@ -53,19 +63,15 @@ impl HevcNalUnitCodecInfo for HevcNalUnit {
         if nal_type != HEVC_SPS_NUT {
             return Ok(None);
         }
-        decode_hevc_sps(&self.0).map(Some).map_err(Into::into)
+        decode_hevc_sps(&self.0).map(Some)
     }
 
     fn rfc6381(&self) -> Result<Option<String>> {
-        if let Some(info) = self.decode_sps()? {
-            Ok(Some(rfc6381_hvc1(&info)))
-        } else {
-            Ok(None)
-        }
+        Ok(self.decode_sps()?.map(|info| rfc6381_hvc1(&info)))
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "hevc"))]
 mod tests {
     use super::*;
     use alloc::vec;

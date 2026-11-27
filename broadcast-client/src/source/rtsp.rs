@@ -1002,7 +1002,7 @@ impl RtspSource {
         if sps.is_empty() || pps.is_empty() {
             return false;
         }
-        let Ok(avc) = transmux::avc_config_from_sps_pps(
+        let Ok(avc) = broadcast_bitstream::avc_config_from_sps_pps(
             sps.into_iter().map(Into::into).collect(),
             pps.into_iter().map(Into::into).collect(),
         ) else {

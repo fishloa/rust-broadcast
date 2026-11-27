@@ -26,7 +26,7 @@ use transmux::pipeline::CodecConfig;
 // ---------------------------------------------------------------------------
 
 use crate::xml::{Element, parse_xml};
-use transmux::nalu_ext::AvcSpsCodecInfo;
+use broadcast_bitstream::nalu_ext::AvcSpsCodecInfo;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
