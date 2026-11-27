@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently.
 - `StreamingFlvDemux::strict()`, which keeps the pre-best-effort contract
   (a damaged header, backwards timestamp or too-large span is an error).
+- `StreamingFlvDemux::with_max_resync_bytes`: the caller's bound on the search
+  for a tag chain behind a damaged header (unlimited by default). A damaged
+  header is always reported and abandoned rather than waited for, so an absurd
+  declared `DataOffset` can never size a buffer or a scan; the walk resumes at
+  the first tag within the bytes actually supplied.
 - `flv::OnMetadata` and `flv::parse_on_metadata`: the typed view of an FLV
   script tag's `onMetaData` properties (duration, width, height, frame rate,
   codec ids, audio sample rate and size, stereo, file size, encoder) with
