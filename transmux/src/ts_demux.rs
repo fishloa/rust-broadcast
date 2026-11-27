@@ -2188,6 +2188,50 @@ fn events_dropped_unit(
     )));
 }
 
+/// The [`Damage`] a repaired timeline always publishes: the reader re-derived
+/// a track's decode timestamps, which `docs/API-CONVENTIONS.md`'s
+/// best-effort-reading rule requires it to say, located at the track, the new
+/// time base and, when the reader knows it, the packet that began it.
+fn timeline_repair_damage(
+    track_id: TrackId,
+    media_time: MediaTimeRange,
+    provenance: EventProvenance,
+) -> Damage {
+    let mut damage = Damage::new(
+        DamageKind::TimelineRepaired,
+        Severity::Informational,
+        "decode timestamp",
+    )
+    .for_track(track_id.value())
+    .at_media_time(media_time);
+    if let Some(index) = provenance.packet_index {
+        damage = damage.at_byte_range(ByteRange::new(index.saturating_mul(TS_PACKET_BYTES), 0));
+    }
+    damage
+}
+
+/// Report one track's timeline break (issue #4196): the per-track
+/// [`DiscontinuityKind::TimelineReanchored`] event a consumer flushes its
+/// decoder on, and beside it the [`DamageKind::TimelineRepaired`] report. The
+/// event's contract is per track — its `track` field names the one the break
+/// was observed on — so every track whose timeline stepped is reported, not
+/// only the audio one.
+fn report_timeline_break(
+    track_id: TrackId,
+    media_time: MediaTimeRange,
+    provenance: EventProvenance,
+    events: &mut VecDeque<DemuxEvent>,
+) {
+    events.push_back(DemuxEvent::Discontinuity {
+        track: Some(track_id),
+        kind: DiscontinuityKind::TimelineReanchored,
+        provenance,
+    });
+    events.push_back(DemuxEvent::damage(timeline_repair_damage(
+        track_id, media_time, provenance,
+    )));
+}
+
 /// Report one degradation: the existing [`DemuxEvent::InputDegraded`] and,
 /// beside it, the one [`DemuxEvent::Damage`] report every reader publishes.
 fn report_degradation(
@@ -2327,6 +2371,13 @@ fn advance_one_behind(
     pending_events: PendingDisplayEvents,
     events: &mut VecDeque<DemuxEvent>,
 ) {
+    // A decode timestamp that steps backwards is a timeline break in this
+    // track (issue #4196): the IR keeps samples in decode order with a
+    // non-decreasing absolute `dts`, so the reader re-derives the pending
+    // sample's span from zero. The report is published *after* that last
+    // old-base sample and before the first new-base one, per track, with the
+    // new time base and the packet that began it.
+    let stepped_back = pending.as_ref().is_some_and(|prev| dts_uw < prev.dts_uw);
     if let Some(prev) = pending.take() {
         let duration = if duration_from_pts {
             (pts_uw - prev.pts_uw).max(0) as u32
@@ -2364,6 +2415,14 @@ fn advance_one_behind(
                 trim: crate::ir::SampleTrim::NONE,
             },
         });
+    }
+    if stepped_back {
+        report_timeline_break(
+            track_id,
+            MediaTimeRange::at(VIDEO_TIMESCALE, to_ticks(dts_uw)),
+            provenance,
+            events,
+        );
     }
     *pending = Some(PendingOneBehind {
         data,
@@ -2677,6 +2736,7 @@ fn emit_audio_au(
     pts_uw: i128,
     dts_uw: i128,
     track_id: TrackId,
+    provenance: EventProvenance,
     events: &mut VecDeque<DemuxEvent>,
 ) -> Result<TrackId> {
     // Resolve this AU's track-tick base: reuse the running frame-exact
@@ -2777,13 +2837,16 @@ fn emit_audio_au(
     let lead_ticks = lead_ticks - held_ticks;
     // Only signal a discontinuity when re-anchoring an ALREADY-seeded track
     // (the very first access unit establishes the anchor, it doesn't
-    // "discontinue" from anything).
+    // "discontinue" from anything). The re-anchor re-derives the track's
+    // decode timestamps from the wire clock, so it is reported per track and
+    // as a timeline repair (issue #4196).
     if fresh_anchor && seed.is_some() {
-        events.push_back(DemuxEvent::Discontinuity {
-            track: Some(track_id),
-            kind: DiscontinuityKind::TimelineReanchored,
-            provenance: EventProvenance::default(),
-        });
+        report_timeline_break(
+            track_id,
+            MediaTimeRange::at(VIDEO_TIMESCALE, to_ticks(dts_uw)),
+            provenance,
+            events,
+        );
     }
     let (dts0, pts0) = match (fresh_anchor, &seed) {
         (false, Some(seed)) => (seed.next_dts, seed.next_pts),
@@ -3084,6 +3147,7 @@ fn push_live_au(
                     pts_uw,
                     dts_uw,
                     track_id,
+                    provenance,
                     events,
                 )?;
             }
@@ -4074,7 +4138,7 @@ fn advance_track(
             }
             let provenance = EventProvenance {
                 pid: Some(pid),
-                packet_index: None,
+                packet_index: Some(stream.pes_start_offset / TS_PACKET_BYTES),
                 program_number: None,
             };
             if let Some((config, timescale)) = new_config {
@@ -4789,19 +4853,34 @@ fn on_completed_pes(
         stream.units_since_stamped = stream.units_since_stamped.saturating_add(1);
         (0, 0)
     };
+    let mut lifted = false;
     if stream.pending_rebase {
         // The first stamp of the new time base lifts the whole timeline by
         // whatever the jump backwards would have been, so decode order stays
         // monotonic across the discontinuity (r04-W50). The indicator may
         // arrive while the *old* base's last unit is still completing, in which
         // case this call is a no-op and the wait continues.
-        stream.pending_rebase =
-            stream
-                .wrap
-                .rebase_at_discontinuity(dts, stream.last_frame_period, epoch)
-                == DiscontinuityVerdict::Forward;
+        let verdict = stream
+            .wrap
+            .rebase_at_discontinuity(dts, stream.last_frame_period, epoch);
+        stream.pending_rebase = verdict == DiscontinuityVerdict::Forward;
+        lifted = verdict == DiscontinuityVerdict::Lifted;
     }
     let (pts_uw, dts_uw) = stream.wrap.push(pts, dts, epoch);
+    if lifted && let Some(track_id) = stream.live_track() {
+        // A rebased time base is a repaired timeline, which the best-effort
+        // rule requires publishing beside the break itself (the `Signalled`
+        // discontinuity already reported that at the indicator; issue #4196).
+        let provenance = EventProvenance {
+            pid: Some(pid),
+            packet_index: Some(stream.pes_start_offset / TS_PACKET_BYTES),
+            program_number: None,
+        };
+        let media_time = MediaTimeRange::at(VIDEO_TIMESCALE, to_ticks(dts_uw));
+        events.push_back(DemuxEvent::damage(timeline_repair_damage(
+            track_id, media_time, provenance,
+        )));
+    }
     advance_track(stream, pid, pes.payload, pts_uw, dts_uw, events)
 }
 
@@ -4971,10 +5050,15 @@ enum CcVerdict {
 ///   a program's PCR_PID, that program's elementary streams are re-based so
 ///   the first sample of the new time base continues one nominal frame period
 ///   past the last emitted `dts` (sample timestamps stay monotonic across the
-///   seam; a forward step is left untouched). `TimelineReanchored` — a live
-///   audio track's frame-exact timeline was re-anchored to the wire clock after
-///   drifting past a threshold (splice, encoder restart): timestamps *do* jump
-///   at this point. `BudgetExceeded` — a caller-supplied PES unit cap or the
+///   seam; a forward step is left untouched). `TimelineReanchored` — one
+///   track's timeline was re-anchored and its timestamps *do* jump at this
+///   point: a live audio track's frame-exact clock drifted past a threshold
+///   (splice, encoder restart), or any track's decode timestamp stepped
+///   backwards. The event is per track (`track` names the one that stepped),
+///   so a multi-track break publishes one event per affected track, each with
+///   the packet that began the new time base, and a
+///   `DamageKind::TimelineRepaired` report beside it (issue #4196).
+///   `BudgetExceeded` — a caller-supplied PES unit cap or the
 ///   probe backlog cap was hit and in-flight data was dropped. A consumer
 ///   should flush/resync its decoder on `Discontinuity`;
 ///   [`LiveJoin::rejoin`](crate::LiveJoin::rejoin) is the video-side helper.
@@ -11699,6 +11783,7 @@ pub(crate) mod tests {
                 ts,
                 ts,
                 TrackId::new(1),
+                EventProvenance::default(),
                 &mut events,
             )
             .expect("valid timing");
@@ -11753,6 +11838,7 @@ pub(crate) mod tests {
                 ts,
                 ts,
                 TrackId::new(1),
+                EventProvenance::default(),
                 events,
             )
             .expect("valid timing");
@@ -11943,6 +12029,7 @@ pub(crate) mod tests {
                 dts_uw as u64 as i128,
                 dts_uw,
                 TrackId::new(1),
+                EventProvenance::default(),
                 &mut events,
             )
             .expect("valid timing");
@@ -11997,6 +12084,7 @@ pub(crate) mod tests {
             0,
             0,
             TrackId::new(1),
+            EventProvenance::default(),
             &mut events,
         )
         .expect("valid timing");
@@ -12084,6 +12172,7 @@ pub(crate) mod tests {
             0,
             0,
             TrackId::new(1),
+            EventProvenance::default(),
             &mut events,
         )
         .expect("valid timing");
@@ -16653,6 +16742,7 @@ pub(crate) mod tests {
             90_000,
             90_000,
             TrackId::new(1),
+            EventProvenance::default(),
             &mut events,
         )
         .expect("emit");
@@ -16706,6 +16796,7 @@ pub(crate) mod tests {
             0,
             0,
             TrackId::new(1),
+            EventProvenance::default(),
             &mut events,
         )
         .expect("empty payload");
@@ -16791,6 +16882,7 @@ pub(crate) mod tests {
                 offset,
                 offset,
                 TrackId::new(1),
+                EventProvenance::default(),
                 &mut events,
             )
             .expect("emit");
