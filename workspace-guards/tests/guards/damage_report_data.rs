@@ -74,6 +74,15 @@ pub const READERS: &[Reader] = &[
         status: Status::Converted,
         reports: &["SrtEvent"],
     },
+    // Lane dm3 did NOT reach this one: its chunk-stream, AMF0 and FLV skips
+    // still report nothing, so `broadcast-client`'s RTMP source publishes no
+    // damage report yet. Listed so the gap is visible and the guard enforces
+    // it the moment it is converted.
+    Reader {
+        name: "rtmp-runtime",
+        status: Status::Pending(4191),
+        reports: &[],
+    },
     // Pending: #4191 converts the remaining readers to the one report.
     Reader {
         name: "isobmff",
