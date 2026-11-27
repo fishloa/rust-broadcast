@@ -15,9 +15,9 @@ use broadcast_core::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
 
+use broadcast_bitstream::aac_asc::AudioSpecificConfig;
 use broadcast_bitstream::rfc6381::rfc6381_avc1;
 use broadcast_core::Parse;
-use transmux::aac_asc::AudioSpecificConfig;
 use transmux::dash::{DashPackager, MPD_NAMESPACE};
 use transmux::pipeline::CodecConfig;
 
@@ -102,7 +102,7 @@ fn expected_audio(media: &test_harness::collect::Collected) -> (String, u32) {
                 .and_then(|dc| dc.decoder_specific_info.as_ref())
                 .expect("ASC in esds");
             let asc = AudioSpecificConfig::parse(&dsi.data).expect("parse ASC");
-            let rate = asc.sampling_frequency.unwrap_or(*sample_rate);
+            let rate = asc.sampling_frequency().unwrap_or(*sample_rate);
             (asc.rfc6381(), rate)
         }
         _ => unreachable!(),

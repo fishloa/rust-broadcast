@@ -20,11 +20,11 @@
 //! See `private/specs-verified/mpeg/transmux/rtp/rtp-payload-formats.md`
 //! for the RFC background and SDP fmtp→CodecConfig mapping specification.
 
-use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
 use crate::pipeline::CodecConfig;
 use crate::rtp::{base64_decode, hex_decode};
 use alloc::vec::Vec;
+use broadcast_bitstream::aac_asc::AudioSpecificConfig;
 use broadcast_bitstream::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use broadcast_core::Parse;
 use broadcast_core::error::InvalidValue;
@@ -44,14 +44,14 @@ const AAC_SAMPLE_SIZE_BITS: u16 = 16;
 /// crate's single copy of that table
 /// ([`SamplingFrequencyIndex::table_hz`], in `aac_asc`), never re-listed here.
 fn asc_sample_rate(asc: &AudioSpecificConfig) -> Result<u32> {
-    if let Some(freq) = asc.sampling_frequency {
+    if let Some(freq) = asc.sampling_frequency() {
         return Ok(freq);
     }
-    asc.sampling_frequency_index
+    asc.sampling_frequency_index()
         .table_hz()
         .ok_or(Error::InvalidValue(InvalidValue {
             field: "sampling_frequency_index",
-            value: u64::from(asc.sampling_frequency_index.raw()),
+            value: u64::from(asc.sampling_frequency_index().raw()),
             reason: "no frequency for index",
         }))
 }
@@ -84,7 +84,7 @@ pub fn aac_config_from_asc_hex(config_hex: &str) -> Result<CodecConfig> {
 pub fn aac_config_from_asc_bytes(asc_bytes: Vec<u8>) -> Result<CodecConfig> {
     let asc = AudioSpecificConfig::parse(&asc_bytes)?;
     let sample_rate = asc_sample_rate(&asc)?;
-    let channel_count = crate::aac_asc::aac_channel_count(&asc);
+    let channel_count = broadcast_bitstream::aac_asc::aac_channel_count(&asc);
 
     let esds = EsdsBox::new(ESDescriptor::new(
         0,
@@ -355,7 +355,7 @@ mod tests {
             match cfg {
                 CodecConfig::Aac { channel_count, .. } => assert_eq!(
                     channel_count,
-                    crate::aac_asc::AAC_CHANNEL_COUNT_UNKNOWN,
+                    broadcast_bitstream::aac_asc::AAC_CHANNEL_COUNT_UNKNOWN,
                     "ASC {asc_hex}: an undetermined channel count is marked, not fabricated"
                 ),
                 other => panic!("expected AAC, got {other:?}"),

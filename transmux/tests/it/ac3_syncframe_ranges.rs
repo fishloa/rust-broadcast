@@ -2,7 +2,9 @@
 //! (`fixtures/ps/ffmpeg-ac3-dts.a0.ac3`): contiguous ranges when clean, and, in
 //! resync mode, ranges that are NOT contiguous from offset 0 after junk or damage.
 
-use transmux::ac3_syncframe::{split_ac3_syncframe_ranges, split_ac3_syncframes_resyncing};
+use broadcast_bitstream::ac3_syncframe::{
+    split_ac3_syncframe_ranges, split_ac3_syncframes_resyncing,
+};
 
 const SYNCWORD: [u8; 2] = [0x0B, 0x77];
 

@@ -51,13 +51,13 @@ use broadcast_common::{Demand, Stage, Timestamp};
 use broadcast_core::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
 use broadcast_core::{Parse, Serialize};
 
-use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
 use crate::ir::{Sample, TrackSpec};
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
 use crate::pipeline::CodecConfig;
 use crate::segment_log::{SegmentSummaryLog, TrackSummary};
 use crate::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
+use broadcast_bitstream::aac_asc::AudioSpecificConfig;
 use broadcast_core::wire::{be_u32, be_u64};
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex};
 use isobmff::box_types::{

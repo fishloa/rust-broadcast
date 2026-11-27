@@ -8,7 +8,7 @@
 //! and `bsmod` 0b101, which makes any desynchronisation visible.
 
 use crate::bit_writer::BitWriter;
-use transmux::Ec3SyncframeInfo;
+use broadcast_bitstream::Ec3SyncframeInfo;
 
 const SYNCWORD: u64 = 0x0B77;
 const BSID: u64 = 16;
@@ -53,8 +53,8 @@ fn assert_walk(
 ) {
     let es = frame(strmtyp, acmod, lfeon, numblkscod, tail);
     let info = Ec3SyncframeInfo::from_es(&es).unwrap_or_else(|e| panic!("{label}: {e}"));
-    assert_eq!(info.acmod, acmod, "{label}");
-    assert_eq!(info.bsmod, BSMS, "{label}: the walk desynchronised");
+    assert_eq!(info.acmod(), acmod, "{label}");
+    assert_eq!(info.bsmod(), BSMS, "{label}: the walk desynchronised");
 }
 
 /// 1+1 mode carries `dialnorm2` and an optional `compr2`; skipping the latter
@@ -272,7 +272,7 @@ fn a_dependent_frame_reports_its_chanmap() {
         w.u(1, 0); // mixmdate
     });
     let info = Ec3SyncframeInfo::from_es(&es).unwrap();
-    assert_eq!(info.strmtyp, 1);
-    assert_eq!(info.chanmap, Some(0x1A00));
-    assert_eq!(info.bsmod, BSMS);
+    assert_eq!(info.strmtyp(), 1);
+    assert_eq!(info.chanmap(), Some(0x1A00));
+    assert_eq!(info.bsmod(), BSMS);
 }

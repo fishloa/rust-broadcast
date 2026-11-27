@@ -15,12 +15,12 @@
 //! this stream (an AC-3 syncframe was not an independent substream), so the TS
 //! demux produced no track.
 
+use broadcast_bitstream::ac3_syncframe::{
+    Ec3SyncframeInfo, ec3_specific_box_from_syncframes, split_eac3_syncframes,
+};
 use broadcast_core::Serialize;
 use isobmff::Ec3SpecificBox;
 use test_harness::collect::Collected as Media;
-use transmux::ac3_syncframe::{
-    Ec3SyncframeInfo, ec3_specific_box_from_syncframes, split_eac3_syncframes,
-};
 use transmux::pipeline::CodecConfig;
 use transmux::{DemuxEvent, StreamingTsDemux};
 
@@ -86,17 +86,17 @@ fn the_real_stream_splits_into_ac3_core_plus_dependent_access_units() {
     assert_eq!(units.len(), AU_COUNT);
     let mut rebuilt = Vec::new();
     for u in &units {
-        assert_eq!(u.data.len(), AU_LEN);
-        let frames = Ec3SyncframeInfo::from_es_all(&u.data);
+        assert_eq!(u.data().len(), AU_LEN);
+        let frames = Ec3SyncframeInfo::from_es_all(u.data());
         assert_eq!(frames.len(), 2, "core + dependent");
         let (core, dep) = (&frames[0], &frames[1]);
-        assert_eq!((core.strmtyp, core.substreamid, core.bsid), (0, 0, 6));
-        assert_eq!(core.frmsiz as usize + 1, AC3_CORE_LEN / 2);
+        assert_eq!((core.strmtyp(), core.substreamid(), core.bsid()), (0, 0, 6));
+        assert_eq!(core.frmsiz() as usize + 1, AC3_CORE_LEN / 2);
         assert_eq!(core.samples_per_frame(), SAMPLES_PER_AU);
-        assert_eq!((dep.strmtyp, dep.substreamid, dep.bsid), (1, 0, 16));
+        assert_eq!((dep.strmtyp(), dep.substreamid(), dep.bsid()), (1, 0, 16));
         // chanmap bits (Table E.1.4, bit 0 = MSB): Ls, Rs and Lrs/Rrs.
-        assert_eq!(dep.chanmap, Some(0x1A00));
-        rebuilt.extend_from_slice(&u.data);
+        assert_eq!(dep.chanmap(), Some(0x1A00));
+        rebuilt.extend_from_slice(u.data());
     }
     assert_eq!(
         rebuilt, es,
@@ -124,12 +124,12 @@ fn access_units_equal_gpacs_own_samples_of_mp4boxs_file() {
         };
         assert_eq!(
             field("size").parse::<usize>().unwrap(),
-            u.data.len(),
+            u.data().len(),
             "AU {i}"
         );
         assert_eq!(
             u32::from_str_radix(field("crc32").trim_start_matches("0x"), 16).unwrap(),
-            broadcast_common::crc32_mpeg2::compute(&u.data),
+            broadcast_common::crc32_mpeg2::compute(u.data()),
             "AU {i} bytes"
         );
         assert_eq!(
@@ -146,7 +146,7 @@ fn dec3_for_the_real_access_unit_matches_mp4box() {
     let mp4box = need!("gw-mp4box.mp4");
     let ffmpeg = need!("gw-ffmpeg.mp4");
     let first = split_eac3_syncframes(&es).remove(0);
-    let frames = Ec3SyncframeInfo::from_es_all(&first.data);
+    let frames = Ec3SyncframeInfo::from_es_all(first.data());
     let ours = ec3_specific_box_from_syncframes(&frames)
         .expect("dec3")
         .try_to_bytes()
@@ -177,7 +177,7 @@ fn assert_ts_recovers_the_stream(name: &str) {
     let es = es().expect("es");
     let want: Vec<Vec<u8>> = split_eac3_syncframes(&es)
         .into_iter()
-        .map(|u| u.data)
+        .map(|u| u.data().to_vec())
         .collect();
 
     let media =
@@ -251,7 +251,7 @@ fn mp4s_from_both_producers_demux_and_remux_unchanged() {
     let es = need!("the-great-wall-7.1.eac3");
     let want: Vec<Vec<u8>> = split_eac3_syncframes(&es)
         .into_iter()
-        .map(|u| u.data)
+        .map(|u| u.data().to_vec())
         .collect();
     for name in ["gw-mp4box.mp4", "gw-ffmpeg.mp4"] {
         let bytes = need!(name);
@@ -289,9 +289,9 @@ fn a_real_orphan_dependent_frame_is_dropped() {
     // "lost". The orphan must not become an access unit of its own.
     let units = split_eac3_syncframes(&es[AC3_CORE_LEN..]);
     assert_eq!(units.len(), AU_COUNT - 1);
-    assert_eq!(units[0].data, es[AU_LEN..2 * AU_LEN]);
+    assert_eq!(units[0].data(), &es[AU_LEN..2 * AU_LEN]);
     assert_eq!(
-        units[0].data[5] >> 3,
+        units[0].data()[5] >> 3,
         6,
         "starts on the next AC-3 core frame"
     );

@@ -243,24 +243,24 @@ use mpeg_ts::ts::{
     ContinuityCounter, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsPacket,
 };
 
-use crate::aac_asc::{
-    ADTS_BLOCK_POSITION_SIZE, ADTS_CRC_SIZE, ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig,
-    SamplingFrequencyIndex, adts_header_len, parse_adts_header,
-};
-use crate::ac3_syncframe::{
-    AC3_SAMPLES_PER_SYNCFRAME, AC3_SYNCWORD, Ac3SyncframeInfo, EAC3_STRMTYP_DEPENDENT,
-    Ec3SyncframeInfo, ec3_specific_box_from_syncframes,
-};
-use crate::dts_core::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
-use crate::error::{Error, Result};
-use crate::mhas::find_mpegh3da_config;
+use crate::error::Result;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
 use crate::nal_params::{ParamKind, parameter_set_is_valid};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
 use broadcast_bitstream::HdrStaticMetadata;
+use broadcast_bitstream::aac_asc::{
+    ADTS_BLOCK_POSITION_SIZE, ADTS_CRC_SIZE, ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig,
+    SamplingFrequencyIndex, adts_header_len, parse_adts_header,
+};
+use broadcast_bitstream::ac3_syncframe::{
+    AC3_SAMPLES_PER_SYNCFRAME, AC3_SYNCWORD, Ac3SyncframeInfo, EAC3_STRMTYP_DEPENDENT,
+    Ec3SyncframeInfo, ec3_specific_box_from_syncframes,
+};
 use broadcast_bitstream::annexb::{
     NAL_LENGTH_SIZE_MINUS_ONE, annexb_to_length_prefixed, iter_annexb_nals,
 };
+use broadcast_bitstream::dts_core::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
+use broadcast_bitstream::mhas::find_mpegh3da_config;
 use broadcast_bitstream::nal::HEVC_PREFIX_SEI_NUT;
 use broadcast_bitstream::nal::{
     AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, access_unit_is_rap, is_keyframe_nal,
@@ -956,7 +956,7 @@ impl FrameSync for AdtsSync {
             return SyncParse::NeedMore;
         }
         match parse_adts_header(data) {
-            Ok(hdr) => SyncParse::Frame(hdr, hdr.frame_length as usize),
+            Ok(hdr) => SyncParse::Frame(hdr, hdr.frame_length() as usize),
             Err(_) => SyncParse::NotSync,
         }
     }
@@ -973,13 +973,16 @@ impl FrameSync for AdtsSync {
 
 /// Map a header-parse result to a [`SyncParse`]: running out of bytes is
 /// "need more", any other error is "not a frame".
-fn sync_from_parse<H>(r: Result<H>, frame_len: impl FnOnce(&H) -> Option<usize>) -> SyncParse<H> {
+fn sync_from_parse<H>(
+    r: core::result::Result<H, broadcast_bitstream::Error>,
+    frame_len: impl FnOnce(&H) -> Option<usize>,
+) -> SyncParse<H> {
     match r {
         Ok(h) => match frame_len(&h) {
             Some(len) if len != 0 => SyncParse::Frame(h, len),
             _ => SyncParse::NotSync,
         },
-        Err(Error::BufferTooShort(..)) => SyncParse::NeedMore,
+        Err(broadcast_bitstream::Error::BufferTooShort(..)) => SyncParse::NeedMore,
         Err(_) => SyncParse::NotSync,
     }
 }
@@ -1030,14 +1033,14 @@ impl FrameSync for Eac3Sync {
         }
         // `frmsiz` = "number of 16-bit words in the syncframe, minus 1".
         sync_from_parse(Ec3SyncframeInfo::parse_at(data, 0), |i| {
-            Some((i.frmsiz as usize + 1) * core::mem::size_of::<u16>())
+            Some((i.frmsiz() as usize + 1) * core::mem::size_of::<u16>())
         })
     }
     fn is_partial_sync(prefix: &[u8]) -> bool {
         is_sync_prefix(prefix, &AC3_SYNC_BYTES)
     }
     fn folds_into_previous(hdr: &Self::Hdr) -> bool {
-        hdr.strmtyp == EAC3_STRMTYP_DEPENDENT
+        hdr.strmtyp() == EAC3_STRMTYP_DEPENDENT
     }
     /// `strmtyp` is the top two bits of the byte after the syncword (ETSI TS
     /// 102 366 §E.1.2.2). Until that byte has arrived the type is unknown and
@@ -1076,7 +1079,9 @@ impl FrameSync for DtsSync {
         if n < DTS_SYNC_BYTES.len() {
             return SyncParse::NeedMore;
         }
-        sync_from_parse(DtsCoreFrameInfo::parse_at(data, 0), |i| Some(i.frame_size))
+        sync_from_parse(DtsCoreFrameInfo::parse_at(data, 0), |i| {
+            Some(i.frame_size())
+        })
     }
     fn is_partial_sync(prefix: &[u8]) -> bool {
         is_sync_prefix(prefix, &DTS_SYNC_BYTES)
@@ -1200,9 +1205,9 @@ fn adts_frame_payload<'a>(
     if frame.len() <= header_len {
         return None;
     }
-    let n = hdr.num_raw_data_blocks as usize;
+    let n = hdr.num_raw_data_blocks() as usize;
     let plain = &frame[header_len..];
-    if hdr.protection_absent || n == 0 {
+    if hdr.protection_absent() || n == 0 {
         return Some(plain.into());
     }
     let positions = &frame[ADTS_HEADER_SIZE..ADTS_HEADER_SIZE + ADTS_BLOCK_POSITION_SIZE * n];
@@ -1322,11 +1327,11 @@ enum ConfigProbe {
     Ac3,
     Eac3,
     /// DTS core substream (issue #560): resolves from the first frame whose
-    /// header parses — see [`crate::dts_core::DtsCoreFrameInfo`].
+    /// header parses — see [`broadcast_bitstream::dts_core::DtsCoreFrameInfo`].
     Dts,
     /// MPEG-H 3D Audio (issue #579): resolves from the first access unit
     /// whose MHAS packets contain a `PACTYP_MPEGH3DACFG` — see
-    /// [`crate::mhas::find_mpegh3da_config`].
+    /// [`broadcast_bitstream::mhas::find_mpegh3da_config`].
     MpegH,
     /// Opaque PES data (#557): the config (`stream_type` + descriptors) is
     /// already fully known from the PMT, so this probe finalizes on the very
@@ -2443,7 +2448,7 @@ fn plan_audio_frames<'a>(
         AudioKind::Aac => Some(plan_with::<AdtsSync>(data, carry_len, |h| {
             (
                 adts_header_len(h),
-                AAC_SAMPLES_PER_FRAME * (h.num_raw_data_blocks as u32 + 1),
+                AAC_SAMPLES_PER_FRAME * (h.num_raw_data_blocks() as u32 + 1),
             )
         })),
         AudioKind::MpegAudio { samples_per_frame } => {
@@ -2459,7 +2464,7 @@ fn plan_audio_frames<'a>(
             (0, h.samples_per_frame())
         })),
         AudioKind::Dts => Some(plan_with::<DtsSync>(data, carry_len, |h| {
-            (0, h.samples_per_frame)
+            (0, h.samples_per_frame())
         })),
     }
 }
@@ -3662,7 +3667,7 @@ fn finalize_probe(
             let (_, first_hdr) = find_adts_sync(latest)?;
             let asc = AudioSpecificConfig::from_adts_header(&first_hdr);
             let sample_rate =
-                SamplingFrequencyIndex::from(first_hdr.sampling_frequency_index).table_hz()?;
+                SamplingFrequencyIndex::from(first_hdr.sampling_frequency_index()).table_hz()?;
             // ISO/IEC 14496-3 Table 1.19: `channel_configuration` is a
             // configuration *index*, not a count — 7 means eight channels
             // (7.1), and 0 means the mapping is carried in-band by a
@@ -3670,7 +3675,7 @@ fn finalize_probe(
             // derivable from the header at all. Using the raw field as the
             // count reported 7.1 as 7 channels and a PCE-signalled stream as
             // zero (r04-W51, extending W16).
-            let channel_count = crate::aac_asc::aac_channel_count(&asc);
+            let channel_count = broadcast_bitstream::aac_asc::aac_channel_count(&asc);
             let esds = EsdsBox::new(ESDescriptor::new(
                 ESDS_ES_ID,
                 0,
@@ -3719,7 +3724,7 @@ fn finalize_probe(
         ConfigProbe::Ac3 => {
             let start = first_sync_offset::<Ac3Sync>(latest)?;
             let info = Ac3SyncframeInfo::from_es(&latest[start..]).ok()?;
-            let sample_rate = info.sample_rate;
+            let sample_rate = info.sample_rate();
             let timescale = Timescale::try_new(sample_rate).ok()?;
             let channel_count = info.channel_count() as u16;
             let config = info.into_dac3();
@@ -3741,9 +3746,9 @@ fn finalize_probe(
         ConfigProbe::Eac3 => eac3_probe_result(latest, Eac3Accept::ChainVerified),
         ConfigProbe::Dts => {
             let info = DtsCoreFrameInfo::from_es(latest).ok()?;
-            let sample_rate = info.sample_rate;
+            let sample_rate = info.sample_rate();
             let timescale = Timescale::try_new(sample_rate).ok()?;
-            let channel_count = info.channels as u16;
+            let channel_count = info.channels() as u16;
             let config = info.into_ddts();
             Some((
                 CodecConfig::Dts {
@@ -4263,7 +4268,7 @@ fn audio_probe_next_tail(codec: Codec, tail: &[u8], latest: &[u8]) -> Vec<u8> {
 /// [`EAC3_PROBE_TAIL_MAX`] (a frame not complete by then never will be).
 fn eac3_probe_tail(all: &[u8]) -> Vec<u8> {
     let start = (0..all.len()).find(|&at| match Eac3Sync::parse(&all[at..]) {
-        SyncParse::Frame(hdr, _) => hdr.strmtyp != EAC3_STRMTYP_DEPENDENT,
+        SyncParse::Frame(hdr, _) => hdr.strmtyp() != EAC3_STRMTYP_DEPENDENT,
         SyncParse::NeedMore => Eac3Sync::is_partial_sync(&all[at..]),
         SyncParse::NotSync => false,
     });
@@ -4286,11 +4291,11 @@ fn first_eac3_independent_offset(data: &[u8], crc: bool) -> Option<usize> {
     (0..data.len()).find(|&at| match Eac3Sync::parse(&data[at..]) {
         SyncParse::Frame(hdr, len) => {
             len >= Eac3Sync::MIN_FRAME_LEN
-                && hdr.strmtyp != EAC3_STRMTYP_DEPENDENT
+                && hdr.strmtyp() != EAC3_STRMTYP_DEPENDENT
                 && (!crc
                     || data
                         .get(at..at + len)
-                        .is_some_and(crate::ac3_syncframe::eac3_frame_crc_ok))
+                        .is_some_and(broadcast_bitstream::ac3_syncframe::eac3_frame_crc_ok))
         }
         _ => false,
     })
@@ -4355,16 +4360,16 @@ fn eac3_probe_result(
     };
     for f in frames
         .iter_mut()
-        .filter(|f| f.strmtyp != EAC3_STRMTYP_DEPENDENT)
+        .filter(|f| f.strmtyp() != EAC3_STRMTYP_DEPENDENT)
     {
         if let Some(bsmod) =
-            Ec3SyncframeInfo::first_crc_verified_bsmod(&latest[start..], f.substreamid)
+            Ec3SyncframeInfo::first_crc_verified_bsmod(&latest[start..], f.substreamid())
         {
-            f.bsmod = bsmod;
+            *f = f.with_bsmod(bsmod);
         }
     }
     let info = *frames.first()?;
-    let sample_rate = info.sample_rate;
+    let sample_rate = info.sample_rate();
     let timescale = Timescale::try_new(sample_rate).ok()?;
     let channel_count = info.channel_count() as u16;
     let config = ec3_specific_box_from_syncframes(&frames).ok()?;
@@ -6732,7 +6737,7 @@ impl Stage for StreamingTsDemux {
     type Out = DemuxEvent;
     /// Malformed TS never errors (it resynchronises on `0x47` and skips what it
     /// cannot parse); the one error `feed`/`finish` can report is a sample
-    /// whose timing cannot be represented ([`Error::InvalidInput`] on a PTS
+    /// whose timing cannot be represented (`Error::InvalidInput` on a PTS
     /// with no DTS), carried out instead of a fabricated value.
     type Error = crate::Error;
 
@@ -7860,7 +7865,7 @@ pub(crate) mod tests {
     /// first. Unfixed (the first header-valid frame was used) this is 5.
     #[test]
     fn eac3_probe_skips_a_damaged_frame_in_front_of_an_intact_one() {
-        use crate::ac3_syncframe::tests::{damaged_for_tests, eac3_bsi};
+        use test_harness::ac3::{damaged_for_tests, eac3_bsi};
         let bad = damaged_for_tests(eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(5)));
         let good = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(0));
         let pes = [bad, good.clone(), good].concat();
@@ -7874,7 +7879,7 @@ pub(crate) mod tests {
     /// is 0, the value `m6-single`'s second track wrongly had before #1315.
     #[test]
     fn eac3_bsmod_comes_from_the_first_intact_frame_that_carries_it() {
-        use crate::ac3_syncframe::tests::eac3_bsi;
+        use test_harness::ac3::eac3_bsi;
         let none = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, None);
         let two = eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(2));
         let pes = [none.clone(), two, none].concat();
@@ -7886,7 +7891,7 @@ pub(crate) mod tests {
     /// header-valid frame rather than never, as in #1315.
     #[test]
     fn eac3_probe_with_no_intact_frame_still_announces_the_track() {
-        use crate::ac3_syncframe::tests::{damaged_for_tests, eac3_bsi};
+        use test_harness::ac3::{damaged_for_tests, eac3_bsi};
         let bad = damaged_for_tests(eac3_bsi(0, 0, 63, 2, false, 0, 3, None, Some(2)));
         let pes = [bad.clone(), bad].concat();
         assert_eq!(live_eac3_bsmod(&eac3_pes_ts(&[pes.clone(), pes])), Some(2));
@@ -7900,13 +7905,13 @@ pub(crate) mod tests {
     /// it must still be waiting.
     #[test]
     fn eac3_probe_that_never_completes_resolves_after_the_bound() {
-        use crate::ac3_syncframe::Ec3SyncframeInfo;
-        use crate::ac3_syncframe::tests::seven_one_eac3_es;
+        use broadcast_bitstream::ac3_syncframe::Ec3SyncframeInfo;
+        use test_harness::ac3::seven_one_eac3_es;
 
         let au = seven_one_eac3_es();
         let frames = Ec3SyncframeInfo::from_es_all(&au);
         assert_eq!(frames.len(), 2, "independent + dependent");
-        let dep_at = (frames[0].frmsiz as usize + 1) * 2;
+        let dep_at = (frames[0].frmsiz() as usize + 1) * 2;
         let dep_only = au[dep_at..].to_vec();
         let build = |pes_count: usize| {
             let mut v = alloc::vec![au.clone()];
@@ -7929,7 +7934,7 @@ pub(crate) mod tests {
     /// #1186) is still waited on.
     #[test]
     fn eac3_probe_on_lossy_capture_settles_for_a_broken_chain() {
-        use crate::ac3_syncframe::tests::seven_one_eac3_es;
+        use test_harness::ac3::seven_one_eac3_es;
 
         let clean = seven_one_eac3_es();
         let mut lossy = clean.clone();
@@ -8388,7 +8393,7 @@ pub(crate) mod tests {
     /// #1186) must emit that whole access unit before `TrackRemoved`.
     #[test]
     fn removing_an_eac3_track_flushes_the_held_final_access_unit() {
-        let au = crate::ac3_syncframe::tests::seven_one_eac3_es();
+        let au = test_harness::ac3::seven_one_eac3_es();
         let k = 6usize;
         let mut ts = eac3_pes_ts(&vec![au; k]);
         // PMT version 1 declaring nothing: the track is removed. The first PMT
@@ -8464,10 +8469,10 @@ pub(crate) mod tests {
     /// begins a later PES joins its access unit instead of being orphaned.
     #[test]
     fn observed_dependent_substream_enables_the_hold_back() {
-        let au = crate::ac3_syncframe::tests::seven_one_eac3_es();
+        let au = test_harness::ac3::seven_one_eac3_es();
         let ind_len = {
             let f = Ec3SyncframeInfo::from_es_all(&au);
-            (f[0].frmsiz as usize + 1) * 2
+            (f[0].frmsiz() as usize + 1) * 2
         };
         let (ind, dep) = (au[..ind_len].to_vec(), au[ind_len..].to_vec());
         let mut lossy = ind.clone();
@@ -8672,7 +8677,7 @@ pub(crate) mod tests {
                     .and_then(|dc| dc.decoder_specific_info.as_ref())
                     .expect("AAC esds carries a DecoderSpecificInfo");
                 let asc = AudioSpecificConfig::parse(&dsi.data).expect("parse ASC");
-                (asc.sampling_frequency_index.raw(), *channel_count)
+                (asc.sampling_frequency_index().raw(), *channel_count)
             }
             _ => unreachable!(),
         };
@@ -8708,7 +8713,8 @@ pub(crate) mod tests {
         // Whole frames per PES payload, as a real muxer packs them.
         for sample in &audio.samples {
             let frame_len = (ADTS_HEADER_SIZE + sample.data.len()) as u16;
-            let hdr = crate::aac_asc::build_adts_header(1, sfi, CONFIG_REBUILT, frame_len);
+            let hdr =
+                broadcast_bitstream::aac_asc::build_adts_header(1, sfi, CONFIG_REBUILT, frame_len);
             if buf.len() + frame_len as usize > PES_PAYLOAD_BYTES {
                 flush(&mut buf, &mut cc, &mut input);
             }
@@ -8745,7 +8751,7 @@ pub(crate) mod tests {
     /// pre-fix shape re-probed every earlier access unit on every push.
     #[test]
     fn probe_sync_scan_work_is_linear_in_the_input_not_quadratic() {
-        use crate::aac_asc::build_adts_header;
+        use broadcast_bitstream::aac_asc::build_adts_header;
 
         /// `sampling_frequency_index` 13 (reserved) -- `sfi_to_hz` returns
         /// `None`, so the AAC probe can never finalize.
@@ -10468,7 +10474,7 @@ pub(crate) mod tests {
 
         for (config, expected) in [(CONFIG_7_1, 8u16), (CONFIG_IN_BAND, 0u16)] {
             let frame_len = (ADTS_HEADER_SIZE + 64) as u16;
-            let mut au = crate::aac_asc::build_adts_header(
+            let mut au = broadcast_bitstream::aac_asc::build_adts_header(
                 ADTS_PROFILE_AAC_LC,
                 SFI_48000,
                 config,
@@ -11391,7 +11397,7 @@ pub(crate) mod tests {
         const PAYLOAD_BYTES: usize = 128;
 
         let frame_len = (ADTS_HEADER_SIZE + PAYLOAD_BYTES) as u16;
-        let header = crate::aac_asc::build_adts_header(
+        let header = broadcast_bitstream::aac_asc::build_adts_header(
             ADTS_PROFILE_AAC_LC,
             SFI_44100,
             CHANNELS_STEREO,
@@ -13056,7 +13062,7 @@ pub(crate) mod tests {
         const CHANNELS_STEREO: u8 = 2;
         let body = 100 + (n * 37) % 200;
         let len = ADTS_HEADER_SIZE + body;
-        let mut f = crate::aac_asc::build_adts_header(
+        let mut f = broadcast_bitstream::aac_asc::build_adts_header(
             PROFILE_AAC_LC,
             SFI_48000,
             CHANNELS_STEREO,
@@ -13065,7 +13071,7 @@ pub(crate) mod tests {
         .to_vec();
         f.extend_from_slice(&body_bytes(n, body));
         assert_eq!(
-            parse_adts_header(&f).expect("ADTS").frame_length as usize,
+            parse_adts_header(&f).expect("ADTS").frame_length() as usize,
             len
         );
         f
@@ -13526,7 +13532,7 @@ pub(crate) mod tests {
         f.extend_from_slice(&body_bytes(n, 128 - hdr));
         assert_eq!(f.len(), 128);
         let info = Ec3SyncframeInfo::parse_at(&f, 0).unwrap();
-        assert_eq!((info.frmsiz as usize + 1) * 2, 128);
+        assert_eq!((info.frmsiz() as usize + 1) * 2, 128);
         assert_eq!(info.samples_per_frame(), 1536);
         f
     }
@@ -13568,7 +13574,11 @@ pub(crate) mod tests {
         assert_eq!(f.len(), 512);
         let info = DtsCoreFrameInfo::parse_at(&f, 0).unwrap();
         assert_eq!(
-            (info.frame_size, info.samples_per_frame, info.sample_rate),
+            (
+                info.frame_size(),
+                info.samples_per_frame(),
+                info.sample_rate()
+            ),
             (512, 512, 48_000)
         );
         f
@@ -13667,9 +13677,9 @@ pub(crate) mod tests {
         assert_eq!(h.len(), len);
         // Every real frame carries a valid `crc2` (§E.2.2), and the probe
         // chooses frames by it.
-        crate::ac3_syncframe::tests::stamp_crc2(&mut h);
+        test_harness::ac3::stamp_crc2(&mut h);
         let info = Ec3SyncframeInfo::parse_at(&h, 0).unwrap();
-        assert_eq!(info.strmtyp, EAC3_STRMTYP_DEPENDENT);
+        assert_eq!(info.strmtyp(), EAC3_STRMTYP_DEPENDENT);
         h
     }
 
@@ -13925,7 +13935,7 @@ pub(crate) mod tests {
         // (label, stream type, valid warm-up frames, header claiming the
         // maximum frame, claimed length)
         let adts_max = {
-            let mut h = crate::aac_asc::build_adts_header(1, 3, 2, 8191).to_vec();
+            let mut h = broadcast_bitstream::aac_asc::build_adts_header(1, 3, 2, 8191).to_vec();
             h.extend_from_slice(&body_bytes(7, 40));
             h
         };
@@ -15898,7 +15908,7 @@ pub(crate) mod tests {
         );
 
         let mut good = eac3_frame(0);
-        crate::ac3_syncframe::tests::stamp_crc2(&mut good);
+        test_harness::ac3::stamp_crc2(&mut good);
         let mut bad = good.clone();
         let at = bad.len() - 10;
         bad[at] ^= 0xFF;
@@ -16957,7 +16967,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_split_eac3_header_resolves_from_the_joined_window() {
-        let au = crate::ac3_syncframe::tests::seven_one_eac3_es();
+        let au = test_harness::ac3::seven_one_eac3_es();
         let mut demux = StreamingTsDemux::new();
         demux
             .feed(&eac3_pes_ts(&[
@@ -17000,7 +17010,8 @@ pub(crate) mod tests {
         let descriptors = descriptor.try_to_bytes().expect("descriptor");
         let body = alloc::vec![0x11u8; 100];
         let len = ADTS_HEADER_SIZE + body.len();
-        let mut frame = crate::aac_asc::build_adts_header(1, 7, 2, len as u16).to_vec();
+        let mut frame =
+            broadcast_bitstream::aac_asc::build_adts_header(1, 7, 2, len as u16).to_vec();
         frame.extend_from_slice(&body);
         let mut probe = ConfigProbe::Aac;
         let (config, _, kind) =

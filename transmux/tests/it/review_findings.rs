@@ -3,7 +3,7 @@
 //! feature. See the PR description for the finding list.
 
 use crate::ts_psi::pid_of;
-use transmux::ac3_syncframe::split_eac3_syncframes;
+use broadcast_bitstream::ac3_syncframe::split_eac3_syncframes;
 use transmux::pipeline::CodecConfig;
 use transmux::{DemuxEvent, StreamingTsDemux};
 
@@ -36,7 +36,7 @@ fn eac3_cc_gap_in_next_pes_drops_the_held_intact_access_unit() {
     };
     let aus: Vec<Vec<u8>> = split_eac3_syncframes(&es)
         .into_iter()
-        .map(|u| u.data)
+        .map(|u| u.data().to_vec())
         .collect();
     assert_eq!(aus.len(), 157);
 

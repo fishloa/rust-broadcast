@@ -5,8 +5,12 @@
 //! strings and reading their SPS-derived geometry needs this crate's bitstream
 //! parsers. [`avc_config_from_sps_pps`] is the value-level building block an
 //! SDP `sprop-parameter-sets` interpreter, or any caller holding parameter-set
-//! NAL units, uses to produce the record.
+//! NAL units, uses to produce the record. [`EsdsBoxCodecInfo`] is the audio
+//! counterpart (`aac` feature): it parses the `AudioSpecificConfig` a `esds`
+//! box's `DecoderSpecificInfo` carries.
 
+#[cfg(feature = "aac")]
+use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
 use crate::error::{Error, Result};
 #[cfg(feature = "hevc")]
@@ -16,9 +20,11 @@ use crate::rfc6381::rfc6381_vvc1;
 #[cfg(feature = "hevc")]
 use crate::sps::HevcSpsInfo;
 use crate::sps::decode_avc_sps;
-#[cfg(any(feature = "hevc", feature = "vvc"))]
+#[cfg(any(feature = "aac", feature = "hevc", feature = "vvc"))]
 use alloc::string::String;
 use alloc::vec::Vec;
+#[cfg(feature = "aac")]
+use broadcast_core::Parse;
 use broadcast_core::len::need_in;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 #[cfg(feature = "hevc")]
@@ -107,6 +113,20 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
         sps_ext: Vec::new(),
     };
     Ok(AVCConfigurationBox::new(record))
+}
+
+/// AudioSpecificConfig lookup for an `esds` box.
+#[cfg(feature = "aac")]
+pub trait EsdsBoxCodecInfo {
+    /// Parse the `AudioSpecificConfig` carried in the `DecoderSpecificInfo`.
+    fn audio_specific_config(&self) -> Result<AudioSpecificConfig>;
+}
+
+#[cfg(feature = "aac")]
+impl EsdsBoxCodecInfo for isobmff::mp4esds::EsdsBox {
+    fn audio_specific_config(&self) -> Result<AudioSpecificConfig> {
+        AudioSpecificConfig::parse(self.require_decoder_specific_info()?)
+    }
 }
 
 /// RFC 6381 codec string for an `hvcC` record.
@@ -234,6 +254,30 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
             matches!(err, Error::BufferTooShort(..) | Error::InvalidValue(..)),
             "must be a structured decode error, got {err:?}"
         );
+    }
+
+    #[cfg(feature = "aac")]
+    #[test]
+    fn esds_audio_specific_config_reads_the_decoder_specific_info() {
+        use alloc::vec;
+        use isobmff::mp4esds::EsdsBox;
+
+        let esds = EsdsBox::new(isobmff::mp4esds::ESDescriptor::new(
+            1,
+            0,
+            Some(isobmff::mp4esds::DecoderConfigDescriptor::new(
+                0x40,
+                5,
+                false,
+                0,
+                0,
+                0,
+                Some(isobmff::mp4esds::DecoderSpecificInfo::new(vec![0x12, 0x10])),
+            )),
+            Some(isobmff::mp4esds::SLConfigDescriptor::predefined_two()),
+        ));
+        assert_eq!(esds.decoder_specific_info_data(), Some(&[0x12u8, 0x10][..]));
+        assert!(esds.audio_specific_config().is_ok());
     }
 
     #[test]

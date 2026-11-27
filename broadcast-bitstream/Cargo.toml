@@ -2,7 +2,7 @@
 name         = "broadcast-bitstream"
 version      = "0.1.0"
 edition      = "2024"
-description  = "Codec bitstream parsers for rust-broadcast: the exp-Golomb/RBSP bit reader, NAL unit classification, Annex B and length-prefixed stream conversion, and access-unit splitting. Parses facts only; holds no decoder. no_std + alloc."
+description  = "Codec bitstream parsers for rust-broadcast: the exp-Golomb/RBSP bit reader, NAL classification, SPS/slice/interlace facts, AAC AudioSpecificConfig and ADTS, AC-3/E-AC-3, DTS core and MHAS framing. Parses facts only; holds no decoder. no_std + alloc."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["h264", "hevc", "nal", "bitstream", "no-std"]
@@ -29,7 +29,7 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 isobmff    = { path = "../isobmff", version = "0.1.0", default-features = false, optional = true }
 
 [features]
-default = ["std", "h264", "hevc", "vvc"]
+default = ["std", "h264", "hevc", "vvc", "aac", "ac3", "dts", "mpegh"]
 std    = ["broadcast-core/std", "thiserror/std", "serde?/std", "isobmff?/std"]
 # H.264 / AVC NAL unit types.
 h264   = []
@@ -37,11 +37,23 @@ h264   = []
 hevc   = []
 # H.266 / VVC sequence parameter sets.
 vvc    = []
+# AAC `AudioSpecificConfig` and the ADTS header.
+aac    = []
+# AC-3 / E-AC-3 syncframe BSI.
+ac3    = []
+# DTS core substream frame headers.
+dts    = []
+# MPEG-H Audio Stream (MHAS) packet framing.
+mpegh  = []
 serde  = ["dep:serde", "broadcast-core/serde", "isobmff?/serde"]
 isobmff = ["dep:isobmff", "h264"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "print_adts_headers"
+required-features = ["std", "aac"]
 
 [[example]]
 name = "split_annexb"
@@ -61,6 +73,10 @@ required-features = ["std", "h264"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+# The synthetic E-AC-3 syncframe builders (`test_harness::ac3`) the AC-3 tests
+# share with the demuxer suites: one copy of the §E.1.2.2 generator, never a
+# second hand-built bit layout.
+test-harness = { path = "../test-harness" }
 # The real-fixture SPS test walks a broadcast capture's transport layer itself
 # (`tests/h264_capture_sps.rs`), so its elementary stream is real bytes rather
 # than a hand-built bitstream. Dev-only: the library keeps only its four deps.

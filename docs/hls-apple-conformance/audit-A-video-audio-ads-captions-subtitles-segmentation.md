@@ -85,7 +85,7 @@ Class legend: MET-V verified, MET-U unverified, GAP, PARTIAL, N/A (ENCODER/CONTE
 | 2.21 | AAC prog_ref_level/loudnessInfo | N/A ENCODER | | |
 | 2.22 | xHE-AAC loudness metadata MUST be present | N/A ENCODER | | xHE-AAC unsupported anyway (2.2). |
 | 2.23 | Loudness value must be actual | N/A ENCODER | | |
-| 2.24 | HE-AAC in fMP4 MUST use explicit SBR signalling | PARTIAL | transmux/src/aac_asc.rs:371-400 (explicit signalling is parsed/preserved from a source ASC); ts_demux.rs:240 (ADTS to ASC via `parse_adts_header`, no SBR sync-extension detect: `git grep -i sbr transmux/src/ts_demux.rs` empty) | fMP4->fMP4 keeps an explicit ASC. TS(ADTS) HE-AAC -> CMAF produces an ASC from the ADTS header alone, so SBR is implicit and `CODECS` says `mp4a.40.2`. Moderate confidence (I did not read the ASC builder line by line). |
+| 2.24 | HE-AAC in fMP4 MUST use explicit SBR signalling | PARTIAL | broadcast-bitstream/src/aac_asc.rs:371-400 (explicit signalling is parsed/preserved from a source ASC); ts_demux.rs:240 (ADTS to ASC via `parse_adts_header`, no SBR sync-extension detect: `git grep -i sbr transmux/src/ts_demux.rs` empty) | fMP4->fMP4 keeps an explicit ASC. TS(ADTS) HE-AAC -> CMAF produces an ASC from the ADTS header alone, so SBR is implicit and `CODECS` says `mp4a.40.2`. Moderate confidence (I did not read the ASC builder line by line). |
 | 2.25 | xHE-AAC/ALAC/FLAC/APAC must be in fMP4 | MET-U | ts_mux.rs:420-446 (`Flac` and others return None, dropped from TS) | Holds by silent drop on TS (no error); xHE-AAC/ALAC/APAC unsupported. |
 | 2.26 | Non-Dolby multichannel: also provide AAC (SHOULD) | N/A ENCODER | | |
 | 2.27 | Audio description needs LANGUAGE | GAP-OPT | F1 | As 2.12. |

@@ -392,8 +392,8 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         sps_ext: vec![],
     });
 
-    let adts = transmux::parse_adts_header(&aud[0]).expect("ADTS header");
-    let asc = transmux::AudioSpecificConfig::from_adts_header(&adts);
+    let adts = broadcast_bitstream::parse_adts_header(&aud[0]).expect("ADTS header");
+    let asc = broadcast_bitstream::AudioSpecificConfig::from_adts_header(&adts);
     let esds = EsdsBox::new(ESDescriptor::new(
         1,
         0,
@@ -408,7 +408,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         )),
         Some(SLConfigDescriptor::predefined_two()),
     ));
-    let audio_rate = sfi_to_hz(adts.sampling_frequency_index);
+    let audio_rate = sfi_to_hz(adts.sampling_frequency_index());
 
     let vtrack = TrackSpec::new(
         TrackId::new(1),
@@ -424,7 +424,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         Timescale::try_new(audio_rate).unwrap(),
         CodecConfig::Aac {
             esds,
-            channel_count: adts.channel_configuration as u16,
+            channel_count: adts.channel_configuration() as u16,
             sample_rate: audio_rate,
             sample_size: 16,
         },

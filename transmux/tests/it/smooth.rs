@@ -13,11 +13,11 @@
 use broadcast_core::timescale::Timescale;
 use std::path::PathBuf;
 
+use broadcast_bitstream::aac_asc::AudioSpecificConfig;
 use broadcast_core::Parse;
 use broadcast_smooth::{SmoothManifest, StreamType};
 use isobmff::box_types::parse_box;
 use test_harness::collect::Collected as Media;
-use transmux::aac_asc::AudioSpecificConfig;
 use transmux::pipeline::{CodecConfig, build_init_segment};
 use transmux::smooth::{FOURCC_AACL, FOURCC_H264, SmoothPackager, TFXD_UUID};
 use transmux::track_spec_from_quality_level;
@@ -199,11 +199,11 @@ fn codec_signalling_correct() {
 
     // SamplingRate/Channels must match the decoded ASC.
     let asc = AudioSpecificConfig::parse(&want_asc).expect("parse ASC");
-    let want_rate = asc.sampling_frequency.unwrap_or_else(|| {
+    let want_rate = asc.sampling_frequency().unwrap_or_else(|| {
         const RATES: [u32; 13] = [
             96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
         ];
-        RATES[asc.sampling_frequency_index.raw() as usize]
+        RATES[asc.sampling_frequency_index().raw() as usize]
     });
     assert_eq!(
         audio_ql.sampling_rate,
@@ -212,7 +212,7 @@ fn codec_signalling_correct() {
     );
     assert_eq!(
         audio_ql.channels,
-        Some(asc.channel_configuration.raw() as u16),
+        Some(asc.channel_configuration().raw() as u16),
         "Channels must match ASC channel configuration"
     );
 }
@@ -520,14 +520,14 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
         } => {
             let want_asc = demuxed_asc(media);
             let asc = AudioSpecificConfig::parse(&want_asc).unwrap();
-            let want_rate = asc.sampling_frequency.unwrap_or(44100);
+            let want_rate = asc.sampling_frequency().unwrap_or(44100);
             assert_eq!(
                 *sample_rate, want_rate,
                 "sample_rate must match the TS source"
             );
             assert_eq!(
                 *channel_count,
-                asc.channel_configuration.raw() as u16,
+                asc.channel_configuration().raw() as u16,
                 "channel_count must match the TS source"
             );
         }

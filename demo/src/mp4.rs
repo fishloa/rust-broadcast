@@ -25,9 +25,8 @@ use broadcast_bitstream::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecI
 use transmux::ir::{AbandonReason, CodecConfig, SkippedTrack, TrackSpec};
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use broadcast_bitstream::rfc6381::rfc6381_avc1;
-use transmux::{
-    AudioSpecificConfig, DemuxEvent,
-};
+use broadcast_bitstream::AudioSpecificConfig;
+use transmux::DemuxEvent;
 
 /// One track's codec identity + coarse throughput stats.
 #[derive(Serialize)]

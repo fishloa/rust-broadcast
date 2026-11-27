@@ -10,6 +10,7 @@
 //! Fixtures: `fixtures/mp4/{av1,opus,flac,vp9}.mp4`, `fixtures/ts/heaac/heaac-v{1,2}.mp4`.
 //! Oracle refs: `fixtures/mp4/PROVENANCE.md`, `fixtures/ts/ac4/dac4-oracle.md`.
 
+use broadcast_bitstream::AudioSpecificConfig;
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::timescale::Timescale;
 use broadcast_core::{Parse, Serialize};
@@ -18,7 +19,6 @@ use isobmff::{
     Vp9ConfigurationBox,
 };
 use test_fixtures::vectors::DAC4_ORACLE;
-use transmux::AudioSpecificConfig;
 use transmux::TrackId;
 
 fn timescale(value: u32) -> Timescale {
@@ -526,8 +526,8 @@ fn heaac_v1_sbr_signaling_and_esds_round_trip() {
     );
     let asc = AudioSpecificConfig::parse(&asc_bytes).expect("parse ASC v1");
     let sig = asc.heaac_signaling();
-    assert!(sig.sbr_present, "SBR must be signaled (HE-AAC v1)");
-    assert!(!sig.ps_present, "PS not signaled in v1");
+    assert!(sig.sbr_present(), "SBR must be signaled (HE-AAC v1)");
+    assert!(!sig.ps_present(), "PS not signaled in v1");
     assert_eq!(asc.rfc6381(), "mp4a.40.5", "HE-AAC v1 rfc6381");
 
     // ASC bytes themselves round-trip byte-exact.
@@ -542,9 +542,10 @@ fn heaac_v1_sbr_signaling_and_esds_round_trip() {
     // matching ffprobe's classification of this exact file (`profile=HE-AAC`,
     // codec_name=aac; MP4Box: "AAC LC (AOT=2 backward compatible)").
     let adts = asc.to_adts_header(200).unwrap();
-    let parsed_adts = transmux::parse_adts_header(&adts).unwrap();
+    let parsed_adts = broadcast_bitstream::parse_adts_header(&adts).unwrap();
     assert_eq!(
-        parsed_adts.profile, 1,
+        parsed_adts.profile(),
+        1,
         "ADTS profile must be LC (AOT 2 - 1)"
     );
 }
@@ -570,8 +571,8 @@ fn heaac_v2_ps_signaling_and_esds_round_trip() {
     );
     let asc = AudioSpecificConfig::parse(&asc_bytes).expect("parse ASC v2");
     let sig = asc.heaac_signaling();
-    assert!(sig.sbr_present, "SBR present in v2 too");
-    assert!(sig.ps_present, "PS must be signaled (HE-AAC v2)");
+    assert!(sig.sbr_present(), "SBR present in v2 too");
+    assert!(sig.ps_present(), "PS must be signaled (HE-AAC v2)");
     assert_eq!(asc.rfc6381(), "mp4a.40.29", "HE-AAC v2 rfc6381");
 
     let mut ab = vec![0u8; asc.serialized_len()];
@@ -584,9 +585,10 @@ fn heaac_v2_ps_signaling_and_esds_round_trip() {
     // hierarchical-AOT branch, but it does confirm the fix doesn't regress
     // the (far more common) backward-compatible path.
     let adts = asc.to_adts_header(200).unwrap();
-    let parsed_adts = transmux::parse_adts_header(&adts).unwrap();
+    let parsed_adts = broadcast_bitstream::parse_adts_header(&adts).unwrap();
     assert_eq!(
-        parsed_adts.profile, 1,
+        parsed_adts.profile(),
+        1,
         "ADTS profile must be LC (AOT 2 - 1)"
     );
 }
@@ -612,14 +614,15 @@ fn heaac_explicit_hierarchical_adts_profile_is_core_aot_not_extension_aot() {
     let sbr_bytes: [u8; 4] = [0x29, 0x93, 0x08, 0x00];
     let asc = AudioSpecificConfig::parse(&sbr_bytes).unwrap();
     assert_eq!(
-        asc.audio_object_type.raw(),
+        asc.audio_object_type().raw(),
         5,
         "top-level AOT is the SBR extension type"
     );
     let adts = asc.to_adts_header(200).unwrap();
-    let parsed = transmux::parse_adts_header(&adts).unwrap();
+    let parsed = broadcast_bitstream::parse_adts_header(&adts).unwrap();
     assert_eq!(
-        parsed.profile, 1,
+        parsed.profile(),
+        1,
         "core AOT is AAC-LC (2) -> ADTS profile 1, not Main (0)"
     );
 
@@ -627,14 +630,15 @@ fn heaac_explicit_hierarchical_adts_profile_is_core_aot_not_extension_aot() {
     let ps_bytes: [u8; 4] = [0xe9, 0x93, 0x08, 0x00];
     let asc = AudioSpecificConfig::parse(&ps_bytes).unwrap();
     assert_eq!(
-        asc.audio_object_type.raw(),
+        asc.audio_object_type().raw(),
         29,
         "top-level AOT is the PS extension type"
     );
     let adts = asc.to_adts_header(200).unwrap();
-    let parsed = transmux::parse_adts_header(&adts).unwrap();
+    let parsed = broadcast_bitstream::parse_adts_header(&adts).unwrap();
     assert_eq!(
-        parsed.profile, 1,
+        parsed.profile(),
+        1,
         "core AOT is AAC-LC (2) -> ADTS profile 1, not Main (0)"
     );
 }
@@ -649,7 +653,7 @@ fn heaac_hierarchical_with_unrepresentable_core_aot_is_rejected() {
     let asc = AudioSpecificConfig::parse(&bytes).unwrap();
     assert!(matches!(
         asc.to_adts_header(200),
-        Err(transmux::error::Error::InvalidValue(..))
+        Err(broadcast_bitstream::Error::InvalidValue(..))
     ));
 }
 
@@ -658,12 +662,16 @@ fn heaac_hierarchical_with_unrepresentable_core_aot_is_rejected() {
 /// as the literal escape value `0xF`.
 #[test]
 fn heaac_escape_sampling_frequency_is_rejected_for_adts() {
-    let mut asc = AudioSpecificConfig::parse(&[0x12, 0x08]).unwrap();
-    asc.sampling_frequency_index = transmux::SamplingFrequencyIndex::Escape;
-    asc.sampling_frequency = Some(48000);
+    // AOT 2, `samplingFrequencyIndex` 15 (escape), explicit rate 48000, cc 2.
+    let asc = AudioSpecificConfig::parse(&[0x17, 0x80, 0x5D, 0xC0, 0x10]).unwrap();
+    assert_eq!(
+        asc.sampling_frequency_index(),
+        broadcast_bitstream::SamplingFrequencyIndex::Escape
+    );
+    assert_eq!(asc.sampling_frequency(), Some(48_000));
     assert!(matches!(
         asc.to_adts_header(200),
-        Err(transmux::Error::InvalidValue(InvalidValue {
+        Err(broadcast_bitstream::Error::InvalidValue(InvalidValue {
             field: "sampling_frequency_index",
             value: 15,
             ..
@@ -676,7 +684,7 @@ fn plain_aac_lc_stays_mp4a_40_2() {
     // A plain AAC-LC ASC (no SBR/PS) must not be mis-detected as HE-AAC.
     let asc = AudioSpecificConfig::parse(&[0x12, 0x08]).unwrap();
     let sig = asc.heaac_signaling();
-    assert!(!sig.sbr_present);
-    assert!(!sig.ps_present);
+    assert!(!sig.sbr_present());
+    assert!(!sig.ps_present());
     assert_eq!(asc.rfc6381(), "mp4a.40.2");
 }

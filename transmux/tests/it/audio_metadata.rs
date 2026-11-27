@@ -7,10 +7,10 @@
 //! round trip so the descriptors travel inside a real PMT.
 
 use crate::ts_mux_stage;
+use broadcast_bitstream::HeAacProfile;
 use mpeg_ts::pid::Pid;
 use transmux::{
-    AudioMetadata, AudioRole, AudioType, CodecConfig, EditorialClassification, HeAacProfile,
-    MixType,
+    AudioMetadata, AudioRole, AudioType, CodecConfig, EditorialClassification, MixType,
 };
 
 const TAG_ISO_639: u8 = 0x0A;
