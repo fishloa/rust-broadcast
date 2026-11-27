@@ -168,7 +168,13 @@ pub const TABLE: &[Crate] = &[
         // `Disposition` carry `name()` + `impl_spec_display!`, so the set is
         // pinned below.
         skip: &["BitError", "DamageCause"],
-        expected: Some(&["CencScheme", "Rounding", "DamageKind", "Severity", "Disposition"]),
+        expected: Some(&[
+            "CencScheme",
+            "Rounding",
+            "DamageKind",
+            "Severity",
+            "Disposition",
+        ]),
         min_enums: Some(5),
     },
     Crate {
