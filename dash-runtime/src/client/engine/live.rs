@@ -1048,6 +1048,7 @@ impl DashClient {
             (oldest, rep.next_issue)
         };
         self.outputs.push_back(Output::Notice(Notice::FellBehind));
+        self.publish_damage(Notice::FellBehind.damage());
         let lane = &mut self.periods[pi].lanes[li];
         lane.expired_run = lane.expired_run.saturating_add(1);
         let rejoin = lane.expired_run >= EXPIRED_REJOIN_RUN || oldest.is_none();
@@ -1206,6 +1207,7 @@ impl DashClient {
             slot.state = SlotState::Skipped { marker: true };
         }
         self.outputs.push_back(Output::Notice(Notice::FellBehind));
+        self.publish_damage(Notice::FellBehind.damage());
         let utc_ts = timestamp_from_micros_i128(utc);
         if let Some((pi, li, _)) = self.rep_loc.get(&id.rep()).copied() {
             let (oldest, next) = {
@@ -1261,6 +1263,7 @@ impl DashClient {
             slot.state = SlotState::Skipped { marker: true };
         }
         self.outputs.push_back(Output::SegmentLost { id, status });
+        self.report_segment_lost(id);
         self.drain();
         FailureClass::SegmentSkipped
     }
@@ -1272,9 +1275,22 @@ impl DashClient {
     }
 
     pub(super) fn mpd_failed(&mut self, _now: Timestamp) -> u32 {
+        let first = self.mpd_failures == 0;
         self.mpd_failures = self.mpd_failures.saturating_add(1);
         if let Some(live) = self.live.as_mut() {
             live.refresh.awaiting_retry = true;
+        }
+        // The held MPD is all the client has until a refresh succeeds: the
+        // start of a run of failures is reported once (not once per attempt),
+        // because a window that cannot advance eventually costs segments. A
+        // *first* MPD that never arrives has nothing to report against — the
+        // presentation never started.
+        if first && self.mpd.is_some() {
+            self.publish_damage(broadcast_core::damage::Damage::new(
+                broadcast_core::damage::DamageKind::MetadataSkipped,
+                broadcast_core::damage::Severity::Degraded,
+                "DASH MPD refresh",
+            ));
         }
         self.mpd_failures
     }

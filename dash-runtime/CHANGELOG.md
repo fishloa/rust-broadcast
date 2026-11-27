@@ -6,6 +6,29 @@ All notable changes to dash-runtime will be documented in this file.
 
 ### Added
 
+- `Notice::damage` (public) and one report alongside every `Output::Notice`:
+  an uninterpreted extension (`EventStream`, `Preselection`,
+  `PatchLocation`, low-latency addressing, a `UTCTiming` scheme) is
+  `MetadataUninterpreted`/informational, while content that is actually left
+  out (encrypted representations, a skipped Period, segments that expired) is
+  degraded. The notice still names the structure; the report is what
+  `DashClientConfig::damage_policy` decides on.
+- A failed MPD refresh is reported (`MetadataSkipped`, `Degraded`) once per
+  run of failures, and never for a first MPD that never started a
+  presentation.
+- A segment the client gives up on — a missing tail, an expired live segment, a
+  caller's `skip` — is reported (`MediaUnitDropped`, `Degraded`) with its
+  number.
+- `SegmentPlan::timeline_boundaries`/`TimelineIndex::boundaries` expose the
+  gaps a `SegmentTimeline` declares between two `S` runs; the client reports
+  each one it bridges as `TimelineRepaired`/`Degraded`, located at the media
+  time the gap covers.
+- `broadcast-client`'s DASH matrix states the expected report (kind and
+  severity, or "none") for every cell and checks it, including the reports a
+  clean run of a source produces.
+
+### Added
+
 - `Output::Damage(broadcast_core::damage::Damage)`: the one report of content
   the reader skipped, altered or truncated, delivered in order with the
   outputs around it. Each degradation the MP4 reader only describes is

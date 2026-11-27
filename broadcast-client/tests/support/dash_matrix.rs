@@ -138,6 +138,82 @@ const MEDIA_ONLY: &[Class] = &[Class::Media];
 const RANGED: &[Class] = &[Class::Init, Class::Index, Class::Media];
 
 impl F {
+    /// The damage report this cell must show, or `None` when the fault has no
+    /// stated expectation (which the `every_cell_states_its_damage` guard
+    /// rejects).
+    ///
+    /// Exhaustive on purpose, with no catch-all: a new fault does not compile
+    /// until it states whether the session reports anything for it.
+    ///
+    /// The states follow the client's reporting paths, not the observations of
+    /// a run:
+    ///
+    /// - a failed MPD *refresh* is reported once per run of failures, because
+    ///   the held MPD is all the client has and the window cannot advance
+    ///   without one. An MPD body that is served is not a failure: a stale
+    ///   `publishTime`, an identical body or a reshaped one that the client
+    ///   discards is skipped silently;
+    /// - a 401 is an authentication challenge, not a lost resource;
+    /// - a redirect loop refuses the *first* attempt and the retry is served,
+    ///   so only its permanent form loses anything;
+    /// - a live media segment that the client gives up on is a lost segment,
+    ///   which is what every permanent media fault eventually causes, and what
+    ///   a `Retry-After` that never elapses causes on the first attempt.
+    ///
+    /// A first MPD, an init, an index, a UTC response and every static media
+    /// failure are errors or retries: the presentation has not started, or the
+    /// caller's retry budget — not a skip — decides what happens next.
+    pub fn damage(self, class: Class, permanent: bool, live: bool) -> Option<Expected> {
+        use Class::{Index, Init, Media, Mpd, MpdBoundary, MpdRefresh, Utc};
+        use broadcast_core::damage::{DamageKind, Severity};
+        let refresh_failed = Expected::AtLeast(DamageKind::MetadataSkipped, Severity::Degraded);
+        let segment_lost = Expected::AtLeast(DamageKind::MediaUnitDropped, Severity::Degraded);
+        match (self, class, permanent, live) {
+            // Benign perturbations: the right answer arrives and nothing is
+            // skipped.
+            (F::DupResp | F::Unknown | F::ClosedTwice, _, _, _) => Some(Expected::None),
+            // A first MPD that does not arrive or does not parse has nothing
+            // to report against: the presentation never started.
+            (_, Mpd, _, _) => Some(Expected::None),
+            // An MPD body that is served, and a challenge, are not failures.
+            (F::MpdAstChanged | F::MpdTypeFlip | F::MpdRepVanishes, _, _, _) => {
+                Some(Expected::None)
+            }
+            // A served-but-frozen MPD, a Period set that stops advancing and a
+            // clock the client cannot trust starve the window instead: they
+            // cost segments only once the run is long enough for some to
+            // expire.
+            (
+                F::MpdStale
+                | F::MpdNotModified
+                | F::MpdNoPeriod
+                | F::PeriodOldestRemoved
+                | F::PeriodNewestDropped,
+                _,
+                _,
+                _,
+            ) => Some(Expected::Any),
+            (F::UtcSkew | F::UtcRttTooLarge | F::UtcDateMissing | F::UtcHeadRefused, _, _, _) => {
+                Some(Expected::Any)
+            }
+            (F::S401, _, _, _) => Some(Expected::None),
+            (F::RedirLoop, _, false, _) => Some(Expected::None),
+            // A failed refresh: reported once per run of failures.
+            (_, MpdRefresh | MpdBoundary, _, _) => Some(refresh_failed),
+            // A live segment given up on. A `Retry-After` that never elapses
+            // parks the fetch instead of skipping it, so its permanent form
+            // loses nothing inside the run while its transient form (one
+            // refusal, then a rejoin) does — and with the init stuck behind
+            // it, segments expire and are reported.
+            // A `Retry-After` that never elapses parks the fetch: the same
+            // stall rule applies (segments expire only if the run outlasts
+            // them), and a permanent one parks every attempt.
+            (F::S429Huge, Init | Media, _, true) => Some(Expected::Any),
+            (_, Media, true, true) => Some(segment_lost),
+            (_, Media | Init | Index | Utc, _, _) => Some(Expected::None),
+        }
+    }
+
     pub fn benign(self) -> bool {
         matches!(self, F::DupResp | F::Unknown | F::ClosedTwice)
     }
@@ -206,6 +282,43 @@ impl F {
     pub fn applies_to(self, class: Class, caps: &[Cap]) -> bool {
         self.classes().contains(&class) && self.needs().iter().all(|c| caps.contains(c))
     }
+}
+
+/// What damage reports a cell of the matrix must show.
+///
+/// Every fault states one (see [`F::damage`]): "the session reports nothing"
+/// is a statement too, and it is what most faults must produce — a transport
+/// error or an HTTP status is retried or fatal, not content the reader skipped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Expected {
+    /// The session must report nothing.
+    None,
+    /// Either outcome is correct: this fault leaves the client *stalled*
+    /// rather than losing a resource, so whether anything is reported depends
+    /// on whether the stall lasts long enough for segments to expire inside
+    /// the run — a property of the horizon, not of the design.
+    Any,
+    /// At least one report of this kind, at this severity.
+    AtLeast(
+        broadcast_core::damage::DamageKind,
+        broadcast_core::damage::Severity,
+    ),
+}
+
+/// Every damage report the run produced, in order.
+pub fn damage_reports(
+    events: &[Event],
+) -> Vec<(
+    broadcast_core::damage::DamageKind,
+    broadcast_core::damage::Severity,
+)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Damage(damage) => Some((damage.kind(), damage.severity())),
+            _ => None,
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -704,6 +817,10 @@ pub struct Src {
     pub limits: fn() -> Limits,
     pub build: Box<dyn Fn() -> (DashSim, Vec<Stage>)>,
     pub horizon_us: u64,
+    /// What a run with **no fault** reports. `None` for every source whose
+    /// presentation is complete; a source whose MPD addresses media the origin
+    /// does not publish states the loss it therefore reports.
+    pub clean_damage: Expected,
 }
 
 pub fn run_cell(src: &Src, plan: Option<Plan>) -> Out {
@@ -840,6 +957,12 @@ pub fn peak_rate_per_url(log: &[Logged]) -> (usize, String) {
 pub struct Baseline {
     pub samples: Vec<(u32, String, usize)>,
     pub rate_cap: usize,
+    /// The reports the clean run already produced (a source whose MPD
+    /// addresses media the origin does not publish reports them every time).
+    pub damage: Vec<(
+        broadcast_core::damage::DamageKind,
+        broadcast_core::damage::Severity,
+    )>,
 }
 
 impl Baseline {
@@ -847,6 +970,7 @@ impl Baseline {
         Self {
             samples: samples(&out.events),
             rate_cap: peak_rate_per_url(&out.log).0.max(RATE_CAP_PER_WINDOW),
+            damage: damage_reports(&out.events),
         }
     }
 
@@ -875,6 +999,30 @@ impl F {
             _ => None,
         }
     }
+}
+
+/// `observed` minus the reports the clean run already produced: what the
+/// fault itself caused.
+fn extra_reports(
+    observed: &[(
+        broadcast_core::damage::DamageKind,
+        broadcast_core::damage::Severity,
+    )],
+    base: &[(
+        broadcast_core::damage::DamageKind,
+        broadcast_core::damage::Severity,
+    )],
+) -> Vec<(
+    broadcast_core::damage::DamageKind,
+    broadcast_core::damage::Severity,
+)> {
+    let mut left: Vec<_> = observed.to_vec();
+    for entry in base {
+        if let Some(at) = left.iter().position(|candidate| candidate == entry) {
+            left.remove(at);
+        }
+    }
+    left
 }
 
 fn is_disc(e: &Event) -> bool {
@@ -936,6 +1084,28 @@ pub fn classify(
     }
     if o.hung {
         return ("HANG".into(), tail);
+    }
+    // The damage column: every cell states what the session must report, and
+    // a mismatch is a failed cell rather than an unclassified one.
+    let reports = extra_reports(&damage_reports(&o.events), &baseline.damage);
+    match plan.fault.damage(plan.stage.class, perm, src.live) {
+        None => return ("DMGUNSTATED".into(), tail),
+        Some(Expected::Any) => {}
+        Some(Expected::None) if !reports.is_empty() => {
+            return (
+                format!("DMG:{}", reports[0].0.name()),
+                format!("{tail} damage={reports:?}"),
+            );
+        }
+        Some(Expected::None) => {}
+        Some(Expected::AtLeast(kind, severity)) => {
+            if !reports.iter().any(|(k, s)| *k == kind && *s == severity) {
+                return (
+                    format!("DMG:expected {} {}", kind.name(), severity.name()),
+                    format!("{tail} damage={reports:?}"),
+                );
+            }
+        }
     }
     if fatals.len() > 1 {
         return ("MULTIFATAL".into(), tail);
@@ -1039,8 +1209,32 @@ pub fn classify(
     ("RETRY".into(), tail)
 }
 
-/// One executed cell: which source, stage class and fault, transient or permanent.
-pub type Cell = (&'static str, Class, F, bool);
+/// One executed cell: which source, stage class and fault, transient or
+/// permanent, and the damage report its column states.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cell {
+    pub source: &'static str,
+    pub class: Class,
+    pub fault: F,
+    pub permanent: bool,
+    /// The column: `Some` for every executed cell; the `damage_column` guard
+    /// fails if one is missing.
+    pub damage: Option<Expected>,
+}
+
+impl Cell {
+    /// A cell as `matrix` records it.
+    #[must_use]
+    pub fn new(source: &'static str, class: Class, fault: F, permanent: bool, live: bool) -> Self {
+        Self {
+            source,
+            class,
+            fault,
+            permanent,
+            damage: fault.damage(class, permanent, live),
+        }
+    }
+}
 
 pub fn matrix(src: &Src, only_stage: Option<&str>) -> (Vec<String>, Vec<Cell>) {
     let (base_o, stages) = {
@@ -1065,6 +1259,25 @@ pub fn matrix(src: &Src, only_stage: Option<&str>) -> (Vec<String>, Vec<Cell>) {
             stages,
         )
     };
+    // A run with no fault reports exactly what its source states: nothing for
+    // a complete presentation, and the loss a source whose MPD addresses media
+    // the origin does not publish is designed to report.
+    let clean = damage_reports(&base_o.events);
+    match src.clean_damage {
+        Expected::None => assert!(
+            clean.is_empty(),
+            "{}: a clean run reports nothing, but reported {clean:?}",
+            src.name
+        ),
+        Expected::Any => {}
+        Expected::AtLeast(kind, severity) => assert!(
+            clean.iter().any(|(k, s)| *k == kind && *s == severity),
+            "{}: a clean run must report {} {}, got {clean:?}",
+            src.name,
+            kind.name(),
+            severity.name()
+        ),
+    }
     let base = Baseline::of(&base_o);
     assert!(
         !base.samples.is_empty(),
@@ -1103,9 +1316,19 @@ pub fn matrix(src: &Src, only_stage: Option<&str>) -> (Vec<String>, Vec<Cell>) {
             let p = run_cell(src, Some(pplan.clone()));
             let (tc, tt) = classify(src, &tplan, false, &t, &base);
             let (pc, pt) = classify(src, &pplan, !f.benign(), &p, &base);
-            cells.push((src.name, stage.class, f, false));
-            cells.push((src.name, stage.class, f, true));
-            row.push_str(&format!("{}:{}/{} ", f.short(), tc, pc));
+            cells.push(Cell::new(src.name, stage.class, f, false, src.live));
+            cells.push(Cell::new(src.name, stage.class, f, true, src.live));
+            let t_reports = damage_reports(&t.events).len();
+            let p_reports = damage_reports(&p.events).len();
+            row.push_str(&format!(
+                "{}:{}/{}/dmg{}/{}/{} ",
+                f.short(),
+                tc,
+                pc,
+                t_reports,
+                p_reports,
+                planned_damage(f, stage.class, src.live)
+            ));
             if !transient_ok(&tc, f, stage.class) {
                 bad.push(format!(
                     "{} T {} {} {tc} :: {tt}",
@@ -1129,6 +1352,21 @@ pub fn matrix(src: &Src, only_stage: Option<&str>) -> (Vec<String>, Vec<Cell>) {
         println!("{} {line}", src.name);
     }
     (bad, cells)
+}
+
+/// The column's statement, as the table prints it.
+#[must_use]
+pub fn planned_damage(fault: F, class: Class, live: bool) -> &'static str {
+    match fault.damage(class, false, live) {
+        None => "unstated",
+        Some(Expected::None) => "none",
+        Some(Expected::Any) => "any",
+        Some(Expected::AtLeast(kind, severity)) => match (kind.name(), severity.name()) {
+            ("metadata skipped", "degraded") => "mdskip",
+            ("media unit dropped", "degraded") => "segdrop",
+            _ => "other",
+        },
+    }
 }
 
 pub fn transient_ok(label: &str, fault: F, class: Class) -> bool {

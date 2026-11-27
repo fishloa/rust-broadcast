@@ -146,6 +146,7 @@ fn kinds(sim: &DashSim) -> Vec<String> {
             Event::Sample { .. } => "sample".into(),
             Event::Discontinuity => "discontinuity".into(),
             Event::AudioRendition { .. } => "audio".into(),
+            Event::Damage(damage) => format!("damage({})", damage.severity().name()),
             _ => "other".into(),
         })
         .collect()
@@ -179,19 +180,23 @@ fn the_annex_g_examples_without_media_end_in_the_typed_state_each_one_calls_for(
         ("F2", &["establishing", "error(clock_unavailable!)"]),
         ("F3", &["establishing", "error(clock_unavailable!)"]),
         (
+            // F4 carries an `EventStream`: reported as information, not lost.
             "F4",
             &[
                 "establishing",
                 "error(unsupported_feature)",
+                "damage(informational)",
                 "reconnecting",
                 "error(segment_fetch_failed!)",
             ],
         ),
         (
+            // F5 carries a `Preselection`, reported the same way.
             "F5",
             &[
                 "establishing",
                 "error(unsupported_feature)",
+                "damage(informational)",
                 "reconnecting",
                 "error(segment_fetch_failed!)",
             ],
@@ -205,18 +210,23 @@ fn the_annex_g_examples_without_media_end_in_the_typed_state_each_one_calls_for(
             ],
         ),
         (
+            // F7 is a low-latency MPD: played at segment granularity, which
+            // is reported as uninterpreted addressing.
             "F7",
             &[
                 "establishing",
                 "error(unsupported_feature)",
+                "damage(informational)",
                 "error(clock_unavailable!)",
             ],
         ),
         (
+            // F8 carries a `PatchLocation`, which is reported as uninterpreted.
             "F8",
             &[
                 "establishing",
                 "error(unsupported_feature)",
+                "damage(informational)",
                 "error(clock_unavailable!)",
             ],
         ),

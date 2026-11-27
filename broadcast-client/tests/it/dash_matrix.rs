@@ -19,8 +19,8 @@ use dash_common::loopback::Origin;
 use dash_common::synth::{Addressing, MPD_URL, Synth, parse_segment_url};
 use dash_common::world::{MICROS, World};
 use dash_matrix::{
-    Cap, Class, F, Limits, Matcher, Src, Stage, distinct_urls, matrix, peak_rate_per_url,
-    served_segments, terminal,
+    Cap, Cell, Class, Expected, F, Limits, Matcher, Src, Stage, distinct_urls, matrix,
+    peak_rate_per_url, served_segments, terminal,
 };
 use dash_sim::{DashSim, Logged, SEC, StaticBackend, WorldBackend};
 
@@ -134,10 +134,16 @@ fn static_src() -> Src {
             (sim, stages)
         }),
         horizon_us: 900 * SEC,
+        clean_damage: Expected::None,
     }
 }
 
-fn static_fixture_src(name: &'static str, mpd_url: &'static str, pick: StaticPick) -> Src {
+fn static_fixture_src(
+    name: &'static str,
+    mpd_url: &'static str,
+    clean_damage: Expected,
+    pick: StaticPick,
+) -> Src {
     let config = matrix_config();
     let build_config = config.clone();
     let base = move || {
@@ -161,6 +167,7 @@ fn static_fixture_src(name: &'static str, mpd_url: &'static str, pick: StaticPic
         limits,
         build: Box::new(move || (base(), stages.clone())),
         horizon_us: 900 * SEC,
+        clean_damage,
     }
 }
 
@@ -175,40 +182,51 @@ fn contains_nth(urls: &[String], needle: &str, nth: usize) -> String {
 }
 
 fn static_template() -> Src {
-    static_fixture_src("static-template", RESTART_MPD, |urls| {
-        vec![
-            stage("mpd", Class::Mpd, Matcher::MpdAll),
-            url_stage(
-                "init-p1-v",
-                Class::Init,
-                &contains_nth(urls, "p1_dash_track1_init", 0),
-            ),
-            url_stage(
-                "init-p1-a",
-                Class::Init,
-                &contains_nth(urls, "p1_dash_track2_init", 0),
-            ),
-            url_stage(
-                "init-p2-v",
-                Class::Init,
-                &contains_nth(urls, "p2_dash_track1_init", 0),
-            ),
-            url_stage(
-                "seg-p1-v",
-                Class::Media,
-                &contains_nth(urls, "p1_dash_track1_2.m4s", 0),
-            ),
-            url_stage(
-                "seg-p2-a",
-                Class::Media,
-                &contains_nth(urls, "p2_dash_track2_2.m4s", 0),
-            ),
-        ]
-    })
+    // The template presentation addresses one segment per representation that
+    // its origin does not publish: the client is designed to skip a missing
+    // tail and say so, so this source's clean run reports it.
+    static_fixture_src(
+        "static-template",
+        RESTART_MPD,
+        Expected::AtLeast(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+        ),
+        |urls| {
+            vec![
+                stage("mpd", Class::Mpd, Matcher::MpdAll),
+                url_stage(
+                    "init-p1-v",
+                    Class::Init,
+                    &contains_nth(urls, "p1_dash_track1_init", 0),
+                ),
+                url_stage(
+                    "init-p1-a",
+                    Class::Init,
+                    &contains_nth(urls, "p1_dash_track2_init", 0),
+                ),
+                url_stage(
+                    "init-p2-v",
+                    Class::Init,
+                    &contains_nth(urls, "p2_dash_track1_init", 0),
+                ),
+                url_stage(
+                    "seg-p1-v",
+                    Class::Media,
+                    &contains_nth(urls, "p1_dash_track1_2.m4s", 0),
+                ),
+                url_stage(
+                    "seg-p2-a",
+                    Class::Media,
+                    &contains_nth(urls, "p2_dash_track2_2.m4s", 0),
+                ),
+            ]
+        },
+    )
 }
 
 fn static_list() -> Src {
-    static_fixture_src("static-list", LIST_MPD, |urls| {
+    static_fixture_src("static-list", LIST_MPD, Expected::None, |urls| {
         vec![
             stage("mpd", Class::Mpd, Matcher::MpdAll),
             url_stage("init-v", Class::Init, &contains_nth(urls, "init-0", 0)),
@@ -277,6 +295,7 @@ fn sidx_src() -> Src {
         limits,
         build: Box::new(move || (base(), stages.clone())),
         horizon_us: 900 * SEC,
+        clean_damage: Expected::None,
     }
 }
 
@@ -362,6 +381,7 @@ fn live_src(spec: Live) -> Src {
         limits,
         build: Box::new(move || (base(), stages.clone())),
         horizon_us: LIVE_HORIZON_US,
+        clean_damage: Expected::None,
     }
 }
 
@@ -571,6 +591,52 @@ fn every_fault_and_class_has_a_row() {
     );
 }
 
+/// The damage column is a required column: every executed cell states what
+/// the session reports for it, and the guard fails when one does not.
+///
+/// `F::damage` is an exhaustive `match` with no catch-all, so a new fault
+/// cannot even compile without stating its report; this test additionally
+/// requires every *executed* cell to carry the column, which is what a row
+/// with the column removed fails.
+#[test]
+fn every_cell_states_its_damage() {
+    let mut problems = Vec::new();
+    for &fault in F::ALL {
+        for &class in Class::ALL {
+            for permanent in [false, true] {
+                for live in [false, true] {
+                    if fault.damage(class, permanent, live).is_none() {
+                        problems.push(format!(
+                            "{fault:?} x {} permanent={permanent} live={live} states no damage",
+                            class.name()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// A row with the damage column removed fails the same guard, so the column
+/// cannot be dropped without a test failing.
+#[test]
+fn a_cell_without_a_damage_column_trips_the_guard() {
+    let planted = [Cell {
+        source: "planted",
+        class: Class::Media,
+        fault: F::S500,
+        permanent: false,
+        damage: None,
+    }];
+    let missing: Vec<String> = planted
+        .iter()
+        .filter(|cell| cell.damage.is_none())
+        .map(|cell| format!("{} x {:?} has no damage column", cell.source, cell.fault))
+        .collect();
+    assert!(!missing.is_empty(), "a removed column must be reported");
+}
+
 #[test]
 fn the_fault_list_has_no_duplicates() {
     let mut shorts: Vec<&str> = F::ALL.iter().map(|f| f.short()).collect();
@@ -708,6 +774,7 @@ fn live_alt_base_url() -> Src {
         limits,
         build: Box::new(move || (base(), stages.clone())),
         horizon_us: LIVE_HORIZON_US,
+        clean_damage: Expected::None,
     }
 }
 
