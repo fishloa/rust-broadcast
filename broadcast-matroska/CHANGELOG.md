@@ -42,6 +42,10 @@ All notable changes to this crate are documented here. The format follows
 
 ### Added
 
+- `Warning` converts into `broadcast_core::damage::Damage` (`impl From`), so a
+  consumer above this crate speaks the workspace's one damage vocabulary
+  instead of translating the reader's own report enum.
+
 - `writer::Writer::cut_cluster`: ends the open `Cluster` at a caller-known
   boundary (a container-level timeline discontinuity), flushing held Blocks
   first so the next one opens a new `Cluster`.

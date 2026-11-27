@@ -183,6 +183,7 @@ pub mod container;
 #[cfg(feature = "std")]
 pub mod dash;
 pub mod data_identity;
+pub(crate) mod demux_damage;
 pub(crate) mod display_track;
 pub mod dovi_descriptor;
 pub mod drm;

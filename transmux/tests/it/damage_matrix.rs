@@ -10,6 +10,7 @@
 //! The report test prints every cell (run with `--nocapture`) so the
 //! `origin/main` table and the post-fix table are the same measurement.
 
+use broadcast_core::damage::{Damage as Report, DamageKind, DamagePolicy, Severity};
 use test_harness::collect::{CollectMode, Collected};
 use test_harness::damage::{self, Damage, DemuxOutcome};
 
@@ -249,6 +250,9 @@ struct Row {
     label: String,
     at: usize,
     damage: Damage,
+    /// The seed the cell's damage was applied with, so a second run of the
+    /// same cell sees the same bytes.
+    seed: u64,
     summary: test_harness::damage::Summary,
     damaged: DemuxOutcome,
 }
@@ -345,8 +349,8 @@ fn measure(format: Format, clean_bytes: &[u8], clean: &DemuxOutcome) -> Vec<Row>
     damage_cells(format, clean_bytes)
         .into_iter()
         .map(|(cell, at, damage)| {
-            let applied =
-                damage::apply(clean_bytes, at, damage, seed(format, &Position::Mid, &cell));
+            let seed = seed(format, &Position::Mid, &cell);
+            let applied = damage::apply(clean_bytes, at, damage, seed);
             let damaged = format.demux(&applied);
             let summary = damage::compare(clean, &damaged);
             let (position, label) = cell.split_once(':').unwrap_or((cell.as_str(), ""));
@@ -356,6 +360,7 @@ fn measure(format: Format, clean_bytes: &[u8], clean: &DemuxOutcome) -> Vec<Row>
                 label: label.to_string(),
                 at,
                 damage,
+                seed,
                 summary,
                 damaged,
             }
@@ -706,4 +711,234 @@ fn a_damaged_file_is_not_worse_than_ffprobe() {
             summary.delivered
         );
     }
+}
+
+impl Format {
+    /// Demux one image under `policy`, returning the error's own report when
+    /// the policy stopped the run.
+    fn demux_with(
+        self,
+        bytes: &[u8],
+        policy: DamagePolicy,
+    ) -> Result<DemuxOutcome, Box<Option<Report>>> {
+        let collected = match self {
+            Format::Ts => test_harness::collect::media_from_ts_with_policy(
+                bytes,
+                usize::MAX,
+                transmux::AfdPersistence::UntilReplaced,
+                policy,
+            )
+            .map_err(|error| match error {
+                transmux::Error::Damage(refused) => Some(refused.damage().clone()),
+                _ => None,
+            }),
+            Format::Ps => test_harness::collect::media_from_ps_with_policy(bytes, 4096, policy)
+                .map_err(|error| match error {
+                    transmux::Error::Damage(refused) => Some(refused.damage().clone()),
+                    _ => None,
+                }),
+            Format::Flv => {
+                test_harness::collect::media_from_flv_with_policy(bytes, usize::MAX, policy)
+                    .map_err(|error| match error {
+                        transmux::flv::FlvError::Damage(refused) => Some(refused.damage().clone()),
+                        _ => None,
+                    })
+            }
+            Format::Mkv => test_harness::collect::media_from_matroska_with_policy(
+                bytes,
+                CollectMode::Seekable,
+                policy,
+            )
+            .map_err(|error| match error {
+                transmux::Error::Damage(refused) => Some(refused.damage().clone()),
+                _ => None,
+            }),
+        };
+        collected
+            .map(|collected| DemuxOutcome::from_collected(&collected))
+            .map_err(|damage: Option<Report>| Box::new(damage))
+    }
+}
+
+/// How far from the damaged bytes this format's resynchroniser may name the
+/// place it recovered: one TS packet, one Program Stream pack, one FLV tag or
+/// one Matroska element is the unit the walk restarts from.
+fn report_reach(format: Format) -> u64 {
+    match format {
+        Format::Ts => 188,
+        Format::Ps => 2048,
+        Format::Flv => 4096,
+        Format::Mkv => 4096,
+    }
+}
+
+/// The run length a run-shaped damage removes or replaces.
+fn damage_run(damage: Damage) -> u64 {
+    match damage {
+        Damage::Zero | Damage::Random | Damage::Delete | Damage::Insert => {
+            u64::try_from(damage::run_len(damage)).unwrap_or(u64::MAX)
+        }
+        Damage::Truncate | Damage::Field { .. } | Damage::VintSize { .. } => 0,
+    }
+}
+
+/// A report names the damage when its byte range (or the point it marks)
+/// reaches the damaged run, within this format's resynchronisation reach.
+fn names_the_damage(format: Format, at: usize, damage: Damage, report: &Report) -> bool {
+    let Some(range) = report.location().byte_range() else {
+        return false;
+    };
+    let at = u64::try_from(at).unwrap_or(u64::MAX);
+    let reach = report_reach(format);
+    let start = damage_run(damage);
+    range.start() <= at.saturating_add(start).saturating_add(reach)
+        && range.end().saturating_add(reach) >= at.saturating_sub(start)
+}
+
+/// A report a lost media unit always produces: the loss itself, never only a
+/// note about metadata around it.
+fn is_loss(kind: DamageKind) -> bool {
+    matches!(
+        kind,
+        DamageKind::Resynchronised
+            | DamageKind::MediaUnitDropped
+            | DamageKind::MediaUnitDamaged
+            | DamageKind::InputTruncated
+            | DamageKind::MetadataSkipped
+            | DamageKind::TrackDropped
+    )
+}
+
+/// The one best-effort-reading contract, cell by cell: every skip a demuxer
+/// makes is published as a `Damage` that names what happened, where in the
+/// input and, where one is known, on which track — and no finding stands
+/// without one.
+#[test]
+fn every_cell_publishes_its_damage_report() {
+    let mut violations = Vec::new();
+    for format in Format::ALL {
+        let (bytes, clean_outcome) = clean(format);
+        let total = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        for row in measure(format, &bytes, &clean_outcome) {
+            let cell = format!(
+                "{} {} {} @{}",
+                row.format.name(),
+                row.position,
+                row.label,
+                row.at
+            );
+            if playback_impossible(row.damage, row.at).is_some() {
+                continue;
+            }
+            let damages = &row.damaged.damages;
+            for damage in damages {
+                if damage.what().is_empty() {
+                    violations.push(format!("{cell}: a report names no structure"));
+                }
+                if let Some(range) = damage.location().byte_range()
+                    && range.end() > total
+                {
+                    violations.push(format!(
+                        "{cell}: report range {range} runs past the {total}-byte input"
+                    ));
+                }
+            }
+            if row.damaged.findings > 0 && damages.is_empty() {
+                violations.push(format!(
+                    "{cell}: {} findings but no damage report",
+                    row.damaged.findings
+                ));
+            }
+            let lost_content = matches!(row.damage, Damage::Delete | Damage::Insert)
+                && row.summary.lost(&clean_outcome) > 0;
+            if lost_content && damages.is_empty() {
+                violations.push(format!("{cell}: lost samples with no report"));
+            }
+            if lost_content && !damages.iter().any(|damage| is_loss(damage.kind())) {
+                violations.push(format!("{cell}: lost samples, only informational reports"));
+            }
+            if matches!(row.damage, Damage::Truncate)
+                && !damages.is_empty()
+                && !damages.iter().any(|damage| is_loss(damage.kind()))
+            {
+                violations.push(format!(
+                    "{cell}: a truncated input reported as informational"
+                ));
+            }
+            if !damages.is_empty()
+                && !damages
+                    .iter()
+                    .any(|report| names_the_damage(row.format, row.at, row.damage, report))
+            {
+                violations.push(format!(
+                    "{cell}: no report names the damaged bytes (reports at {:?})",
+                    damages
+                        .iter()
+                        .map(|damage| damage.location().byte_range())
+                        .collect::<Vec<_>>()
+                ));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "{} cells break the damage-report contract:\n{}",
+        violations.len(),
+        violations.join("\n")
+    );
+}
+
+/// A caller that fails on degraded damage stops at the first such report, and
+/// the stop carries that same report.
+#[test]
+fn a_failing_policy_stops_at_the_first_degraded_report() {
+    let policy = DamagePolicy::new().fail_on(Severity::Degraded);
+    let mut violations = Vec::new();
+    for format in Format::ALL {
+        let (bytes, clean_outcome) = clean(format);
+        for row in measure(format, &bytes, &clean_outcome) {
+            let cell = format!(
+                "{} {} {} @{}",
+                row.format.name(),
+                row.position,
+                row.label,
+                row.at
+            );
+            if playback_impossible(row.damage, row.at).is_some() {
+                continue;
+            }
+            let first = row
+                .damaged
+                .damages
+                .iter()
+                .find(|damage| damage.severity() == Severity::Degraded);
+            let applied = damage::apply(&bytes, row.at, row.damage, row.seed);
+            let stopped = format.demux_with(&applied, policy.clone());
+            match (first, stopped.map_err(|boxed| *boxed)) {
+                (Some(first), Err(Some(report))) => {
+                    if report != first.clone() {
+                        violations.push(format!(
+                            "{cell}: stopped with {report:?}, first degraded report was {first:?}"
+                        ));
+                    }
+                }
+                (Some(first), Err(None)) => violations.push(format!(
+                    "{cell}: a non-damage error instead of stopping at {first:?}"
+                )),
+                (Some(first), Ok(_)) => violations.push(format!(
+                    "{cell}: the fail-on-degraded policy did not stop at {first:?}"
+                )),
+                (None, Ok(_)) | (None, Err(None)) => {}
+                (None, Err(Some(report))) => violations.push(format!(
+                    "{cell}: stopped at {report:?} with nothing to stop at"
+                )),
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "{} cells break the damage policy:\n{}",
+        violations.len(),
+        violations.join("\n")
+    );
 }

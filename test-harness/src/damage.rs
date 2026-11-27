@@ -152,6 +152,8 @@ pub struct DemuxOutcome {
     pub tracks: Vec<TrackOutcome>,
     /// How many damage findings the run reported.
     pub findings: usize,
+    /// The damage reports the demuxer published, in order.
+    pub damages: Vec<broadcast_core::damage::Damage>,
 }
 
 impl DemuxOutcome {
@@ -198,6 +200,7 @@ impl DemuxOutcome {
                 })
                 .collect(),
             findings: collected.degraded.len(),
+            damages: collected.damages.clone(),
         }
     }
 }

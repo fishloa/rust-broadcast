@@ -75,11 +75,13 @@ use core::num::NonZeroU32;
 
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::damage::{ByteRange, Damage, DamageKind, DamagePolicy, Severity};
 use broadcast_core::timescale::Timescale;
 use broadcast_core::wire::u16_at;
 use mpeg_ps::{PsEvent, PsLimits, PsScanner};
 
 use crate::TrackId;
+use crate::demux_damage;
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{
@@ -329,6 +331,8 @@ pub struct StreamingPsDemux {
     finished: bool,
     /// Total bytes fed, for absolute degradation positions.
     fed: u64,
+    /// What each [`Damage`] this demuxer publishes means to the caller.
+    damage_policy: DamagePolicy,
 }
 
 impl Default for StreamingPsDemux {
@@ -352,11 +356,53 @@ impl StreamingPsDemux {
             state: DemuxState::new(limits),
             finished: false,
             fed: 0,
+            damage_policy: DamagePolicy::new(),
         }
     }
 
-    /// Drain every unit the scanner has ready.
+    /// Set what each damage report this demuxer publishes means: the default
+    /// reports everything and fails on nothing.
+    #[must_use]
+    pub fn with_damage_policy(mut self, damage_policy: DamagePolicy) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
+
+    /// Drain every unit the scanner has ready, then hand the reports it
+    /// queued to the caller's policy.
     fn drain(&mut self) -> Result<()> {
+        let from = self.state.events.len();
+        self.drain_units()?;
+        demux_damage::admit_new(&self.state.events, &self.damage_policy, from)
+    }
+
+    /// Report the bytes the input left incomplete at end of stream: a tail
+    /// that ends inside a pack (or a PES) is dropped, never silently.
+    fn report_tail(&mut self) {
+        let have = self.scanner.buffered_len();
+        let Ok(have) = u64::try_from(have) else {
+            return;
+        };
+        if have == 0 {
+            return;
+        }
+        let position = self.fed.saturating_sub(have);
+        self.state.events.push_back(DemuxEvent::input_degraded(
+            None,
+            InputDegradation::TruncatedUnit { position },
+            EventProvenance::default(),
+        ));
+        self.state.events.push_back(DemuxEvent::damage(
+            Damage::new(
+                DamageKind::InputTruncated,
+                Severity::Degraded,
+                "Program Stream pack",
+            )
+            .at_byte_range(ByteRange::new(position, have)),
+        ));
+    }
+
+    fn drain_units(&mut self) -> Result<()> {
         loop {
             let buffered = self.scanner.buffered_len();
             let position = self.fed.saturating_sub(buffered as u64);
@@ -406,16 +452,18 @@ impl Stage for StreamingPsDemux {
         if self.finished {
             return Ok(());
         }
+        let from = self.state.events.len();
         self.scanner.finish();
-        self.drain()?;
+        self.drain_units()?;
         if self.state.packs_seen == 0
             && let Some(error) = self.scanner.first_error()
         {
             return Err(Error::Ps(error.clone()));
         }
+        self.report_tail();
         self.state.finish_streams()?;
         self.finished = true;
-        Ok(())
+        demux_damage::admit_new(&self.state.events, &self.damage_policy, from)
     }
 }
 
@@ -458,7 +506,6 @@ impl DemuxState {
     }
 
     fn on_resync(&mut self, position: u64, skipped: u64) {
-        let _ = skipped;
         for stream in &mut self.streams {
             stream.reanchor();
         }
@@ -466,6 +513,15 @@ impl DemuxState {
             None,
             InputDegradation::MalformedUnit { position },
             EventProvenance::default(),
+        ));
+        let range = ByteRange::new(position, skipped);
+        self.events.push_back(DemuxEvent::damage(
+            Damage::new(
+                DamageKind::Resynchronised,
+                Severity::Degraded,
+                "Program Stream pack",
+            )
+            .at_byte_range(range),
         ));
     }
 
@@ -500,6 +556,15 @@ impl DemuxState {
                     None,
                     InputDegradation::MalformedUnit { position },
                     EventProvenance::default(),
+                ));
+                let len = u64::try_from(packet.len()).unwrap_or(u64::MAX);
+                self.events.push_back(DemuxEvent::damage(
+                    Damage::new(
+                        DamageKind::MediaUnitDropped,
+                        Severity::Degraded,
+                        "PES packet",
+                    )
+                    .at_byte_range(ByteRange::new(position, len)),
                 ));
                 return Ok(());
             }

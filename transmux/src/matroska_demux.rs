@@ -62,6 +62,7 @@ use alloc::vec::Vec;
 use broadcast_common::Stage;
 use broadcast_common::stage::{Demand, Timestamp};
 use broadcast_core::Parse;
+use broadcast_core::damage::{Damage, DamageKind, DamagePolicy, Severity};
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::need_in;
 use broadcast_core::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
@@ -73,6 +74,7 @@ use broadcast_matroska::reader::{
 use bytes::{Bytes, BytesMut};
 
 use crate::TrackId;
+use crate::demux_damage;
 use crate::error::{Error, Result};
 use crate::ir::{
     AbandonReason, CodecConfig, DataIdentity, DecoderPreRoll, DemuxEvent, EventProvenance,
@@ -448,6 +450,14 @@ impl TrackState {
                             },
                             EventProvenance::default(),
                         ));
+                        out.push_back(DemuxEvent::damage(
+                            Damage::new(DamageKind::MediaUnitDropped, Severity::Degraded, "Block")
+                                .at_byte_range(broadcast_core::damage::ByteRange::new(
+                                    block.offset,
+                                    0,
+                                ))
+                                .for_track(id.value()),
+                        ));
                         continue;
                     }
                 },
@@ -492,6 +502,8 @@ pub struct MatroskaDemux {
     resolved: bool,
     next_track_id: u32,
     poisoned: Option<Error>,
+    /// What each [`Damage`] this demuxer publishes means to the caller.
+    damage_policy: DamagePolicy,
 }
 
 impl MatroskaDemux {
@@ -535,11 +547,29 @@ impl MatroskaDemux {
             resolved: false,
             next_track_id: 1,
             poisoned: None,
+            damage_policy: DamagePolicy::new(),
         };
         if let Err(err) = demux.pump() {
             demux.poisoned = Some(err);
         }
         demux
+    }
+
+    /// Set what each damage report this demuxer publishes means: the default
+    /// reports everything and fails on nothing.
+    ///
+    /// The constructor already read the first reader demand, so any report it
+    /// queued is admitted here too: a policy set after construction still sees
+    /// the damage found before it.
+    #[must_use]
+    pub fn with_damage_policy(mut self, damage_policy: DamagePolicy) -> Self {
+        self.damage_policy = damage_policy;
+        if self.poisoned.is_none()
+            && let Err(error) = demux_damage::admit_new(&self.events, &self.damage_policy, 0)
+        {
+            self.poisoned = Some(error);
+        }
+        self
     }
 
     /// Every mapped track's spec, available as soon as the `Tracks` element
@@ -695,6 +725,11 @@ impl MatroskaDemux {
             reason,
             provenance: EventProvenance::default(),
         });
+        self.events.push_back(DemuxEvent::damage(Damage::new(
+            DamageKind::TrackDropped,
+            Severity::Degraded,
+            "track",
+        )));
     }
 
     /// Emit the queued [`DemuxEvent::TrackAdded`] events in track order, so a
@@ -948,6 +983,8 @@ impl MatroskaDemux {
             kind,
             provenance: EventProvenance::default(),
         });
+        self.events
+            .push_back(DemuxEvent::damage(Damage::from(warning)));
     }
 
     fn push_truncated(&mut self, position: u64) {
@@ -956,18 +993,16 @@ impl MatroskaDemux {
             kind: InputDegradation::TruncatedUnit { position },
             provenance: EventProvenance::default(),
         });
+        self.events
+            .push_back(DemuxEvent::damage(Damage::from(Warning::Truncated {
+                offset: position,
+            })));
     }
 }
 
-impl Stage for MatroskaDemux {
-    type In<'a> = MatroskaInput<'a>;
-    type Out = DemuxEvent;
-    type Error = Error;
-
-    fn feed(&mut self, input: Self::In<'_>, _now: Timestamp) -> Result<()> {
-        if let Some(err) = &self.poisoned {
-            return Err(err.clone());
-        }
+impl MatroskaDemux {
+    /// Feed one owned reader step, without the caller's damage policy.
+    fn dispatch(&mut self, input: MatroskaInput<'_>) -> Result<()> {
         match input {
             MatroskaInput::Eof => {
                 if self.finished {
@@ -1008,6 +1043,21 @@ impl Stage for MatroskaDemux {
             }
         }
     }
+}
+
+impl Stage for MatroskaDemux {
+    type In<'a> = MatroskaInput<'a>;
+    type Out = DemuxEvent;
+    type Error = Error;
+
+    fn feed(&mut self, input: Self::In<'_>, _now: Timestamp) -> Result<()> {
+        if let Some(err) = &self.poisoned {
+            return Err(err.clone());
+        }
+        let from = self.events.len();
+        self.dispatch(input)?;
+        demux_damage::admit_new(&self.events, &self.damage_policy, from)
+    }
 
     fn poll(&mut self) -> Option<DemuxEvent> {
         self.events.pop_front()
@@ -1020,26 +1070,9 @@ impl Stage for MatroskaDemux {
         if self.finished {
             return Ok(());
         }
-        self.finished = true;
-        self.eof = true;
-        if let Err(err) = self.pump() {
-            if !matches!(
-                err,
-                Error::Matroska(broadcast_matroska::Error::Truncated { .. })
-            ) {
-                return Err(err);
-            }
-            let position = self
-                .frame
-                .map(|block| block.frame.offset)
-                .or(self.need.map(|range| range.offset))
-                .unwrap_or(self.buf_start);
-            self.frame = None;
-            self.need = None;
-            self.push_truncated(position);
-            self.done = true;
-        }
-        self.finish_flush()
+        let from = self.events.len();
+        self.finish_end()?;
+        demux_damage::admit_new(&self.events, &self.damage_policy, from)
     }
 
     fn demand(&self) -> Demand {
@@ -1070,6 +1103,32 @@ impl Stage for MatroskaDemux {
             }
             SourceMode::Sequential => Demand::new(0),
         }
+    }
+}
+
+impl MatroskaDemux {
+    /// End the walk without applying the caller's damage policy.
+    fn finish_end(&mut self) -> Result<()> {
+        self.finished = true;
+        self.eof = true;
+        if let Err(err) = self.pump() {
+            if !matches!(
+                err,
+                Error::Matroska(broadcast_matroska::Error::Truncated { .. })
+            ) {
+                return Err(err);
+            }
+            let position = self
+                .frame
+                .map(|block| block.frame.offset)
+                .or(self.need.map(|range| range.offset))
+                .unwrap_or(self.buf_start);
+            self.frame = None;
+            self.need = None;
+            self.push_truncated(position);
+            self.done = true;
+        }
+        self.finish_flush()
     }
 }
 

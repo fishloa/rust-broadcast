@@ -51,6 +51,18 @@ const RESYNC_ID_BYTES: usize = MAX_ELEMENT_ID_OCTETS;
 /// chunks is still found.
 const RESYNC_OVERLAP: usize = RESYNC_ID_BYTES - 1;
 
+/// The `what` of a report about a malformed element whose id is known.
+const ELEMENT_NAME: &str = "element";
+
+/// The `what` of a report about an element id this crate does not name.
+const UNKNOWN_ELEMENT_NAME: &str = "element";
+
+/// The `what` of a report about a damaged Block.
+const BLOCK_NAME: &str = "Block";
+
+/// The `what` of a report about the input ending inside an element.
+const INPUT_NAME: &str = "input";
+
 /// A half-open byte range in the input: `[offset, offset + len)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteRange {
@@ -452,6 +464,43 @@ impl Warning {
             | Self::MalformedBlock { offset }
             | Self::Truncated { offset } => *offset,
         }
+    }
+}
+
+impl From<Warning> for broadcast_core::damage::Damage {
+    /// The reader's own fault report as the workspace's one damage report, so a
+    /// consumer above this crate speaks a single vocabulary.
+    fn from(warning: Warning) -> Self {
+        use broadcast_core::damage::{ByteRange, Damage, DamageKind, Severity};
+
+        let point = ByteRange::new(warning.position(), 0);
+        let named = |id: u32| {
+            ids::lookup(id)
+                .map(|def| def.name)
+                .unwrap_or(UNKNOWN_ELEMENT_NAME)
+        };
+        let (kind, severity, what) = match warning {
+            Warning::MalformedElement { .. } => (
+                DamageKind::MetadataSkipped,
+                Severity::Degraded,
+                ELEMENT_NAME,
+            ),
+            Warning::UnparsedElement { id, .. } => (
+                DamageKind::MetadataSkipped,
+                Severity::Informational,
+                named(id),
+            ),
+            Warning::UnknownSizeElement { id, .. } => {
+                (DamageKind::Resynchronised, Severity::Degraded, named(id))
+            }
+            Warning::MalformedBlock { .. } => {
+                (DamageKind::MediaUnitDropped, Severity::Degraded, BLOCK_NAME)
+            }
+            Warning::Truncated { .. } => {
+                (DamageKind::InputTruncated, Severity::Degraded, INPUT_NAME)
+            }
+        };
+        Damage::new(kind, severity, what).at_byte_range(point)
     }
 }
 

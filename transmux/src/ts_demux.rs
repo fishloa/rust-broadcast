@@ -245,7 +245,9 @@ use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use broadcast_core::damage::{ByteRange, Damage, DamageKind, MediaTimeRange, Severity};
+use broadcast_core::damage::{
+    ByteRange, Damage, DamageKind, DamagePolicy, MediaTimeRange, Severity,
+};
 use broadcast_core::timescale::Timescale;
 use core::num::NonZeroUsize;
 use mpeg_ts::pid::Pid;
@@ -259,6 +261,7 @@ use mpeg_ts::ts::{
     ContinuityCounter, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsPacket,
 };
 
+use crate::demux_damage;
 use crate::error::Result;
 use crate::media::lame_padding;
 use crate::nal_params::{ParamKind, parameter_set_is_valid};
@@ -3966,6 +3969,14 @@ fn abandon_backlog(
             program_number: None,
         },
     });
+    events.push_back(DemuxEvent::damage(
+        Damage::new(
+            DamageKind::TrackDropped,
+            Severity::Degraded,
+            "elementary stream",
+        )
+        .at_byte_range(ByteRange::new(0, 0)),
+    ));
     TrackState::Abandoned
 }
 
@@ -5066,6 +5077,8 @@ pub struct StreamingTsDemux {
     /// (the default) is unlimited. See
     /// [`with_max_pes_unit_bytes`](Self::with_max_pes_unit_bytes).
     max_pes_unit_bytes: Option<NonZeroUsize>,
+    /// What each [`Damage`] this demuxer publishes means to the caller.
+    damage_policy: DamagePolicy,
 }
 
 /// Per-PMT-PID reassembly + version-diffing state (issue #774): the
@@ -5126,6 +5139,7 @@ impl StreamingTsDemux {
             afd_persistence: AfdPersistence::UntilReplaced,
             strict_pmt_order: false,
             max_pes_unit_bytes: None,
+            damage_policy: DamagePolicy::new(),
         }
     }
 
@@ -5191,6 +5205,14 @@ impl StreamingTsDemux {
         self
     }
 
+    /// Set what each damage report this demuxer publishes means: the default
+    /// reports everything and fails on nothing.
+    #[must_use]
+    pub fn with_damage_policy(mut self, damage_policy: DamagePolicy) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
+
     /// The caller-supplied PES unit ceiling; `None` when unlimited.
     #[must_use]
     pub fn max_pes_unit_bytes(&self) -> Option<NonZeroUsize> {
@@ -5234,10 +5256,11 @@ impl StreamingTsDemux {
     /// diagnostic volume with
     /// [`with_max_degraded_events`](Self::with_max_degraded_events).
     pub fn feed(&mut self, data: &[u8]) -> Result<()> {
+        let from = self.events.len();
         let packets = self.resync.feed(data);
         self.process_resynced(&packets)?;
         self.enforce_degraded_cap();
-        Ok(())
+        demux_damage::admit_new(&self.events, &self.damage_policy, from)
     }
 
     /// Process `packets` the resynchroniser just emitted, interleaving the
@@ -5307,14 +5330,16 @@ impl StreamingTsDemux {
                 // A packet whose sync byte locked but whose header or
                 // adaptation field does not parse: dropped, reported, and the
                 // next packet is read normally.
-                self.events.push_back(DemuxEvent::input_degraded(
+                report_degradation(
+                    &mut self.events,
+                    None,
                     None,
                     InputDegradation::MalformedUnit {
                         position: idx
                             .saturating_mul(u64::try_from(TS_PACKET_SIZE).unwrap_or(u64::MAX)),
                     },
                     EventProvenance::default(),
-                ));
+                );
                 return Ok(());
             };
 
@@ -6693,6 +6718,7 @@ impl StreamingTsDemux {
     /// conclusion, which likewise needed the whole file), and emits the
     /// final one-behind pending sample for every live video/data track.
     pub fn finish(&mut self) -> Result<()> {
+        let from = self.events.len();
         self.flush_pes_tails()?;
         self.resolve_eac3_probes_from_tail();
         self.try_promote_ready()?;
@@ -6721,6 +6747,11 @@ impl StreamingTsDemux {
                             program_number: None,
                         },
                     });
+                    self.events.push_back(DemuxEvent::damage(Damage::new(
+                        DamageKind::TrackDropped,
+                        Severity::Degraded,
+                        "elementary stream",
+                    )));
                     self.try_promote_ready()?;
                 }
                 _ => break,
@@ -6729,7 +6760,7 @@ impl StreamingTsDemux {
 
         self.flush_live_tails()?;
         self.enforce_degraded_cap();
-        Ok(())
+        demux_damage::admit_new(&self.events, &self.damage_policy, from)
     }
 
     /// Declare that a new, unrelated timeline begins with the next input (an

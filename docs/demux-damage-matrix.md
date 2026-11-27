@@ -344,6 +344,38 @@ samples around the damage):
 | ts | truncate | 11 | 0 | 0 | 11 |
 | ts | zero | 11 | 0 | 0 | 11 |
 
+### The damage report, cell by cell
+
+Every demuxer in the matrix publishes what it skipped as
+`DemuxEvent::Damage` (`broadcast_core::damage::Damage`), and takes a
+`DamagePolicy` so a caller can stop instead of only reading.
+`every_cell_publishes_its_damage_report` asserts, for every cell:
+
+- every report names a structure (`Damage::what`) and its byte range, where it
+  has one, lies inside the input;
+- a cell with any finding on the typed channel also carries a damage report —
+  no finding stands alone;
+- a delete or insert that lost samples carries a report that is a loss (never
+  only an informational note), and it names the damaged bytes within the
+  format's own resynchronisation reach (one TS packet, one Program Stream pack,
+  one FLV tag, one Matroska element);
+- a truncated input that reports at all does so as a loss, not information.
+
+`a_failing_policy_stops_at_the_first_degraded_report` then re-runs every cell
+with `DamagePolicy::new().fail_on(Severity::Degraded)`: a run that published a
+degraded report must stop with `Error::Damage` carrying exactly that first
+report, and a run that published none must not stop for damage at all.
+
+The demuxers' own vocabularies stay as typed detail and convert into the one
+report: `InputDegradation::to_damage` for the TS packets and PES units, and
+`impl From<Warning> for Damage` for the Matroska/WebM reader. `Damage` is the
+only thing a player has to understand.
+
+Cells that report nothing do so honestly: a zeroed or randomised run inside an
+access unit changes payload bytes the container layer cannot see, and a
+Program Stream cut exactly on a pack boundary looks like the end of a valid
+shorter stream (no container length says otherwise).
+
 ### Cells that still error
 
 | cell | reason |

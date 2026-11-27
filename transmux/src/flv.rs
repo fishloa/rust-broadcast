@@ -296,6 +296,10 @@ pub enum FlvError {
     /// Underlying parse/serialize error from a reused codec-config builder.
     #[error("FLV codec config: {0}")]
     Codec(Error),
+    /// The caller's damage policy refused a report this demuxer made about
+    /// the input (see `broadcast_core::damage::DamagePolicy`).
+    #[error(transparent)]
+    Damage(#[from] broadcast_core::damage::DamageError),
     /// A tag's timestamp stepped backwards on its track, so the previous
     /// sample's duration (a forward delta) is not a tick count. The FLV clock
     /// only unrolls the 32-bit millisecond wrap (Annex E §E.4.1), so a

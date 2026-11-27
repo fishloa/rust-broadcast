@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parse, a unit lost to a continuity gap, a bounded unit cut short at end of
   input) and the access units dropped by the caller's PES unit limit, with
   their byte range, track and media time.
+- Every streaming demuxer takes a `DamagePolicy`
+  (`with_damage_policy`): `Disposition::Fail` stops the run with `Error::Damage`
+  (`FlvError::Damage` for the FLV stage) carrying the same report, and the
+  default reports everything and fails on nothing. The FLV, Program Stream and
+  Matroska demuxers now publish `DemuxEvent::Damage` beside their existing
+  finding channels: a dropped FLV tag or damaged span, an unparsable PES or a
+  resynchronised Program Stream pack, a Matroska reader warning (its `Warning`
+  converts into a `Damage`), a Block whose NAL lengths do not fit, and a track
+  dropped at end of input. `StreamingPsDemux` also reports the bytes an input
+  leaves incomplete at end of stream as a truncation instead of dropping them
+  silently.
 
 ### Breaking
 

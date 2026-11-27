@@ -463,3 +463,42 @@ fn a_corrupt_track_entry_child_keeps_the_track() {
     assert!(blocks > 0, "the media still plays");
     assert!(warnings >= 1, "the broken element was not reported");
 }
+
+/// Each `Warning` becomes the workspace's one damage report, carrying its kind
+/// and the offset the fault starts at.
+#[test]
+fn every_warning_converts_to_a_damage_report() {
+    use broadcast_core::damage::DamageKind;
+    use broadcast_matroska::reader::Warning;
+
+    let cases = [
+        (Warning::MalformedElement { offset: 11 }, DamageKind::MetadataSkipped),
+        (
+            Warning::UnparsedElement {
+                id: 0x1853_8067,
+                offset: 22,
+            },
+            DamageKind::MetadataSkipped,
+        ),
+        (
+            Warning::UnknownSizeElement {
+                id: 0x1F43_B675,
+                offset: 33,
+            },
+            DamageKind::Resynchronised,
+        ),
+        (Warning::MalformedBlock { offset: 44 }, DamageKind::MediaUnitDropped),
+        (Warning::Truncated { offset: 55 }, DamageKind::InputTruncated),
+    ];
+    for (warning, kind) in cases {
+        let damage = broadcast_core::damage::Damage::from(warning);
+        assert_eq!(damage.kind(), kind, "{}", warning.name());
+        assert_eq!(
+            damage.location().byte_range().map(|range| range.start()),
+            Some(warning.position()),
+            "{}",
+            warning.name()
+        );
+        assert!(!damage.what().is_empty(), "{}", warning.name());
+    }
+}

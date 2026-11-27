@@ -100,8 +100,10 @@ use core::num::NonZeroU32;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use broadcast_core::Parse;
+use broadcast_core::damage::{ByteRange, Damage, DamageKind, DamagePolicy, Severity};
 use rtmp_runtime::RtmpError;
 
+use crate::demux_damage;
 use crate::flv::{
     CODEC_ID_AVC, FLV_HEADER_LEN, FLV_TIMESCALE, FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN,
     PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz, avc_dimensions,
@@ -251,7 +253,14 @@ impl TrackState {
                         next: dts,
                     });
                 }
-                StreamingFlvDemux::report_tag_damage(events, offset, tag_len);
+                StreamingFlvDemux::report_tag_damage(
+                    events,
+                    offset,
+                    tag_len,
+                    DamageKind::TimelineRepaired,
+                    Severity::Informational,
+                    "FLV tag",
+                );
                 self.emit_pending(track_id, prev, events);
                 self.pending = Some(PendingSample { sample, timing });
                 return Ok(());
@@ -272,7 +281,14 @@ impl TrackState {
                         },
                     });
                 }
-                StreamingFlvDemux::report_tag_damage(events, offset, tag_len);
+                StreamingFlvDemux::report_tag_damage(
+                    events,
+                    offset,
+                    tag_len,
+                    DamageKind::TimelineRepaired,
+                    Severity::Informational,
+                    "FLV tag",
+                );
                 self.emit_pending(track_id, prev, events);
                 if dts <= previous {
                     // Re-anchor the tag one nominal step after the sample just
@@ -363,6 +379,8 @@ pub struct StreamingFlvDemux {
     /// Whether a damaged span was reported; an input that is damaged but had
     /// no complete tag is still diagnosed, not silently accepted.
     damaged: bool,
+    /// What each [`Damage`] this demuxer publishes means to the caller.
+    damage_policy: DamagePolicy,
     /// Start and length of a damaged run not yet reported: consecutive skips
     /// (a resync candidate that later fails, then a further skip) are ONE
     /// reported span, not one per attempt.
@@ -426,6 +444,7 @@ impl StreamingFlvDemux {
             tags_seen: false,
             announced: false,
             damaged: false,
+            damage_policy: DamagePolicy::new(),
             damage_start: None,
             damage_len: 0,
             ended_inside_a_tag: false,
@@ -443,6 +462,14 @@ impl StreamingFlvDemux {
             strict: true,
             ..Self::new()
         }
+    }
+
+    /// Set what each damage report this demuxer publishes means: the default
+    /// reports everything and fails on nothing.
+    #[must_use]
+    pub fn with_damage_policy(mut self, damage_policy: DamagePolicy) -> Self {
+        self.damage_policy = damage_policy;
+        self
     }
 
     /// The first tag's offset, from a valid FLV header, or `Ok(None)` while
@@ -522,6 +549,7 @@ impl StreamingFlvDemux {
         // `feed` of one large chunk quadratic — 8 MiB of small audio tags
         // (~20 000 of them) memmoved ~80 GB.
         let mut cursor = 0usize;
+        let from = self.events.len();
         let result = self.consume(&mut cursor, false);
 
         if let Err(err) = result {
@@ -537,7 +565,7 @@ impl StreamingFlvDemux {
         }
         self.drain_pending(cursor);
         self.flush_damage();
-        Ok(())
+        demux_damage::admit_new(&self.events, &self.damage_policy, from)
     }
 
     /// Drop the first `n` consumed bytes from `pending` (one memmove of the
@@ -704,6 +732,7 @@ impl StreamingFlvDemux {
         // ever be, so decide the resync points with the whole buffer (the
         // streaming scan's `Need` answers existed only to wait for more).
         let mut cursor = 0usize;
+        let from = self.events.len();
         let result = self.consume(&mut cursor, true);
         self.drain_pending(cursor);
         self.flush_damage();
@@ -715,7 +744,7 @@ impl StreamingFlvDemux {
         if !self.announced {
             return Err(FlvError::NoSupportedTrack);
         }
-        Ok(())
+        demux_damage::admit_new(&self.events, &self.damage_policy, from)
     }
 
     /// After [`finish`](Self::finish), whether the input ended inside a tag
@@ -747,6 +776,10 @@ impl StreamingFlvDemux {
         if let Some(offset) = self.damage_start.take() {
             let len = core::mem::take(&mut self.damage_len);
             self.events.push_back(DemuxEvent::damaged_span(offset, len));
+            self.events.push_back(DemuxEvent::damage(
+                Damage::new(DamageKind::Resynchronised, Severity::Degraded, "FLV tag")
+                    .at_byte_range(ByteRange::new(offset, len)),
+            ));
         }
     }
 
@@ -933,21 +966,33 @@ impl StreamingFlvDemux {
         total.saturating_sub(have).max(1)
     }
 
-    /// Report a complete tag whose payload this demuxer cannot use, and carry
-    /// on with the following tags (the batch demuxer's behaviour).
-    fn report_tag_damage(events: &mut VecDeque<DemuxEvent>, offset: u64, len: usize) {
-        events.push_back(DemuxEvent::damaged_span(
-            offset,
-            u64::try_from(len).unwrap_or(u64::MAX),
+    /// Report a complete tag whose payload this demuxer cannot use (or whose
+    /// timing it had to repair), and carry on with the following tags (the
+    /// batch demuxer's behaviour).
+    fn report_tag_damage(
+        events: &mut VecDeque<DemuxEvent>,
+        offset: u64,
+        len: usize,
+        kind: DamageKind,
+        severity: Severity,
+        what: &'static str,
+    ) {
+        let len = u64::try_from(len).unwrap_or(u64::MAX);
+        events.push_back(DemuxEvent::damaged_span(offset, len));
+        events.push_back(DemuxEvent::damage(
+            Damage::new(kind, severity, what).at_byte_range(ByteRange::new(offset, len)),
         ));
     }
 
     /// Report the partial tag left at end of input as a damaged span: the
     /// tail is dropped, but the input is truncated, not clean.
     fn report_tail(&mut self, len: usize) {
-        self.events.push_back(DemuxEvent::damaged_span(
-            self.consumed,
-            u64::try_from(len).unwrap_or(u64::MAX),
+        let len = u64::try_from(len).unwrap_or(u64::MAX);
+        self.events
+            .push_back(DemuxEvent::damaged_span(self.consumed, len));
+        self.events.push_back(DemuxEvent::damage(
+            Damage::new(DamageKind::InputTruncated, Severity::Degraded, "FLV tag")
+                .at_byte_range(ByteRange::new(self.consumed, len)),
         ));
     }
 
@@ -995,6 +1040,9 @@ impl StreamingFlvDemux {
                         out.events,
                         tag.site.offset,
                         tag.site.tag_len,
+                        DamageKind::MetadataSkipped,
+                        Severity::Informational,
+                        "FLV sequence header",
                     );
                     return Ok(());
                 };
@@ -1003,6 +1051,9 @@ impl StreamingFlvDemux {
                         out.events,
                         tag.site.offset,
                         tag.site.tag_len,
+                        DamageKind::MetadataSkipped,
+                        Severity::Informational,
+                        "FLV sequence header",
                     );
                     return Ok(());
                 }
@@ -1084,6 +1135,9 @@ impl StreamingFlvDemux {
                         out.events,
                         tag.site.offset,
                         tag.site.tag_len,
+                        DamageKind::MediaUnitDropped,
+                        Severity::Degraded,
+                        "FLV video payload",
                     );
                     return Ok(());
                 };
@@ -1141,6 +1195,9 @@ impl StreamingFlvDemux {
                         out.events,
                         tag.site.offset,
                         tag.site.tag_len,
+                        DamageKind::MetadataSkipped,
+                        Severity::Informational,
+                        "FLV sequence header",
                     );
                     return Ok(());
                 };
