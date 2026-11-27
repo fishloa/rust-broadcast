@@ -98,12 +98,50 @@ Header parse and the container box only; no encode or decode.
 | `captions` | yes | Caption presence detection (`caption_detect`): the `cc_data()` triplet walk and the CEA-608/708 service decoders from `cc-data`. |
 | `sample-aes` | no | HLS Sample-AES and whole-segment AES-128; implies `cenc` and `hls`. |
 | `motion-imagery-metadata` | no | Typed MISB ST 0601 values: `LocalSetItem::value_typed()` returns `motion_imagery_metadata::St0601Value`, decoded by the [`motion-imagery-metadata`](https://crates.io/crates/motion-imagery-metadata) crate (built on Matt Busel's `misb`). Also provides `payload::St0601Decoder`, the payload plug-in that renders a data-track sample as ST 0601 values. |
+| `codec` | no | The codec seam in the pipeline: `TranscodeStage` over `broadcast-codec`'s `Decoder`/`Encoder` traits, and the `TrackSpec` <-> `CodecParameters` conversions. Adds a dependency on that crate only — never on a codec. Not implied by `cli` or any other feature. |
 | `cli` | no | The `transmux` binary (`clap`, `container-probe`; implies `std` and every container spoke). |
 
 Every container spoke is a feature, so a consumer that repackages fMP4 or TS only
 can turn the rest off: `features = ["std"]` with `default-features = false`
 compiles the IR plus the MP4/TS paths, with no FLV, RTP, Program Stream,
 Matroska, HLS or caption code.
+
+## Transcoding (the `codec` feature)
+
+The crate still never encodes or decodes media. What the `codec` feature adds is
+the *place* a codec plugs in, so adding one later is additive:
+
+- `TranscodeStage` runs **one track** through a caller-supplied
+  `broadcast_codec::Decoder` and `Encoder` — typically chosen from a
+  `broadcast_codec::Registry` built from adapter crates outside this workspace.
+  It holds no codec knowledge: it matches no codec id and parses no bitstream.
+  Every other track passes through untouched and in order.
+- A codec change is a property of the whole track. The stage holds its output
+  until the encoder reports the parameters that name the new codec, then
+  announces the track once — built from those parameters — before its first
+  sample, so the muxer's init segment, PMT or file header describes the output
+  rather than the input. It flushes decoder then encoder at end of stream and
+  on a track removal, and its pre-announcement window is the caller's
+  (`pending_limit`, unlimited by default).
+- `codec_parameters_from_track` / `track_spec_from_codec_parameters` are the
+  two conversions. Both are total: a track description the seam cannot carry
+  (an MPEG audio layer, a DTS sample entry, VP8/Vorbis, a subtitle or data
+  track) or a parameter set this crate cannot describe (PCM) is a typed error
+  naming the missing fact, never a guess.
+
+It is **not** a transcoder on its own: no decoder or encoder ships here, and no
+crate in this workspace depends on one. A binary that transcodes links its own
+adapter (see `docs/superpowers/specs/2026-11-26-bitstream-and-codec-seam-design.md`
+§7.4 for the wall that keeps FFmpeg out of this graph).
+
+Where a caller inserts a stage between the demuxer and a muxer:
+
+| assembly | insertion point |
+|---|---|
+| the CLI | `cli::run_bytes_with(input, opts, transform)` |
+| `Repackage` | `Repackage::run_transformed(fmp4, transform)` |
+| any hand-written pipeline | `mux_stage::MuxChain`, which holds a stage's output until every announced track has been re-announced (so a muxer builds its header from the final set) |
+| `media-plane`'s ingest | wrap the `IngestSession`: it is a `Stage`, so a wrapper needs no change to the driver, the trunk or the segmenter |
 
 `serde` is opt-in and off by default; enable it explicitly:
 
