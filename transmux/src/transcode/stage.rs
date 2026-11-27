@@ -277,6 +277,7 @@ impl TranscodeStage {
                 match factory(&parameters) {
                     Ok(decoder) => {
                         self.decoder = decoder;
+                        self.decoder.discontinuity();
                         self.source = parameters;
                         Ok(())
                     }
@@ -319,6 +320,13 @@ impl Stage for TranscodeStage {
                     ));
                 }
                 self.transcode(&sample)
+            }
+            MuxInput::Discontinuity { track } => {
+                if track.is_none_or(|track| track == self.track) {
+                    self.decoder.discontinuity();
+                }
+                self.ready.push_back(MuxInput::Discontinuity { track });
+                Ok(())
             }
             MuxInput::TrackRemoved { track } => {
                 if track == self.track {

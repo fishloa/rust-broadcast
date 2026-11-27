@@ -18,6 +18,8 @@ mod item_layer_2025;
 mod largesize_truncation;
 mod meta_track;
 mod metadata;
+mod mp4ra;
+mod mp4ra_fixtures;
 mod permissive;
 mod quicktime;
 mod quicktime_write;

@@ -7,7 +7,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ## [Unreleased]
 
+### Breaking
+
+- `CodecDescriptor` states one typed `trim` field instead of the `trims` flag:
+  `DecoderTrim::Caller(DecoderDelay)` means the caller applies the container's
+  gapless trim and also discards the implementation's own output delay;
+  `DecoderTrim::Implementation` means the implementation has already applied
+  the container's trim. `with_trim`/`trim` replace
+  `with_trims`/`applies_trim`. `DecoderDelay` states the delay as
+  `Declared(n)` (zero means the implementation compensates), `PerStream` or
+  `Unknown`; `Decoder` gains `output_delay` (a defaulting accessor for the
+  instance's delay) and `discontinuity` (a defaulting notification that the
+  timeline broke).
+- `render_inventory` gains a delay column, so the pinned table grows by one
+  column.
+
 ### Added
+
+- `CodecParameters::pre_roll`/`with_pre_roll`: the samples a decoder must
+  consume after a seek or a splice before its output is correct, carried as a
+  decoder requirement rather than a trim.
+- `TrimStage::with_decoder_delay`: the front becomes the container's initial
+  padding plus the decoder's declared delay, and the tail shrinks by the same
+  amount. `Registry::trimmed_decoder` applies its descriptor's declaration, and
+  the wrapper drops the decoder's settling output for `pre_roll` after a reset,
+  a reconfiguration or a `discontinuity`.
 
 - `Decoder::reconfigure`, which adopts new `CodecParameters` mid-stream after
   the caller has drained: a decoder that still holds a frame refuses with
@@ -34,9 +58,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 - `Packet::trim_start`/`trim_end` and `AudioFrame::trim_start`/`trim_end` with
   their builders and accessors: per-packet gapless trim, and its provenance on
   the frame the packet decoded to.
-- `CodecDescriptor::with_trims`/`applies_trim`: whether an implementation
-  applies the container's trim itself. A decoder returns every decoded sample,
-  untrimmed, unless this is true; the rule is stated at the crate root and on
+- `CodecDescriptor::with_trim`/`trim`: whether an implementation applies the
+  container's trim itself, and its own output delay when it does not. A decoder
+  returns every decoded sample, untrimmed, unless its descriptor names
+  `DecoderTrim::Implementation`; the rule is stated at the crate root and on
   `Decoder::receive`.
 - `TrimStage`, which applies a stream's initial and trailing padding and each
   frame's own trim once, for every adapter and caller; it adjusts each frame's

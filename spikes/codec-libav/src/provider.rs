@@ -6,7 +6,8 @@ use std::vec::Vec;
 
 use broadcast_codec::{
     ChannelLayout, CodecDescriptor, CodecError, CodecId, CodecParameters, CodecProfile,
-    CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Probe, ProviderInfo, Timescale,
+    CodecProvider, Decoder, DecoderDelay, DecoderTrim, Direction, Encoder, EncoderConfig, Probe,
+    ProviderInfo, Timescale,
 };
 use ffmpeg_next::codec;
 
@@ -23,6 +24,10 @@ const VERSION_MAJOR_SHIFT: u32 = 16;
 const VERSION_MINOR_SHIFT: u32 = 8;
 /// Mask of one version component.
 const VERSION_COMPONENT_MASK: u32 = 0xff;
+
+/// The samples libav's MPEG-1 Layer III decoder emits before the first real
+/// one; measured against the committed fixture.
+const MPEG_AUDIO_DECODER_DELAY: u32 = 529;
 
 /// The picture size a probe asks a video encoder to open for.
 const PROBE_WIDTH: u32 = 320;
@@ -162,13 +167,29 @@ fn descriptor(
     let descriptor = CodecDescriptor::new(PROVIDER, implementation, codec, direction)
         .with_hardware(map::hardware(implementation))
         .with_lossless(map::lossless(codec))
-        .with_trims(false);
+        .with_trim(trim(codec, direction));
     match descriptor.with_profiles(profiles) {
         Ok(descriptor) => descriptor,
         Err(_) => CodecDescriptor::new(PROVIDER, implementation, codec, direction)
             .with_hardware(map::hardware(implementation))
             .with_lossless(map::lossless(codec))
-            .with_trims(false),
+            .with_trim(trim(codec, direction)),
+    }
+}
+
+/// What libav states about its own output delay for `codec`.
+///
+/// MPEG audio emits 529 samples of Layer III warm-up; AAC, Opus and PCM emit
+/// none, and a codec this adapter has not measured says so.
+fn trim(codec: CodecId, direction: Direction) -> DecoderTrim {
+    match (codec, direction) {
+        (CodecId::MpegAudio, Direction::Decode) => {
+            DecoderTrim::Caller(DecoderDelay::Declared(MPEG_AUDIO_DECODER_DELAY))
+        }
+        (CodecId::Aac | CodecId::Opus | CodecId::Pcm, Direction::Decode) => {
+            DecoderTrim::Caller(DecoderDelay::Declared(0))
+        }
+        _ => DecoderTrim::Caller(DecoderDelay::Unknown),
     }
 }
 

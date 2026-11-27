@@ -29,8 +29,8 @@ use test_harness::collect::{CollectMode, Collected, media_from_mp4, media_from_t
 use transmux::ll_hls::{LlHlsSegmenter, LlHlsStageOutput};
 use transmux::mux_stage::{MuxInput, MuxOutput};
 use transmux::{
-    CmafMuxStage, CodecConfig, FragmentCut, Sample, SampleTrim, TrackId, TrackSpec, TranscodeStage,
-    TsMuxStage, codec_parameters_from_track, track_spec_from_codec_parameters,
+    CmafMuxStage, CodecConfig, DecoderPreRoll, FragmentCut, Sample, SampleTrim, TrackId, TrackSpec,
+    TranscodeStage, TsMuxStage, codec_parameters_from_track, track_spec_from_codec_parameters,
 };
 
 /// Inputs the fake decoder holds before it emits a frame.
@@ -67,6 +67,7 @@ struct Counts {
     frames_out: usize,
     frames_in: usize,
     packets_out: usize,
+    discontinuities: usize,
 }
 
 /// A decoder that holds [`HOLD`] packets, then emits one frame — two for the
@@ -147,6 +148,10 @@ impl Decoder for FakeDecoder {
     fn reset(&mut self) {
         self.queued.clear();
         self.frames.clear();
+    }
+
+    fn discontinuity(&mut self) {
+        self.counts.borrow_mut().discontinuities += 1;
     }
 }
 
@@ -363,6 +368,71 @@ fn the_track_conversions_round_trip_the_fixtures_codecs() {
             "container provenance is the container's, not the seam's"
         );
     }
+}
+
+#[test]
+fn a_discontinuity_reaches_the_tracks_decoder_and_is_forwarded() {
+    let (specs, _) = fixture();
+    let spec = audio_spec(&specs);
+    let (mut stage, counts) = stage_for(&spec);
+    let mut outputs = Vec::new();
+    stage
+        .feed(
+            MuxInput::Discontinuity {
+                track: Some(spec.track_id),
+            },
+            Timestamp::ZERO,
+        )
+        .expect("a discontinuity");
+    while let Some(output) = stage.poll() {
+        outputs.push(output);
+    }
+    assert_eq!(
+        counts.borrow().discontinuities,
+        1,
+        "the track's decoder learns the timeline broke"
+    );
+    assert!(
+        matches!(outputs.as_slice(), [MuxInput::Discontinuity { track: Some(track) }] if *track == spec.track_id),
+        "the mark still reaches downstream"
+    );
+}
+
+#[test]
+fn a_discontinuity_for_another_track_leaves_this_decoder_alone() {
+    let (specs, _) = fixture();
+    let spec = audio_spec(&specs);
+    let (mut stage, counts) = stage_for(&spec);
+    stage
+        .feed(
+            MuxInput::Discontinuity {
+                track: Some(spec.track_id.next()),
+            },
+            Timestamp::ZERO,
+        )
+        .expect("a discontinuity");
+    assert_eq!(counts.borrow().discontinuities, 0);
+}
+
+#[test]
+fn the_track_conversions_round_trip_the_decoder_pre_roll() {
+    let (specs, _) = fixture();
+    let pre_roll = DecoderPreRoll::from_samples(3840).expect("a non-zero pre-roll");
+    let spec = audio_spec(&specs).with_pre_roll(Some(pre_roll));
+    let parameters =
+        codec_parameters_from_track(&spec).expect("the source track converts to the seam");
+    assert_eq!(
+        parameters.pre_roll(),
+        Some(pre_roll.samples()),
+        "the pre-roll crosses to the seam as samples"
+    );
+    let back = track_spec_from_codec_parameters(spec.track_id, &parameters)
+        .expect("the seam's parameters convert back");
+    assert_eq!(
+        back.pre_roll,
+        Some(pre_roll),
+        "and back as a typed pre-roll"
+    );
 }
 
 #[test]

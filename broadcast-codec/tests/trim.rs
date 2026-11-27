@@ -283,3 +283,81 @@ fn audio_parameters_read_their_padding_back() {
     assert_eq!(none.initial_padding(), 0);
     assert_eq!(none.trailing_padding(), None);
 }
+
+#[test]
+fn a_decoder_delay_cuts_the_front_and_leaves_an_unstated_tail_alone() {
+    let mut stage = TrimStage::new(&parameters(0, None)).with_decoder_delay(2);
+    assert_eq!(stage.decoder_delay(), 2);
+    let out = stage.push(mono(vec![1, 2, 3, 4], 0));
+    assert_eq!(values(&out[0]), [3, 4]);
+    assert_eq!(out[0].pts(), Some(3), "two samples move the timestamp");
+    assert!(stage.finish().is_empty());
+}
+
+#[test]
+fn a_decoder_delay_composes_with_the_container_trim() {
+    // Container: discard 1 at the front, hold 4 at the end. Delay: 2.
+    // Front becomes 3; the tail shrinks to 2.
+    let mut stage = TrimStage::new(&parameters(1, Some(4))).with_decoder_delay(2);
+    let first = stage.push(mono(vec![1, 2, 3, 4], 0));
+    assert!(
+        first.is_empty(),
+        "the held tail withholds the one sample left"
+    );
+    let second = stage.push(mono(vec![1, 2, 3, 4], 4));
+    let emitted: Vec<i16> = second.iter().flat_map(values).collect();
+    assert_eq!(emitted, [4, 1, 2]);
+    assert_eq!(
+        stage.held_samples(),
+        2,
+        "4 container samples minus the delay"
+    );
+    assert!(stage.finish().is_empty());
+}
+
+#[test]
+fn a_delay_larger_than_the_first_frame_spans_frames() {
+    let mut stage = TrimStage::new(&parameters(0, None)).with_decoder_delay(6);
+    assert!(stage.push(mono(vec![1, 2, 3, 4], 0)).is_empty());
+    let out = stage.push(mono(vec![5, 6, 7, 8], 7));
+    assert_eq!(values(&out[0]), [7, 8]);
+    assert_eq!(
+        out[0].pts(),
+        Some(10),
+        "the second frame keeps its own 7 ticks plus 2 samples"
+    );
+}
+
+#[test]
+fn an_undeclared_delay_applies_the_container_values_alone() {
+    let stage = TrimStage::new(&parameters(2, None));
+    assert_eq!(stage.decoder_delay(), 0);
+    let mut stage = stage;
+    let out = stage.push(mono(vec![1, 2, 3, 4], 0));
+    assert_eq!(values(&out[0]), [3, 4]);
+    assert_eq!(stage.held_samples(), 0);
+}
+
+#[test]
+fn a_pre_roll_is_not_a_trim() {
+    let padded = parameters(0, None).with_pre_roll(8);
+    let mut stage = TrimStage::new(&padded);
+    let out = stage.push(mono(vec![1, 2, 3, 4], 0));
+    assert_eq!(
+        values(&out[0]),
+        [1, 2, 3, 4],
+        "a decoder requirement is never discarded as padding"
+    );
+}
+
+#[test]
+fn a_delay_larger_than_the_container_tail_holds_nothing() {
+    let mut stage = TrimStage::new(&parameters(0, Some(2))).with_decoder_delay(5);
+    let out = stage.push(mono(vec![1, 2, 3, 4, 5, 6, 7, 8], 0));
+    assert_eq!(values(&out[0]), [6, 7, 8]);
+    assert_eq!(
+        stage.held_samples(),
+        0,
+        "the container's tail is smaller than the delay, so it shrinks to zero"
+    );
+}
