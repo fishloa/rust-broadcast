@@ -20,9 +20,10 @@ const TYPE_OFFSET: usize = 4;
 /// Width of one box header.
 const HEADER_LEN: usize = 8;
 
-fn load(bytes: &[u8]) -> StillImage {
+fn load(bytes: &[u8]) -> (StillImage, Vec<broadcast_core::damage::Damage>) {
     let config = ItemReaderConfig::default().with_total_len(Some(bytes.len() as u64));
     let mut reader = ItemReader::new(config);
+    let mut damages = Vec::new();
     loop {
         match reader.step().expect("step") {
             ItemStep::Need(range) => {
@@ -35,8 +36,9 @@ fn load(bytes: &[u8]) -> StillImage {
             ItemStep::Loaded(image) => {
                 let image = image.clone();
                 assert!(matches!(reader.step().expect("step"), ItemStep::Done));
-                return image;
+                return (image, damages);
             }
+            ItemStep::Damage(damage) => damages.push(damage),
             ItemStep::Done => panic!("done without a model"),
             _ => panic!("unexpected step"),
         }
@@ -90,7 +92,18 @@ fn an_unrepresentable_property_stays_opaque_and_is_reported() {
         if bytes == original {
             continue;
         }
-        let image = load(&bytes);
+        let (image, damages) = load(&bytes);
+        assert_eq!(
+            damages.len(),
+            1,
+            "{fixture}: the step channel publishes one report, got {damages:?}"
+        );
+        assert_eq!(damages[0].fourcc(), Some(PIXI), "{fixture}: the code");
+        assert_eq!(
+            damages[0].what(),
+            OpaqueReason::BufferTooShort.name(),
+            "{fixture}: the reason"
+        );
         let findings = image.structure_findings();
         let reported: Vec<&ImageFinding> = findings
             .iter()
@@ -142,7 +155,8 @@ fn an_unrepresentable_property_stays_opaque_and_is_reported() {
 #[test]
 fn a_readable_file_reports_no_degradation() {
     let bytes = fixtures::read("avif/plain.avif");
-    let image = load(&bytes);
+    let (image, damages) = load(&bytes);
+    assert!(damages.is_empty(), "a clean file publishes no report");
     assert!(
         !image
             .structure_findings()

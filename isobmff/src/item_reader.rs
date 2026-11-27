@@ -92,11 +92,13 @@ fn end(offset: u64, length: u64) -> u64 {
 }
 
 /// Configuration for [`ItemReader`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct ItemReaderConfig {
     limits: Limits,
     total_len: Option<u64>,
+    mode: crate::reader::Mode,
+    damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 impl ItemReaderConfig {
@@ -105,6 +107,39 @@ impl ItemReaderConfig {
     pub const fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
         self
+    }
+
+    /// How strictly a box the model cannot type is treated.
+    ///
+    /// Best effort is the default
+    /// ([`Mode::Permissive`](crate::reader::Mode::Permissive)): the box is
+    /// carried byte-exact and reported as a
+    /// [`Damage`](broadcast_core::damage::Damage).
+    /// [`Mode::Strict`](crate::reader::Mode::Strict) is the explicit opt-in
+    /// that refuses such a file instead.
+    #[must_use]
+    pub const fn with_mode(mut self, mode: crate::reader::Mode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// What each report of skipped content means to the caller.
+    #[must_use]
+    pub fn with_damage_policy(mut self, policy: broadcast_core::damage::DamagePolicy) -> Self {
+        self.damage_policy = policy;
+        self
+    }
+
+    /// How strictly a box the model cannot type is treated.
+    #[must_use]
+    pub const fn mode(&self) -> crate::reader::Mode {
+        self.mode
+    }
+
+    /// What each report of skipped content means to the caller.
+    #[must_use]
+    pub fn damage_policy(&self) -> &broadcast_core::damage::DamagePolicy {
+        &self.damage_policy
     }
 
     /// The file length, when the caller knows it. A size-0 top-level box and
@@ -1561,6 +1596,9 @@ fn detect_derived_cycle(items: &[Item]) -> Result<()> {
 pub enum ItemStep<'a> {
     /// Supply exactly this byte range, then call `step` again.
     Need(ByteRange),
+    /// Content the reader skipped: a box it carried uninterpreted, a second
+    /// file-level `meta`, or a dropped item. The workspace's one report.
+    Damage(broadcast_core::damage::Damage),
     /// The item model, once every structure the reader needs has been read.
     Loaded(&'a StillImage),
     /// The file has been fully reported.
@@ -1616,6 +1654,7 @@ pub struct ItemReader {
     derived_queue: VecDeque<usize>,
     derived_current: Option<DerivedFetch>,
     degraded: Vec<ImageFinding>,
+    reported_degraded: usize,
 }
 
 impl ItemReader {
@@ -1639,6 +1678,7 @@ impl ItemReader {
             derived_queue: VecDeque::new(),
             derived_current: None,
             degraded: Vec::new(),
+            reported_degraded: 0,
         }
     }
 
@@ -1651,6 +1691,9 @@ impl ItemReader {
     /// Ask for the next range, or yield the model.
     pub fn step(&mut self) -> Result<ItemStep<'_>> {
         loop {
+            if let Some(damage) = self.next_damage()? {
+                return Ok(ItemStep::Damage(damage));
+            }
             if self.pending.is_none() {
                 match &self.phase {
                     Phase::Header {
@@ -1705,6 +1748,31 @@ impl ItemReader {
             if let Some(range) = self.pending {
                 return Ok(ItemStep::Need(range));
             }
+        }
+    }
+
+    /// The next report a degraded box produced, refused by the caller's policy
+    /// (or by [`Mode::Strict`](crate::reader::Mode::Strict)) when it says so.
+    fn next_damage(&mut self) -> Result<Option<broadcast_core::damage::Damage>> {
+        // Before the model exists the findings pile up in the reader; once it
+        // does, the derived-image pass appends to the model's own list.
+        let finding = match self.image.as_ref() {
+            Some(image) => image.degraded.get(self.reported_degraded).copied(),
+            None => self.degraded.get(self.reported_degraded).copied(),
+        };
+        let Some(finding) = finding else {
+            return Ok(None);
+        };
+        self.reported_degraded += 1;
+        let damage = finding.to_damage();
+        if self.config.mode() == crate::reader::Mode::Strict {
+            return Err(Error::Damage(broadcast_core::damage::DamageError::new(
+                damage,
+            )));
+        }
+        match self.config.damage_policy().admit(damage) {
+            Ok(damage) => Ok(Some(damage)),
+            Err(stop) => Err(Error::Damage(stop)),
         }
     }
 

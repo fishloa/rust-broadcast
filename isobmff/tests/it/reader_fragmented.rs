@@ -26,6 +26,7 @@ struct Outcome {
     fragments: Vec<FragmentInfo>,
     samples: Vec<SampleRef>,
     requests: Vec<ByteRange>,
+    damages: Vec<broadcast_core::damage::Damage>,
 }
 
 fn drive(bytes: &[u8], config: ReaderConfig) -> isobmff::Result<Outcome> {
@@ -43,6 +44,7 @@ fn drive(bytes: &[u8], config: ReaderConfig) -> isobmff::Result<Outcome> {
             Step::Metadata(_) => {}
             Step::Fragment(info) => outcome.fragments.push(info),
             Step::Sample(sample) => outcome.samples.push(sample),
+            Step::Damage(damage) => outcome.damages.push(damage),
             Step::Done => break,
             _ => break,
         }
@@ -306,16 +308,57 @@ fn a_moof_larger_than_the_limit_is_a_typed_error() {
 }
 
 #[test]
-fn a_truncated_final_fragment_is_a_typed_error() {
+fn a_cut_fragment_plays_what_is_complete_and_reports_the_rest() {
     let bytes = test_fixtures::read("mp4/h264-aac-frag.mp4");
     let outcome = drive(&bytes, config(&bytes, SampleOrder::DecodeTime)).expect("full drive");
+    assert!(!outcome.samples.is_empty(), "the clean file has samples");
     let first_moof = outcome.fragments[0].moof;
-    let cut = usize::try_from(first_moof.offset + first_moof.len).expect("offset") + 8;
+    let mdat = usize::try_from(first_moof.offset + first_moof.len).expect("offset");
+    // The `mdat` header, then half its payload.
+    let cut = mdat + 8 + (bytes.len() - mdat - 8) / 8;
     let truncated = &bytes[..cut];
+    let strict = config(truncated, SampleOrder::DecodeTime).with_mode(Mode::Strict);
     assert!(
-        drive(truncated, config(truncated, SampleOrder::DecodeTime)).is_err(),
-        "a fragment whose mdat is cut short must fail, not silently yield fewer samples"
+        drive(truncated, strict).is_err(),
+        "strict refuses a fragment whose mdat is cut short"
     );
+    let lenient = drive(truncated, config(truncated, SampleOrder::DecodeTime))
+        .expect("a best-effort read carries the complete samples");
+    assert!(
+        lenient
+            .damages
+            .iter()
+            .any(|damage| damage.kind() == broadcast_core::damage::DamageKind::InputTruncated),
+        "the cut tail is reported: {:?}",
+        lenient.damages
+    );
+    let cut64 = u64::try_from(cut).expect("cut");
+    let expected: Vec<_> = outcome
+        .samples
+        .iter()
+        .filter(|sample| u64::from(sample.size).saturating_add(sample.offset) <= cut64)
+        .map(|sample| {
+            (
+                sample.track,
+                sample.index,
+                sample.decode_time,
+                sample.offset,
+            )
+        })
+        .collect();
+    let got: Vec<_> = lenient
+        .samples
+        .iter()
+        .map(|sample| {
+            (
+                sample.track,
+                sample.index,
+                sample.decode_time,
+                sample.offset,
+            )
+        })
+        .collect();
+    assert_eq!(got, expected, "every whole sample inside the cut plays");
 }
 
 /// Drive to [`Step::Tracks`], seek, and return the first material step after
@@ -702,10 +745,10 @@ fn a_run_pointing_into_the_second_mdat_after_the_moof_still_resolves() {
 // ---------------------------------------------------------------------------
 // Sequential units: an init segment followed by media segments, each closed by
 // `Reader::end_of_unit`. A damaged segment must yield its complete prefix, one
-// `Warning::TruncatedFragment`, and leave the next segment readable.
+// a truncated-fragment report, and leave the next segment readable.
 // ---------------------------------------------------------------------------
 
-use isobmff::reader::{Mode, Warning};
+use isobmff::reader::Mode;
 
 /// One damaged media segment, built from a well-formed one in the test.
 enum Damage {
@@ -790,7 +833,7 @@ fn damage(segment: &[u8], damage: &Damage) -> Vec<u8> {
 /// The result of driving one sequential input unit by unit.
 struct Units {
     samples: Vec<Vec<SampleRef>>,
-    warnings: Vec<Warning>,
+    warnings: Vec<broadcast_core::damage::Damage>,
     error: Option<isobmff::Error>,
 }
 
@@ -835,7 +878,7 @@ fn drive_units(whole: &[u8], units: &[(usize, usize)], config: ReaderConfig) -> 
                         unit.push(sample);
                     }
                 }
-                Ok(Step::Warning(warning)) => outcome.warnings.push(warning),
+                Ok(Step::Damage(warning)) => outcome.warnings.push(warning),
                 Ok(Step::Done) => return outcome,
                 Ok(_) => {}
                 Err(error) => {
@@ -850,7 +893,7 @@ fn drive_units(whole: &[u8], units: &[(usize, usize)], config: ReaderConfig) -> 
         }
         loop {
             match reader.step() {
-                Ok(Step::Warning(warning)) => outcome.warnings.push(warning),
+                Ok(Step::Damage(warning)) => outcome.warnings.push(warning),
                 Ok(Step::Sample(sample)) => {
                     if let Some(unit) = outcome.samples.last_mut() {
                         unit.push(sample);
@@ -932,7 +975,8 @@ fn end_of_unit_recovers_after_each_damage() {
                 permissive
                     .warnings
                     .iter()
-                    .any(|warning| matches!(warning, Warning::TruncatedFragment { .. })),
+                    .any(|damage| damage.kind()
+                        == broadcast_core::damage::DamageKind::InputTruncated),
                 "segment {victim} {}: a truncated-fragment warning",
                 harm.name()
             );

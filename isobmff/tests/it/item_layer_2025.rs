@@ -71,6 +71,7 @@ fn load_bytes(bytes: &[u8], config: ItemReaderConfig) -> StillImage {
                 return image;
             }
             ItemStep::Done => panic!("done without a model"),
+            ItemStep::Damage(_) => {}
             _ => panic!("unexpected step"),
         }
     }

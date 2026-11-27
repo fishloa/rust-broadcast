@@ -41,6 +41,7 @@ fn load_bytes(bytes: &[u8], config: ItemReaderConfig) -> StillImage {
                 return image;
             }
             ItemStep::Done => panic!("done without a model"),
+            ItemStep::Damage(_) => {}
             _ => panic!("unexpected step"),
         }
     }
@@ -58,6 +59,7 @@ fn expect_load_error(bytes: &[u8], config: ItemReaderConfig) -> isobmff::Error {
                     return err;
                 }
             }
+            Ok(ItemStep::Damage(_)) => {}
             Ok(ItemStep::Loaded(_)) => panic!("loaded an invalid file"),
             Ok(ItemStep::Done) => panic!("done without an error"),
             Ok(_) => panic!("unexpected step"),

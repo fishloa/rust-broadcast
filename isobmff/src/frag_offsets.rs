@@ -289,14 +289,14 @@ pub fn sample_ranges_in_run_until(
                     .checked_add(size)
                     .ok_or(Error::InvalidInput("sample offset + size overflow"))?;
                 if tfhd.track_id == track_id {
+                    if !inside_mdat(mdats, start, end) {
+                        return Ok((out, true));
+                    }
                     *copied_bytes = copied_bytes
                         .checked_add(size)
                         .ok_or(Error::SampleDataBudgetExceeded { limit: budget })?;
                     if *copied_bytes > budget {
                         return Err(Error::SampleDataBudgetExceeded { limit: budget });
-                    }
-                    if !inside_mdat(mdats, start, end) {
-                        return Ok((out, true));
                     }
                     out.push(FragmentSampleRange {
                         start,

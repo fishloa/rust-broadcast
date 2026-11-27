@@ -8,9 +8,10 @@
 //! a sequential input holds at most one bounded unit (a `moov`, or a `moof`
 //! plus the `mdat` payload its runs address).
 //!
-//! The reader is always created in [`Mode::Permissive`]: a fault it tolerates
-//! becomes [`DemuxEvent::InputDegraded`], never a silent skip. A fault it
-//! cannot tolerate is the stage's error, after which the stage is poisoned.
+//! The reader is best effort (its default): a fault it tolerates becomes
+//! [`DemuxEvent::Damage`] beside the crate's [`DemuxEvent::InputDegraded`]
+//! view, never a silent skip. A fault it cannot tolerate is the stage's error,
+//! after which the stage is poisoned.
 //! A sequential consumer marks each media segment with [`Mp4Input::SegmentEnd`]:
 //! the stage drops any partially read top-level box, keeps the parsed `moov`
 //! and its track state, and resumes at the next segment's first byte.
@@ -32,8 +33,7 @@ use bytes::{Buf, Bytes, BytesMut};
 use core::num::NonZeroUsize;
 use isobmff::Limits;
 use isobmff::reader::{
-    ByteRange, FragmentInfo, Mode, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo,
-    Warning,
+    ByteRange, FragmentInfo, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo,
 };
 use isobmff::sample_table::SampleRef;
 
@@ -171,7 +171,7 @@ enum OwnedStep {
     Tracks(Vec<TrackInfo>),
     Fragment(FragmentInfo),
     Sample(SampleRef),
-    Warning(Warning),
+    Damage(broadcast_core::damage::Damage),
     Done,
 }
 
@@ -234,7 +234,6 @@ impl Mp4Demux {
             .with_total_len(config.total_len)
             .with_order(config.order)
             .with_source(Source::Seekable)
-            .with_mode(Mode::Permissive)
             .with_limits(config.limits);
         Self::create(config, SourceMode::Seekable, reader_config)
     }
@@ -246,7 +245,6 @@ impl Mp4Demux {
             .with_total_len(config.total_len)
             .with_order(SampleOrder::File)
             .with_source(Source::ForwardOnly)
-            .with_mode(Mode::Permissive)
             .with_limits(config.limits);
         Self::create(config, SourceMode::Sequential, reader_config)
     }
@@ -326,8 +324,8 @@ impl Mp4Demux {
     /// damaged segment cannot affect the next one.
     fn segment_end(&mut self) -> Result<()> {
         let unit_end = self.buf_end();
-        if let Some(OwnedStep::Warning(warning)) = self.staged.take() {
-            self.push_warning(warning);
+        if let Some(OwnedStep::Damage(damage)) = self.staged.take() {
+            self.push_damage(damage);
         }
         self.staged = None;
         self.structure = None;
@@ -418,7 +416,7 @@ impl Mp4Demux {
                         return Ok(());
                     }
                 }
-                OwnedStep::Warning(warning) => self.push_warning(warning),
+                OwnedStep::Damage(damage) => self.push_damage(damage),
                 OwnedStep::Done => self.done = true,
             }
         }
@@ -445,7 +443,7 @@ impl Mp4Demux {
             Step::Metadata(_) => None,
             Step::Fragment(info) => Some(OwnedStep::Fragment(info)),
             Step::Sample(sref) => Some(OwnedStep::Sample(sref)),
-            Step::Warning(warning) => Some(OwnedStep::Warning(warning)),
+            Step::Damage(damage) => Some(OwnedStep::Damage(damage)),
             Step::Done => Some(OwnedStep::Done),
             _ => None,
         })
@@ -552,10 +550,18 @@ impl Mp4Demux {
         self.emit_resolved();
     }
 
-    fn push_warning(&mut self, warning: Warning) {
-        let position = warning.position();
-        let kind = match warning {
-            Warning::TruncatedMdat { .. } => InputDegradation::TruncatedUnit { position },
+    /// Publish one reader report: the crate's long-standing
+    /// [`DemuxEvent::InputDegraded`] view of it and, beside it, the one
+    /// [`DemuxEvent::Damage`] every reader publishes.
+    fn push_damage(&mut self, damage: broadcast_core::damage::Damage) {
+        let position = damage
+            .location()
+            .byte_range()
+            .map_or(0, broadcast_core::damage::ByteRange::start);
+        let kind = match damage.kind() {
+            broadcast_core::damage::DamageKind::InputTruncated => {
+                InputDegradation::TruncatedUnit { position }
+            }
             _ => InputDegradation::MalformedUnit { position },
         };
         self.events.push_back(DemuxEvent::InputDegraded {
@@ -563,6 +569,7 @@ impl Mp4Demux {
             kind,
             provenance: EventProvenance::default(),
         });
+        self.events.push_back(DemuxEvent::damage(damage));
     }
 
     fn push_malformed(&mut self, position: u64) {

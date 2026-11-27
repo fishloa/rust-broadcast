@@ -241,13 +241,19 @@ pub enum Source {
 }
 
 /// How strictly the reader treats known real-world faults.
+///
+/// Best effort is the default: a fault that still leaves media addressable is
+/// carried and reported as a [`Damage`](broadcast_core::damage::Damage), never
+/// a silent skip and never a failed file. [`Mode::Strict`] is the explicit
+/// opt-in for a validator: any violation is an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Mode {
-    /// Any violation is an error.
-    #[default]
+    /// Any violation is an error. A caller that validates asks for this.
     Strict,
-    /// The faults listed by the design §4.7 are reported as warnings.
+    /// Content still addressable past a fault is carried and the fault is
+    /// reported as a [`Damage`](broadcast_core::damage::Damage).
+    #[default]
     Permissive,
 }
 
@@ -260,6 +266,7 @@ pub struct ReaderConfig {
     order: SampleOrder,
     source: Source,
     mode: Mode,
+    damage_policy: broadcast_core::damage::DamagePolicy,
     registry: Option<crate::registry::BoxRegistry>,
 }
 
@@ -289,6 +296,18 @@ impl ReaderConfig {
     #[must_use]
     pub fn with_mode(mut self, mode: Mode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    /// Set what each report of skipped content means to the caller:
+    /// [`Disposition::Report`](broadcast_core::damage::Disposition::Report)
+    /// (the default) publishes it and continues,
+    /// [`Disposition::Fail`](broadcast_core::damage::Disposition::Fail) stops
+    /// the read with that [`Damage`](broadcast_core::damage::Damage) in the
+    /// error.
+    #[must_use]
+    pub fn with_damage_policy(mut self, policy: broadcast_core::damage::DamagePolicy) -> Self {
+        self.damage_policy = policy;
         self
     }
 
@@ -327,6 +346,12 @@ impl ReaderConfig {
     #[must_use]
     pub fn mode(&self) -> Mode {
         self.mode
+    }
+
+    /// What each report of skipped content means to the caller.
+    #[must_use]
+    pub fn damage_policy(&self) -> &broadcast_core::damage::DamagePolicy {
+        &self.damage_policy
     }
 
     /// Attach a [`BoxRegistry`](crate::registry::BoxRegistry) of private box
@@ -819,7 +844,8 @@ pub struct FragmentInfo {
     pub level_assignment: Option<crate::index_boxes::LevelAssignmentBox>,
 }
 
-/// A fault [`Mode::Permissive`] tolerated, reported once as [`Step::Warning`].
+/// A fault the best-effort default tolerated, published once as
+/// [`Step::Damage`](crate::reader::Step::Damage) through [`Warning::to_damage`].
 ///
 /// Each variant names the box or sample table row that carried the fault and
 /// the absolute file offset it starts at. A warning never invents a field
@@ -949,8 +975,9 @@ pub enum Step<'a> {
     Fragment(FragmentInfo),
     /// One sample descriptor, in the configured order.
     Sample(SampleRef),
-    /// A fault the configured [`Mode::Permissive`] tolerated.
-    Warning(Warning),
+    /// Content the reader skipped, or a fault it tolerated: the workspace's
+    /// one report, never a silent skip.
+    Damage(broadcast_core::damage::Damage),
     /// No more steps.
     Done,
 }
@@ -1133,6 +1160,7 @@ pub struct Reader {
     warnings: Vec<Warning>,
     deferred_warning: Option<Warning>,
     mdat_truncation_reported: bool,
+    fragment_truncation_reported: bool,
     tracks: Vec<TrackInfo>,
     cursors: Vec<CursorSlot>,
     emitted_tracks: bool,
@@ -1180,6 +1208,7 @@ impl Reader {
             warnings: Vec::new(),
             deferred_warning: None,
             mdat_truncation_reported: false,
+            fragment_truncation_reported: false,
             tracks: Vec::new(),
             cursors: Vec::new(),
             emitted_tracks: false,
@@ -1512,7 +1541,19 @@ impl Reader {
         self.warnings.push(warning);
     }
 
-    /// Turn the tolerant walk's notes into the warnings a permissive read
+    /// The next report to publish, refused by the caller's
+    /// [`DamagePolicy`](broadcast_core::damage::DamagePolicy) when it says so.
+    fn next_damage(&mut self) -> Result<Option<broadcast_core::damage::Damage>> {
+        let Some(warning) = self.next_warning() else {
+            return Ok(None);
+        };
+        match self.config.damage_policy.admit(warning.to_damage()) {
+            Ok(damage) => Ok(Some(damage)),
+            Err(stop) => Err(Error::Damage(stop)),
+        }
+    }
+
+    /// Turn the tolerant walk's notes into the faults a best-effort read
     /// reports.
     fn report_notes(&mut self, notes: Vec<crate::box_support::Note>) {
         if !self.tolerated() {
@@ -1552,6 +1593,16 @@ impl Reader {
         self.warn(Warning::TruncatedMdat { offset });
     }
 
+    /// Report a cut fragment once: the truncated `mdat` header and a run that
+    /// leaves its payload describe the same fault.
+    fn warn_truncated_fragment(&mut self, offset: u64) {
+        if self.fragment_truncation_reported {
+            return;
+        }
+        self.fragment_truncation_reported = true;
+        self.warn(Warning::TruncatedFragment { offset });
+    }
+
     fn finish_step(&mut self) -> Result<Step<'_>> {
         for carried in core::mem::take(&mut self.between) {
             self.top_level.push(TopLevelBox {
@@ -1560,8 +1611,8 @@ impl Reader {
             });
         }
         self.done = true;
-        if let Some(warning) = self.next_warning() {
-            return Ok(Step::Warning(warning));
+        if let Some(damage) = self.next_damage()? {
+            return Ok(Step::Damage(damage));
         }
         Ok(Step::Done)
     }
@@ -1888,8 +1939,8 @@ impl Reader {
     /// [`Step::Tracks`] arm hands out its own track table), which
     /// [`Iterator::next`]'s signature cannot express.
     pub fn step(&mut self) -> Result<Step<'_>> {
-        if let Some(warning) = self.next_warning() {
-            return Ok(Step::Warning(warning));
+        if let Some(damage) = self.next_damage()? {
+            return Ok(Step::Damage(damage));
         }
         if let Some(pending) = self.pending {
             return Ok(Step::Need(pending.range()));
@@ -2065,12 +2116,12 @@ impl Reader {
                 size = end.saturating_sub(offset);
                 if header.box_type.is(b"mdat") {
                     if !self.fragments.is_empty() {
-                        self.warn(Warning::TruncatedFragment { offset });
+                        self.warn_truncated_fragment(offset);
                     } else {
                         self.warn_truncated_mdat(offset);
                     }
                 } else {
-                    self.warn(Warning::TruncatedFragment { offset });
+                    self.warn_truncated_fragment(offset);
                     self.done = true;
                 }
             } else {
@@ -2172,6 +2223,7 @@ impl Reader {
             let fragment = ByteRange { offset, len: size };
             self.request(offset, size)?;
             self.pending = Some(Pending::Moof(fragment));
+            self.fragment_truncation_reported = false;
             self.fragments.push_back(FragmentState {
                 offset,
                 range: fragment,
@@ -2346,11 +2398,11 @@ impl Reader {
                 self.fragments.pop_back();
                 let truncated = self.config.total_len.is_some_and(|total| self.pos >= total);
                 if !self.done {
-                    self.warn(if truncated {
-                        Warning::TruncatedFragment { offset }
+                    if truncated {
+                        self.warn_truncated_fragment(offset);
                     } else {
-                        Warning::MalformedFragment { offset }
-                    });
+                        self.warn(Warning::MalformedFragment { offset });
+                    }
                 }
                 if truncated {
                     self.done = true;
@@ -2362,20 +2414,34 @@ impl Reader {
     }
 
     fn accept_moov(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
-        let mut owned = Vec::new();
-        let source: &[u8] = if self.tolerated() {
-            owned.extend_from_slice(bytes);
-            sanitize_moov(&mut owned, range.offset, &mut self.warnings);
-            &owned
-        } else {
-            bytes
-        };
+        // The source's own bytes first: a `moov` that parses as it stands is
+        // read from them unchanged, so a clean file re-emits byte for byte.
+        let mut repaired = Vec::new();
         let mut notes = Vec::new();
-        let movie = {
-            let mut sink =
-                crate::box_support::Notes::new(source, range.offset, self.tolerated(), &mut notes);
-            MovieBox::parse_notes(source, Some(&mut sink), &self.config.limits)
-        }?;
+        let movie = match self.parse_moov(bytes, range.offset, &mut notes) {
+            Ok(movie) => movie,
+            Err(err) if self.tolerated() => {
+                // A structural fault the raw bytes state: clamp the overruns
+                // and patch a zero movie timescale in one copy, then read
+                // that. The reports say which boxes were repaired.
+                repaired.extend_from_slice(bytes);
+                sanitize_moov(&mut repaired, range.offset, &mut self.warnings);
+                let mut retry = Vec::new();
+                match self.parse_moov(&repaired, range.offset, &mut retry) {
+                    Ok(movie) => {
+                        notes = retry;
+                        movie
+                    }
+                    Err(_) => return Err(err),
+                }
+            }
+            Err(err) => return Err(err),
+        };
+        let source: &[u8] = if repaired.is_empty() {
+            bytes
+        } else {
+            &repaired
+        };
         self.report_notes(core::mem::take(&mut notes));
         let mut tracks = Vec::with_capacity(movie.tracks.len());
         let mut cursors = Vec::new();
@@ -2471,6 +2537,17 @@ impl Reader {
         Ok(())
     }
 
+    /// Parse one `moov` from exactly these bytes, collecting the walk's notes.
+    fn parse_moov(
+        &self,
+        source: &[u8],
+        offset: u64,
+        notes: &mut Vec<crate::box_support::Note>,
+    ) -> Result<MovieBox> {
+        let mut sink = crate::box_support::Notes::new(source, offset, self.tolerated(), notes);
+        MovieBox::parse_notes(source, Some(&mut sink), &self.config.limits)
+    }
+
     fn movie_metadata(&self, movie: &MovieBox) -> Result<Option<crate::metadata::Metadata>> {
         movie.metadata(&self.config.limits)
     }
@@ -2500,29 +2577,21 @@ impl Reader {
                 }
                 if self.tolerated() && tolerable_fragment_error(&err) {
                     let truncated = self.config.total_len.is_some_and(|total| self.pos >= total);
-                    let already = self.warnings.iter().any(|warning| {
-                        matches!(warning, Warning::TruncatedFragment { offset } if *offset == state.offset)
-                    });
-                    if !already {
-                        self.warn(if truncated {
-                            Warning::TruncatedFragment {
-                                offset: state.offset,
-                            }
-                        } else {
-                            Warning::MalformedFragment {
-                                offset: state.offset,
-                            }
-                        });
-                    }
                     if truncated {
+                        self.warn_truncated_fragment(state.offset);
                         self.done = true;
+                    } else {
+                        self.warn(Warning::MalformedFragment {
+                            offset: state.offset,
+                        });
                     }
                     return Ok(());
                 }
                 return Err(err);
             }
         };
-        if resolved.truncated {
+        if resolved.truncated && !self.fragment_truncation_reported {
+            self.fragment_truncation_reported = true;
             self.deferred_warning = Some(Warning::TruncatedFragment {
                 offset: state.offset,
             });

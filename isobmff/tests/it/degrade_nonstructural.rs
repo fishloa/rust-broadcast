@@ -6,10 +6,11 @@
 //! non-structural box, so its typed parse fails where it used to fail the whole
 //! read (or, for a track-level metadata atom, lose the metadata silently).
 
+use broadcast_core::damage::Damage;
 use isobmff::error::OpaqueReason;
 use isobmff::image_brands::ImageFinding;
 use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep, StillImage};
-use isobmff::reader::{Mode, Reader, ReaderConfig, Source, Step, Warning};
+use isobmff::reader::{Mode, Reader, ReaderConfig, Source, Step};
 use test_fixtures as fixtures;
 
 /// Offset of a box four-CC within its header.
@@ -24,9 +25,10 @@ const HUGE_COUNT: [u8; 2] = [0xFF, 0xFF];
 /// version/flags word.
 const TWO_BYTES: usize = 2;
 
-fn load_item(bytes: &[u8]) -> StillImage {
+fn load_item(bytes: &[u8]) -> (StillImage, Vec<Damage>) {
     let config = ItemReaderConfig::default().with_total_len(Some(bytes.len() as u64));
     let mut reader = ItemReader::new(config);
+    let mut damages = Vec::new();
     loop {
         match reader.step().expect("step") {
             ItemStep::Need(range) => {
@@ -39,8 +41,9 @@ fn load_item(bytes: &[u8]) -> StillImage {
             ItemStep::Loaded(image) => {
                 let image = image.clone();
                 assert!(matches!(reader.step().expect("step"), ItemStep::Done));
-                return image;
+                return (image, damages);
             }
+            ItemStep::Damage(damage) => damages.push(damage),
             ItemStep::Done => panic!("done without a model"),
             _ => panic!("unexpected step"),
         }
@@ -63,7 +66,7 @@ fn find_box(bytes: &[u8], fourcc: &[u8; 4]) -> usize {
     panic!("no {:?} box", core::str::from_utf8(fourcc));
 }
 
-fn read_movie(bytes: &[u8], mode: Mode) -> Result<Vec<Warning>, isobmff::Error> {
+fn read_movie(bytes: &[u8], mode: Mode) -> Result<Vec<Damage>, isobmff::Error> {
     let config = ReaderConfig::default()
         .with_total_len(Some(bytes.len() as u64))
         .with_source(Source::Seekable)
@@ -77,7 +80,7 @@ fn read_movie(bytes: &[u8], mode: Mode) -> Result<Vec<Warning>, isobmff::Error> 
                 let len = usize::try_from(range.len).expect("length");
                 reader.supply(range.offset, &bytes[start..start + len])?;
             }
-            Step::Warning(warning) => warnings.push(warning),
+            Step::Damage(damage) => warnings.push(damage),
             Step::Done => break,
             _ => {}
         }
@@ -85,26 +88,35 @@ fn read_movie(bytes: &[u8], mode: Mode) -> Result<Vec<Warning>, isobmff::Error> 
     Ok(warnings)
 }
 
-fn one_unrepresentable(name: &str, warnings: &[Warning], box_type: [u8; 4]) -> OpaqueReason {
-    let reported: Vec<&Warning> = warnings
+fn one_unrepresentable(name: &str, warnings: &[Damage], box_type: [u8; 4]) -> String {
+    let reported: Vec<&Damage> = warnings
         .iter()
-        .filter(|warning| matches!(warning, Warning::UnrepresentableBox { .. }))
+        .filter(|damage| {
+            damage.kind() == broadcast_core::damage::DamageKind::MetadataUninterpreted
+                && damage.recoverable_bytes()
+        })
         .collect();
-    assert_eq!(reported.len(), 1, "{name}: one warning, got {warnings:?}");
-    let Warning::UnrepresentableBox {
-        box_type: found,
-        reason,
-        ..
-    } = *reported[0]
-    else {
-        unreachable!("filtered above")
-    };
+    assert_eq!(reported.len(), 1, "{name}: one report, got {warnings:?}");
+    let damage = reported[0];
     assert_eq!(
-        core::str::from_utf8(&found).expect("fourcc"),
+        core::str::from_utf8(&damage.fourcc().expect("a four-character code")).expect("fourcc"),
         core::str::from_utf8(&box_type).expect("fourcc"),
-        "{name}: the warning names the box"
+        "{name}: the report names the box"
     );
-    reason
+    assert!(damage.location().byte_range().is_some(), "{name}: located");
+    damage.what().to_owned()
+}
+
+/// The reports of a box carried uninterpreted, as the step channel published
+/// them.
+fn carried_damages(damages: &[Damage]) -> Vec<&Damage> {
+    damages
+        .iter()
+        .filter(|damage| {
+            damage.kind() == broadcast_core::damage::DamageKind::MetadataUninterpreted
+                && damage.recoverable_bytes()
+        })
+        .collect()
 }
 
 /// The first child of a FullBox container starting at `box`.
@@ -124,7 +136,7 @@ fn iref_count_at(bytes: &[u8], iref: usize) -> usize {
 fn a_derived_item_body_that_cannot_be_typed_keeps_the_item() {
     let name = "avif/gainmap-swapped.avif";
     let original = fixtures::read(name);
-    let image = load_item(&original);
+    let (image, _) = load_item(&original);
     let tmap = image
         .items()
         .iter()
@@ -133,13 +145,18 @@ fn a_derived_item_body_that_cannot_be_typed_keeps_the_item() {
     let offset = tmap.data_ranges()[0].offset as usize;
     let mut bytes = original.clone();
     bytes[offset] = 0xFF;
-    let image = load_item(&bytes);
+    let (image, damages) = load_item(&bytes);
     let findings = image.structure_findings();
     let reported: Vec<&ImageFinding> = findings
         .iter()
         .filter(|finding| matches!(finding, ImageFinding::UnrepresentableBox { .. }))
         .collect();
     assert_eq!(reported.len(), 1, "{name}: one finding, got {findings:?}");
+    assert_eq!(
+        carried_damages(&damages).len(),
+        reported.len(),
+        "{name}: the step channel publishes the same fault: {damages:?}"
+    );
     assert_eq!(
         image.reemit_into(&bytes).expect("re-emit"),
         bytes,
@@ -158,13 +175,18 @@ fn an_entity_group_that_cannot_be_typed_is_carried() {
     // `num_entities_in_group` is the second field of the group's body.
     let count_at = child + HEADER + FULLBOX + 4;
     bytes[count_at..count_at + 2].copy_from_slice(&HUGE_COUNT);
-    let image = load_item(&bytes);
+    let (image, damages) = load_item(&bytes);
     let findings = image.structure_findings();
     let reported: Vec<&ImageFinding> = findings
         .iter()
         .filter(|finding| matches!(finding, ImageFinding::UnrepresentableBox { .. }))
         .collect();
     assert_eq!(reported.len(), 1, "{name}: one finding, got {findings:?}");
+    assert_eq!(
+        carried_damages(&damages).len(),
+        reported.len(),
+        "{name}: the step channel publishes the same fault: {damages:?}"
+    );
     let ImageFinding::UnrepresentableBox { offset, .. } = *reported[0] else {
         unreachable!("filtered above")
     };
@@ -188,13 +210,18 @@ fn an_item_reference_that_cannot_be_typed_is_carried() {
         let iref = find_box(&bytes, b"iref");
         let count_at = iref_count_at(&bytes, iref);
         bytes[count_at..count_at + 2].copy_from_slice(&HUGE_COUNT);
-        let image = load_item(&bytes);
+        let (image, damages) = load_item(&bytes);
         let findings = image.structure_findings();
         let reported: Vec<&ImageFinding> = findings
             .iter()
             .filter(|finding| matches!(finding, ImageFinding::UnrepresentableBox { .. }))
             .collect();
         assert_eq!(reported.len(), 1, "{name}: one finding, got {findings:?}");
+        assert_eq!(
+            carried_damages(&damages).len(),
+            reported.len(),
+            "{name}: the step channel publishes the same fault: {damages:?}"
+        );
         let ImageFinding::UnrepresentableBox { offset, .. } = *reported[0] else {
             unreachable!("filtered above")
         };
@@ -223,7 +250,11 @@ fn a_track_group_that_cannot_be_typed_is_carried() {
     bytes[group..group + 4].copy_from_slice(&12u32.to_be_bytes());
     let warnings = read_movie(&bytes, Mode::Permissive).expect("permissive read");
     let reason = one_unrepresentable(name, &warnings, *b"trgr");
-    assert_eq!(reason, OpaqueReason::BufferTooShort, "{name}: the reason");
+    assert_eq!(
+        reason,
+        OpaqueReason::BufferTooShort.name(),
+        "{name}: the reason"
+    );
     assert!(
         read_movie(&bytes, Mode::Strict).is_err(),
         "{name}: strict still refuses it"

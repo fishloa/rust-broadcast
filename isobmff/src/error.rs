@@ -162,6 +162,13 @@ pub enum Error {
         /// The range the caller supplied.
         got: crate::reader::ByteRange,
     },
+    /// The caller's [`DamagePolicy`](broadcast_core::damage::DamagePolicy)
+    /// refused a report the reader would otherwise have published: the read
+    /// stopped, and this carries the same
+    /// [`Damage`](broadcast_core::damage::Damage) the report would have.
+    #[error(transparent)]
+    Damage(#[from] broadcast_core::damage::DamageError),
+
     /// A seek needs a `stss`, `sidx` or `tfra` index and the file carries none.
     #[error("track {track} has no random-access index to seek on")]
     NoIndex {
