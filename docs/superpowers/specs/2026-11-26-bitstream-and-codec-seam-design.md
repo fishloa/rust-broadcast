@@ -384,7 +384,7 @@ release that follows this work.
 | #4169 | the SPS decoders, the coded picture facts and the per-codec RFC 6381 helpers |
 | #4174 | the slice-header layer, the interlace facts, the HDR10+ model, the HDR10 static metadata and the `isobmff` glue |
 | #4177 | AAC/ADTS, AC-3/E-AC-3, DTS core and MHAS framing |
-| #4178 | MPEG-2 video and MPEG audio, AFD and bar data, and the `container-probe` change (this PR) |
+| the PR after #4177 | MPEG-2 video and MPEG audio, AFD and bar data, and the `container-probe` change |
 
 Where the code differs from the design above:
 
