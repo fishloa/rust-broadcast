@@ -8,6 +8,7 @@ pub mod accessors;
 pub mod block;
 pub mod element;
 pub mod ids;
+pub mod statistics;
 pub mod types;
 
 pub use accessors::DEFAULT_TIMESTAMP_SCALE;
@@ -21,6 +22,7 @@ pub use element::{
     SilentTracks, SimpleTag, Slices, Tag, Tags, Targets, TimeSlice, TrackCombinePlanes, TrackEntry,
     TrackJoinBlocks, TrackOperation, TrackPlane, TrackTranslate, Tracks, Video,
 };
+pub use statistics::{CivilDateTime, MalformedTag, Statistics};
 pub use types::{
     AesSettingsCipherMode, ColourRange, ContentCompAlgo, ContentEncAlgo, DisplayUnit, FieldOrder,
     FlagInterlaced, LacingKind, ProjectionType, StereoMode, TrackType,
