@@ -221,6 +221,8 @@ pub mod repackage;
 pub mod segment_log;
 pub mod stitch;
 pub mod timeline;
+#[cfg(feature = "codec")]
+pub mod transcode;
 #[cfg(feature = "rtp")]
 pub use rtp_packet::rtcp;
 #[cfg(feature = "matroska")]
@@ -385,6 +387,10 @@ pub use smooth_codec::track_spec_from_quality_level;
 pub use splice::{
     SpliceIndex, SpliceIndexBuilder, SplicePlan, SplicePoint, SpliceSample, SpliceStage,
     SpliceTrack, TrackSplice, snap_to_preceding_sync,
+};
+#[cfg(feature = "codec")]
+pub use transcode::{
+    TranscodeStage, codec_parameters_from_track, track_spec_from_codec_parameters,
 };
 pub use trickplay::TrickPlayStage;
 pub use ts_demux::{

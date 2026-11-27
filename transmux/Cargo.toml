@@ -80,6 +80,10 @@ container-probe = { path = "../container-probe", version = "0.6.0", default-feat
 # Typed MISB ST 0601 item values (`LocalSetItem::value_typed`). The value
 # semantics live in that crate; transmux keeps only the KLV framing.
 motion-imagery-metadata = { version = "0.2", default-features = false, optional = true }
+# The codec seam (`codec` feature): the `Decoder`/`Encoder` traits and the raw
+# frame types a `TranscodeStage` maps `Sample`s to and back. It holds no codec,
+# and this crate gains no dependency on a codec implementation.
+broadcast-codec = { path = "../broadcast-codec", version = "0.1.0", default-features = false, optional = true }
 
 [[bin]]
 name = "transmux"
@@ -139,6 +143,12 @@ cli    = ["dep:clap", "dep:container-probe", "std", "flv", "rtp", "ps", "matrosk
 # `motion-imagery-metadata` adds `LocalSetItem::value_typed()`, the item value
 # decoded by the `motion-imagery-metadata` crate.
 motion-imagery-metadata = ["dep:motion-imagery-metadata"]
+# `codec` adds the `TranscodeStage` over `broadcast-codec`'s `Decoder`/`Encoder`
+# seam, and the two `CodecParameters` <-> `TrackSpec` conversions. Off by
+# default and implied by nothing: it pulls in the seam crate, not a codec. A
+# caller supplies the boxed decoder and encoder (`Registry::decoder` /
+# `Registry::encoder`), typically from an adapter crate outside this workspace.
+codec  = ["dep:broadcast-codec"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
