@@ -672,7 +672,14 @@ fn push_udta_child(child: &UdtaChild, items: &mut Vec<MetadataItem>) {
         | UdtaChild::Copyright(_)
         | UdtaChild::SubTrack(_)
         | UdtaChild::HintInformation(_)
-        | UdtaChild::HintStatistics(_) => {}
+        | UdtaChild::HintStatistics(_)
+        | UdtaChild::Classification(_)
+        | UdtaChild::Collection(_)
+        | UdtaChild::Keywords(_)
+        | UdtaChild::Rating(_)
+        | UdtaChild::UserRating(_)
+        | UdtaChild::Thumbnail(_)
+        | UdtaChild::Orientation(_) => {}
         UdtaChild::Opaque(opaque) => items.push(MetadataItem::Opaque(opaque.clone())),
     }
 }

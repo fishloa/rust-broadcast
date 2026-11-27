@@ -2013,6 +2013,10 @@ pub const TABLE: &[Crate] = &[
             // (box, sample entry, brand, handler, ...), not a four-CC or a
             // field value decoded from the wire.
             "TypedKind",
+            // `TransformBase`: which base class a protected or incomplete
+            // sample entry extends (plain `SampleEntry` vs the volumetric
+            // visual variant), a structural choice, not a wire token.
+            "TransformBase",
             // Typed metadata ADTs: every variant wraps a distinct structured
             // value (a text value and its locale, a chapter list, an unknown
             // box), so the variant *is* the label; `MetaFlavor` is a

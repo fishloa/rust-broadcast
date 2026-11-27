@@ -299,3 +299,124 @@ impl DirectReferenceSamplesList {
         Ok(cursor)
     }
 }
+
+// ---------------------------------------------------------------------------
+// MjpegSampleEntry — 'mjpg' (23008-12 H.3.3)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the JPEG image sequence sample entry (`mjpg`, H.3.3).
+pub const MJPG: [u8; BOX_TYPE_SIZE] = *b"mjpg";
+
+/// The JPEG image sequence sample entry (`mjpg`) — ISO/IEC 23008-12:2025 H.3.3.
+///
+/// A `VisualSampleEntry`-derived entry; its optional `jpgC` configuration box
+/// and any other child are kept in wire order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct MjpegSampleEntry {
+    visual: crate::sample_entries::VisualSampleEntryFields,
+    children: Vec<crate::box_support::OpaqueBox>,
+}
+
+impl MjpegSampleEntry {
+    /// Build an entry with default fixed fields and no children.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            visual: crate::sample_entries::VisualSampleEntryFields::default(),
+            children: Vec::new(),
+        }
+    }
+
+    /// Set the coded dimensions.
+    #[must_use]
+    pub fn with_dimensions(mut self, width: u16, height: u16) -> Self {
+        self.visual.width = width;
+        self.visual.height = height;
+        self
+    }
+
+    /// The fixed sample description fields.
+    #[must_use]
+    pub const fn visual(&self) -> &crate::sample_entries::VisualSampleEntryFields {
+        &self.visual
+    }
+
+    /// Every child box after the fixed part, verbatim.
+    #[must_use]
+    pub fn children(&self) -> &[crate::box_support::OpaqueBox] {
+        &self.children
+    }
+
+    /// The `jpgC` configuration, when present (H.3.2).
+    #[must_use]
+    pub fn jpeg_configuration(&self) -> Option<crate::image::JpegConfigurationProperty> {
+        let child = self
+            .children
+            .iter()
+            .find(|child| child.box_type == crate::image::JPGC)?;
+        let mut whole = alloc::vec![0u8; BOX_HEADER_MIN_SIZE + child.data.len()];
+        let size = broadcast_core::len::fit_u32(whole.len(), "jpgC").ok()?;
+        whole[..core::mem::size_of::<u32>()].copy_from_slice(&size.to_be_bytes());
+        whole[core::mem::size_of::<u32>()..BOX_HEADER_MIN_SIZE]
+            .copy_from_slice(&crate::image::JPGC);
+        whole[BOX_HEADER_MIN_SIZE..].copy_from_slice(&child.data);
+        crate::image::JpegConfigurationProperty::parse_box(&whole).ok()
+    }
+
+    /// Parse a whole entry, box header included.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if !item.header.box_type.is(&MJPG) {
+            return Err(Error::UnexpectedBox { expected: "mjpg" });
+        }
+        let mut visual = crate::sample_entries::VisualSampleEntryFields::parse_body(bytes, "mjpg")?;
+        let region =
+            crate::sample_entries::VisualSampleEntryFields::children_region(bytes, "mjpg")?;
+        let (children, trailing) = crate::box_support::capture_children(region).into_parts();
+        visual.trailing = trailing.into_boxed_slice();
+        Ok(Self { visual, children })
+    }
+}
+
+impl Default for MjpegSampleEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'a> Parse<'a> for MjpegSampleEntry {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_box(bytes)
+    }
+}
+
+impl Serialize for MjpegSampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        let mut n = BOX_HEADER_MIN_SIZE
+            + crate::sample_entries::VisualSampleEntryFields::serialized_len()
+            + self.visual.trailing.len();
+        for child in &self.children {
+            n += child.serialized_len();
+        }
+        box_len(n)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, &MJPG, need)?;
+        c += self.visual.serialize_body_into(&mut buf[c..])?;
+        for child in &self.children {
+            c += child.serialize_into(&mut buf[c..])?;
+        }
+        let end = c + self.visual.trailing.len();
+        need_out(buf, end)?;
+        buf[c..end].copy_from_slice(&self.visual.trailing);
+        Ok(end)
+    }
+}
