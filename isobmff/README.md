@@ -345,6 +345,13 @@ Codes the crate types that no MP4RA table lists, each explained:
 | EntityGroup | `prgr` | progressive rendering entity group; MP4RA registers the slideshow and pyramid groups but not this one |
 | SampleGroup | `regm` | ISO/IEC 23008-12:2025 region annotation sample group; not yet in MP4RA |
 
+Outside every MP4RA table sit the de-facto QuickTime/iTunes atoms the metadata
+layer types: `ilst`, `data`, `mean`, `name`, `----`, `trkn`, `disk`, `covr`,
+`chpl`, `gmhd`, `gmin`, `tapt`, `clef`, `prof`, `enof`, `chan` and every
+`©`-prefixed international-text atom (the parser types the whole `©` family
+generically). MP4RA registers none of them, and the `mdir`/`mdta` metadata
+handlers are likewise typed without a registration.
+
 OPEN (§9.2.4.5): the `FDitemconstructorLarge` (constructor type 5) syntax sums
 to 20 bytes (1 + 4 + 4 + 8 + 3) while the same clause states every constructor
 is 16 bytes, so the two statements cannot both hold. That one constructor is
