@@ -219,6 +219,28 @@ pub enum ColourType {
 }
 
 impl ColourType {
+    /// The colour type a four-CC names.
+    #[must_use]
+    pub const fn from_fourcc(code: [u8; BOX_TYPE_SIZE]) -> Self {
+        match &code {
+            b"nclx" => Self::Nclx,
+            b"rICC" => Self::RIcc,
+            b"prof" => Self::Prof,
+            _ => Self::Unknown(code),
+        }
+    }
+
+    /// The `colour_type` four-CC.
+    #[must_use]
+    pub const fn fourcc(self) -> [u8; BOX_TYPE_SIZE] {
+        match self {
+            Self::Nclx => *b"nclx",
+            Self::RIcc => *b"rICC",
+            Self::Prof => *b"prof",
+            Self::Unknown(code) => code,
+        }
+    }
+
     /// Spec token for this `colour_type` FourCC (`"reserved"` for an
     /// unrecognised code — issue #204 convention).
     pub fn name(&self) -> &'static str {

@@ -44,6 +44,71 @@ pub const MDAT: [u8; 4] = *b"mdat";
 pub const FREE: [u8; 4] = *b"free";
 /// Four-CC of the Skip Box (ISO/IEC 14496-12:2026 §8.1.2).
 pub const SKIP: [u8; 4] = *b"skip";
+/// Four-CC of the QuickTime wide-atom placeholder (`wide`).
+pub const WIDE: [u8; 4] = *b"wide";
+
+/// QuickTime wide-atom placeholder (`wide`) — QuickTime File Format,
+/// "Wide atom".
+///
+/// An eight-byte filler a writer places before `mdat` so a later rewrite can
+/// extend that atom's 32-bit size in place. The clause defines no fields;
+/// bytes after the header are carried verbatim so a mis-sized atom round-trips.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct WideAtom {
+    trailing: Vec<u8>,
+}
+
+impl WideAtom {
+    /// An empty placeholder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Bytes after the eight-byte header, carried verbatim.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Parse the whole atom, box header included.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        need_in(bytes, BOX_HEADER_MIN_SIZE, "wide atom")?;
+        if bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != WIDE {
+            return Err(Error::InvalidInput("expected wide"));
+        }
+        Ok(Self {
+            trailing: bytes
+                .get(BOX_HEADER_MIN_SIZE..)
+                .unwrap_or_default()
+                .to_vec(),
+        })
+    }
+}
+
+impl<'a> Parse<'a> for WideAtom {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_box(bytes)
+    }
+}
+
+impl Serialize for WideAtom {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + self.trailing.len())
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, &WIDE, need)?;
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        c += self.trailing.len();
+        Ok(c)
+    }
+}
 
 /// A brand / compatible-brand list, shared by `ftyp` and `styp`.
 ///
@@ -143,6 +208,22 @@ impl FileTypeBox {
         })
     }
 
+    /// The registered brand the major brand names, or `Other` outside the held
+    /// image registrations (see [`crate::registered::Brand`]).
+    #[must_use]
+    pub fn major_brand_type(&self) -> crate::registered::Brand {
+        crate::registered::Brand::from_fourcc(self.major_brand)
+    }
+
+    /// The registered brands among the compatible brands.
+    #[must_use]
+    pub fn compatible_brand_types(&self) -> Vec<crate::registered::Brand> {
+        self.compatible_brands
+            .iter()
+            .map(|brand| crate::registered::Brand::from_fourcc(*brand))
+            .collect()
+    }
+
     /// The payload length of a `GeneralTypeBox` carrying these brands.
     #[must_use]
     pub fn payload_len(&self) -> usize {
@@ -209,6 +290,22 @@ impl SegmentTypeBox {
             minor_version: b.minor_version,
             compatible_brands: b.compatible_brands,
         })
+    }
+
+    /// The registered brand the major brand names, or `Other` outside the held
+    /// image registrations (see [`crate::registered::Brand`]).
+    #[must_use]
+    pub fn major_brand_type(&self) -> crate::registered::Brand {
+        crate::registered::Brand::from_fourcc(self.major_brand)
+    }
+
+    /// The registered brands among the compatible brands.
+    #[must_use]
+    pub fn compatible_brand_types(&self) -> Vec<crate::registered::Brand> {
+        self.compatible_brands
+            .iter()
+            .map(|brand| crate::registered::Brand::from_fourcc(*brand))
+            .collect()
     }
 
     fn brand(&self) -> BrandBox {

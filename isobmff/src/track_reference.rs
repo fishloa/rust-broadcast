@@ -41,6 +41,14 @@ pub struct TrackReferenceBox {
     pub references: Vec<TrackReferenceTypeBox>,
 }
 
+impl TrackReferenceTypeBox {
+    /// The registered reference type this box names.
+    #[must_use]
+    pub fn reference(&self) -> crate::registered::TrackReferenceType {
+        crate::registered::TrackReferenceType::from_fourcc(self.reference_type)
+    }
+}
+
 impl TrackReferenceBox {
     /// Parse a `tref` from its body (the children, after the box header), as
     /// kept in [`crate::init_segment::TrackBox::opaque`].

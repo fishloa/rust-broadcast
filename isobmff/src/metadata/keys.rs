@@ -44,6 +44,14 @@ pub struct KeyEntry {
     pub value: String,
 }
 
+impl KeyEntry {
+    /// The registered key namespace this entry declares.
+    #[must_use]
+    pub fn namespace_type(&self) -> crate::registered::KeyNamespace {
+        crate::registered::KeyNamespace::from_fourcc(self.namespace)
+    }
+}
+
 /// The metadata item keys atom (`keys`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
