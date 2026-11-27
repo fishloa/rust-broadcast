@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Still images brought to the current HEIF edition (issue #4167).** The item
+  layer now reads and writes ISO/IEC 23008-12:2025 (third edition) with
+  Amendment 1 applied, not only the 2017 subset. New modules `image_props`
+  (every clause 6.5 property added since 2017: `iscl`, `rref`, `crtt`, `mdft`,
+  `udes`, `altt`, the capture-information set `aebr`/`wbbr`/`fobr`/`afbr`/
+  `dobr`/`pano`, `tols`, `wipe`/`zoom`/`fade`/`splt`, `stpe`, `ssld`, `prdi`,
+  `sstr`, `cmex`, `cmin`, and Amendment 1's `cexg`, `dadj`, `stag`, `reve`,
+  `ndwt` and the `mskC` mask configuration), `image_derived` (`tmap` tone-map
+  derivation with opaque ISO 21496-1 metadata, and `cfen` colour format
+  enhancement), `image_groups` (typed `pymd` tile data and `rgpa` areas),
+  `image_brands` (clause 10 typed brands, reader-property union and
+  structurally checkable findings), `image_sequence` (`ccst`, `auxi`, the
+  `refs` sample group), `region` (`RegionGeometry` for every geometry at both
+  field widths, `RegionItem`, region-track configuration/sample, the `regm`
+  and `udes` sample groups) and `integrity` (`md5i` and the `mint` item body).
+  `ItemProperty` gains all of them plus the reused `subs`; `DerivedImage` gains
+  `ToneMap`/`ColourFormatEnhancement`; `ItemType` gains `Tmap`, `Cfen`, `Mski`
+  and `Rgan`; `ReferenceType` gains `pred`, `prem`, `dpnd`, `mask`, `eroi`,
+  `drgn`, `rpds` and `anot`; `EntityGroupType` gains the clause 6.8 set and
+  `ImageGroupBody` types the `pymd`/`rgpa` bodies. `StillImage` reports typed
+  brand and structure findings and exposes a tone map's base/gain-map pair, a
+  stereo pair, a group's entities, an image's region items and an item's
+  capture information; `Item` carries typed region and integrity bodies;
+  `ItemWriter` can add derived, region and integrity items whole;
+  `TrackInfo::is_image_sequence`, `coding_constraints` and
+  `auxiliary_type_info` surface clause 7. See
+  [`docs/isobmff-HEIF-2025-COVERAGE.md`](../docs/isobmff-HEIF-2025-COVERAGE.md)
+  for the per-clause table, the 2017-vs-2025 re-check and the OPEN list.
+
+- Four new still-image fixtures (`heif/props.heic`, `heif/tiled.heic`,
+  `heif/premult.heic`, `heif/groups.mp4`) written by `heif-enc`/`MP4Box` and a
+  twelfth example, `heif_2025`.
+
+### Fixed
+
+- The still-image reader resolved an item stored in `idat` (`construction_method`
+  1) to the wrong absolute offset whenever `idat` was not the `meta` box's first
+  child. The offset now accumulates the bytes consumed by preceding children,
+  so a real tiled HEIC's `grid` body is read from its own `idat` range.
+
+### Added
+
 - **Tier 3 and tier 4 box types: metadata tracks, file-level extras, schemes
   and the newer audio and colour signalling (issue #4167).** New modules
   `meta_track` (ISO/IEC 14496-12:2026 §12.3.3, §12.5.3, §12.8.4, §8.10.2,

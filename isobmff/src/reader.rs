@@ -616,6 +616,32 @@ pub struct TrackInfo {
 }
 
 impl TrackInfo {
+    /// Whether this is an image sequence track: handler type `pict`
+    /// (ISO/IEC 23008-12:2025 7.1, 7.2.2).
+    #[must_use]
+    pub const fn is_image_sequence(&self) -> bool {
+        matches!(&self.handler, b"pict")
+    }
+
+    /// The first sample entry's Coding Constraints box (`ccst`, 7.2.3), when
+    /// the entry carries one.
+    #[must_use]
+    pub fn coding_constraints(&self) -> Option<crate::image_sequence::CodingConstraintsBox> {
+        self.entries
+            .iter()
+            .find_map(|entry| find_entry_child(&entry.body, &crate::image_sequence::CCST))
+            .and_then(|bytes| crate::image_sequence::CodingConstraintsBox::parse(&bytes).ok())
+    }
+
+    /// The first sample entry's Auxiliary Type Info box (`auxi`, 7.5.3).
+    #[must_use]
+    pub fn auxiliary_type_info(&self) -> Option<crate::image_sequence::AuxiliaryTypeInfoBox> {
+        self.entries
+            .iter()
+            .find_map(|entry| find_entry_child(&entry.body, &crate::image_sequence::AUXI))
+            .and_then(|bytes| crate::image_sequence::AuxiliaryTypeInfoBox::parse(&bytes).ok())
+    }
+
     /// The reader's track view for an already-parsed `trak`.
     ///
     /// A caller that holds the whole `moov` (the whole-input demuxers) needs
@@ -625,7 +651,7 @@ impl TrackInfo {
     /// the bytes the reader would have copied. `handler` is zero when the
     /// `trak` carries no `hdlr`, which the whole-input demuxers never read.
     pub fn from_trak(trak: &TrackBox) -> Result<Self> {
-        use broadcast_core::Serialize;
+        use broadcast_core::{Parse, Serialize};
         let mdia = trak
             .mdia
             .as_ref()
@@ -3144,4 +3170,52 @@ fn patch_zero_mvhd(data: &mut [u8], start: usize, base: u64, warnings: &mut Vec<
     warnings.push(Warning::ZeroMovieTimescale {
         offset: base.saturating_add(u64::try_from(at).unwrap_or(u64::MAX)),
     });
+}
+
+/// Locate a child box of a visual sample entry by four-CC. The visual sample
+/// entry header is `visual_sample_entry_header_len()` bytes after the box
+/// header (ISO/IEC 14496-12:2026 §12.1.3).
+fn find_entry_child(entry: &[u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<Vec<u8>> {
+    let start =
+        BOX_HEADER_MIN_SIZE + crate::sample_entries::VisualSampleEntryFields::serialized_len();
+    let mut cursor = start;
+    while cursor + BOX_HEADER_MIN_SIZE <= entry.len() {
+        let size = usize::try_from(broadcast_core::wire::u32_at(entry, cursor)).ok()?;
+        if size < BOX_HEADER_MIN_SIZE || cursor + size > entry.len() {
+            return None;
+        }
+        let typ = &entry[cursor + BOX_TYPE_OFFSET..cursor + BOX_HEADER_MIN_SIZE];
+        if typ == fourcc {
+            return Some(entry[cursor..cursor + size].to_vec());
+        }
+        cursor += size;
+    }
+    None
+}
+
+#[cfg(test)]
+mod image_sequence_entry_tests {
+    use super::find_entry_child;
+    use broadcast_core::{Parse, Serialize};
+
+    #[test]
+    fn every_clause_7_sample_entry_child_is_found() {
+        let constraints = crate::image_sequence::CodingConstraintsBox::new(true, true, 2);
+        let auxiliary = crate::image_sequence::AuxiliaryTypeInfoBox::new(b"urn:example:aux");
+        let mut entry = alloc::vec![0u8; crate::sample_entries::VisualSampleEntryFields::serialized_len()
+            + crate::box_types::BOX_HEADER_MIN_SIZE];
+        entry.extend_from_slice(&constraints.try_to_bytes().expect("ccst"));
+        entry.extend_from_slice(&auxiliary.try_to_bytes().expect("auxi"));
+        let ccst = find_entry_child(&entry, &crate::image_sequence::CCST).expect("ccst");
+        assert_eq!(
+            crate::image_sequence::CodingConstraintsBox::parse(&ccst).expect("parse"),
+            constraints
+        );
+        let auxi = find_entry_child(&entry, &crate::image_sequence::AUXI).expect("auxi");
+        assert_eq!(
+            crate::image_sequence::AuxiliaryTypeInfoBox::parse(&auxi).expect("parse"),
+            auxiliary
+        );
+        assert!(find_entry_child(&entry, b"ispe").is_none());
+    }
 }

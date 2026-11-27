@@ -80,13 +80,19 @@
 //!   sample entries, and the `esds` descriptor chain.
 //! - [`emsg`] — the MPEG-DASH Event Message Box (ISO/IEC 23009-1 §5.10.3.3,
 //!   version 0 and 1) and its version enum.
-//! - [`item`], [`image`], [`item_reader`], [`item_writer`] — the still-image
-//!   item layer: the ISO/IEC 14496-12:2026 §8.11/§8.15 item boxes, the
-//!   ISO/IEC 23008-12:2017 (HEIF) image properties, derived image item bodies
-//!   and AVIF v1.2.0 properties and brands, the sans-IO [`item_reader::ItemReader`]
-//!   that yields a [`item_reader::StillImage`] without holding the file, and
-//!   the [`item_writer::ItemWriter`] that builds one. Coded item data is
-//!   opaque and reported as byte ranges.
+//! - [`item`], [`image`], [`image_props`], [`image_derived`], [`image_groups`],
+//!   [`item_reader`], [`item_writer`] — the still-image item layer: the
+//!   ISO/IEC 14496-12:2026 §8.11/§8.15 item boxes, the ISO/IEC 23008-12:2025
+//!   (HEIF, third edition + Amendment 1) clause 6 image properties and derived
+//!   image item bodies, clause 6.8 entity groups, AVIF v1.2.0 properties and
+//!   brands, the sans-IO [`item_reader::ItemReader`] that yields a
+//!   [`item_reader::StillImage`] without holding the file, and the
+//!   [`item_writer::ItemWriter`] that builds one. Coded item data is opaque and
+//!   reported as byte ranges.
+//! - [`image_brands`], [`image_sequence`], [`region`], [`integrity`] — clause
+//!   10 brands and their structurally checkable findings, clause 7 image
+//!   sequence boxes (`ccst`, `auxi`, `refs`), clause 11 regions, masks and
+//!   region-track sample groups, and clause 8.4 integrity boxes.
 //! - [`metadata`] — typed `udta`/`meta` metadata: QuickTime user-data text and
 //!   `©xyz`, 3GPP `loci`, `keys`/`ilst`/`data`/`mean`/`name` (iTunes
 //!   four-character and Apple `mdta` items), Nero `chpl`, and the logical
@@ -109,7 +115,7 @@
 //! - **CENC boxes**: ISO/IEC 23001-7 §12.
 //! - **`emsg`**: ISO/IEC 23009-1 §5.10.3.3; DASH-IF IOP Part 10 §6.1.
 //! - **Item layer**: ISO/IEC 14496-12:2026 §8.11, §8.15; ISO/IEC
-//!   23008-12:2017 clause 6 with ISO/IEC 23008-12:2017/Cor.1:2020; AVIF
+//!   23008-12:2025 clauses 6, 7, 8, 10 and 11, with Amendment 1 applied; AVIF
 //!   v1.2.0.
 //!
 //! # Feature flags
@@ -150,8 +156,14 @@ pub mod frag_offsets;
 pub mod hdr_boxes;
 pub mod hevc_config;
 pub mod image;
+pub mod image_brands;
+pub mod image_derived;
+pub mod image_groups;
+pub mod image_props;
+pub mod image_sequence;
 pub mod index_boxes;
 pub mod init_segment;
+pub mod integrity;
 pub mod item;
 pub mod item_reader;
 pub mod item_writer;
@@ -166,6 +178,7 @@ pub mod opus;
 pub mod plan;
 pub mod quicktime;
 pub mod reader;
+pub mod region;
 pub mod registry;
 pub mod sample_entries;
 pub mod sample_groups;

@@ -895,25 +895,29 @@ impl Serialize for ItemLocationBox {
 /// The `item_type` four-CC of an [`ItemInfoEntry`] (§8.11.6.3).
 ///
 /// The coded-image, derived-image and metadata types are the ones ISO/IEC
-/// 23008-12:2017 and the AVIF specification define; any other type is kept as
+/// 23008-12:2025, Amendment 1 and the AVIF specification define; any other type is kept as
 /// [`ItemType::Other`] so it round-trips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum ItemType {
-    /// `hvc1`: a HEVC coded image item (ISO/IEC 23008-12:2017 B.2).
+    /// `hvc1`: a HEVC coded image item (ISO/IEC 23008-12:2025 B.2).
     Hvc1,
-    /// `avc1`: an AVC coded image item (ISO/IEC 23008-12:2017 E.2).
+    /// `avc1`: an AVC coded image item (ISO/IEC 23008-12:2025 E.2).
     Avc1,
     /// `av01`: an AV1 coded image item (AVIF §2.1).
     Av01,
-    /// `grid`: an image grid derived image item (ISO/IEC 23008-12:2017 6.6.2.3).
+    /// `grid`: an image grid derived image item (ISO/IEC 23008-12:2025 6.6.2.3).
     Grid,
     /// `iovl`: an image overlay derived image item (6.6.2.2).
     Iovl,
     /// `iden`: an identity derived image item (6.6.2.1).
     Iden,
-    /// `Exif`: an Exif metadata item (ISO/IEC 23008-12:2017 A.2).
+    /// `tmap`: a tone-map derived image item (Amd 1 6.6.2.4).
+    Tmap,
+    /// `cfen`: a colour format enhancement derived image item (Amd 1 6.6.2.5).
+    Cfen,
+    /// `Exif`: an Exif metadata item (ISO/IEC 23008-12:2025 A.2).
     Exif,
     /// `mime`: an item whose type is its MIME type.
     Mime,
@@ -923,8 +927,12 @@ pub enum ItemType {
     Fdel,
     /// `it35`: an ITU-T T.35 message item (§8.11.17).
     It35,
-    /// `mint`: a data-integrity metadata item (ISO/IEC 23008-12:2017 9.8).
+    /// `mint`: a data-integrity metadata item (ISO/IEC 23008-12:2025 9.8).
     Mint,
+    /// `mski`: a mask item (23008-12 11.2.2).
+    Mski,
+    /// `rgan`: a region item (11.3.2).
+    Rgan,
     /// Any other registered or private type.
     Other([u8; BOX_TYPE_SIZE]),
 }
@@ -946,12 +954,16 @@ impl ItemType {
             Self::Grid => *b"grid",
             Self::Iovl => *b"iovl",
             Self::Iden => *b"iden",
+            Self::Tmap => *b"tmap",
+            Self::Cfen => *b"cfen",
             Self::Exif => *b"Exif",
             Self::Mime => ITEM_TYPE_MIME,
             Self::Uri => ITEM_TYPE_URI,
             Self::Fdel => *b"fdel",
             Self::It35 => *b"it35",
             Self::Mint => *b"mint",
+            Self::Mski => *b"mski",
+            Self::Rgan => *b"rgan",
             Self::Other(fourcc) => fourcc,
         }
     }
@@ -966,12 +978,16 @@ impl ItemType {
             b"grid" => Self::Grid,
             b"iovl" => Self::Iovl,
             b"iden" => Self::Iden,
+            b"tmap" => Self::Tmap,
+            b"cfen" => Self::Cfen,
             b"Exif" => Self::Exif,
             b"mime" => Self::Mime,
             b"uri " => Self::Uri,
             b"fdel" => Self::Fdel,
             b"it35" => Self::It35,
             b"mint" => Self::Mint,
+            b"mski" => Self::Mski,
+            b"rgan" => Self::Rgan,
             _ => Self::Other(fourcc),
         }
     }
@@ -985,7 +1001,10 @@ impl ItemType {
     /// Whether this is a derived image item.
     #[must_use]
     pub const fn is_derived_image(self) -> bool {
-        matches!(self, Self::Grid | Self::Iovl | Self::Iden)
+        matches!(
+            self,
+            Self::Grid | Self::Iovl | Self::Iden | Self::Tmap | Self::Cfen
+        )
     }
 
     /// Label for the type, per the #204 convention.
@@ -998,12 +1017,16 @@ impl ItemType {
             Self::Grid => "grid",
             Self::Iovl => "iovl",
             Self::Iden => "iden",
+            Self::Tmap => "tmap",
+            Self::Cfen => "cfen",
             Self::Exif => "Exif",
             Self::Mime => "mime",
             Self::Uri => "uri",
             Self::Fdel => "fdel",
             Self::It35 => "it35",
             Self::Mint => "mint",
+            Self::Mski => "mski",
+            Self::Rgan => "rgan",
             Self::Other(_) => "other",
         }
     }
@@ -1013,7 +1036,7 @@ broadcast_core::impl_spec_display!(ItemType);
 
 /// The `reference_type` of a [`SingleItemTypeReferenceBox`] (§8.11.12.3).
 ///
-/// The image reference types come from ISO/IEC 23008-12:2017 6.4/6.6; `iloc`
+/// The image reference types come from ISO/IEC 23008-12:2025 6.4/6.6; `iloc`
 /// is §8.11.3.2.3. Any other type is kept verbatim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -1042,8 +1065,29 @@ pub enum ReferenceType {
     /// `fdel`: FD item information (§8.11.6.1).
     Fdel,
     /// `mint`: the from item is a data-integrity item for the to item
-    /// (ISO/IEC 23008-12:2017 9.8).
+    /// (ISO/IEC 23008-12:2025 9.8).
     Mint,
+    /// `pred`: the to item is a predictive reference for the from item
+    /// (23008-12 10.2.4).
+    Pred,
+    /// `prem`: the from item is a premultiplied-alpha variant of the to item
+    /// (10.2.3).
+    Prem,
+    /// `dpnd`: the from deductive item depends on the to deductive items
+    /// (8.2.2.2).
+    Dpnd,
+    /// `mask`: the to item is the mask a region item references (11.2.1.1).
+    Mask,
+    /// `eroi`: the from region item's annotation is the to item (11.3.1).
+    Eroi,
+    /// `drgn`: the to item is an input of the derived region from item
+    /// (11.3.3).
+    Drgn,
+    /// `rpds`: the from image item associates a region partition group
+    /// (Amd 1 6.8.13.1).
+    Rpds,
+    /// `anot`: the to item or track carries a region annotation (11.4.1).
+    Anot,
     /// Any other registered or private type.
     Other([u8; BOX_TYPE_SIZE]),
 }
@@ -1068,6 +1112,14 @@ impl ReferenceType {
             Self::Exbl => *b"exbl",
             Self::Iloc => *b"iloc",
             Self::Font => *b"font",
+            Self::Pred => *b"pred",
+            Self::Prem => *b"prem",
+            Self::Dpnd => *b"dpnd",
+            Self::Mask => *b"mask",
+            Self::Eroi => *b"eroi",
+            Self::Drgn => *b"drgn",
+            Self::Rpds => *b"rpds",
+            Self::Anot => *b"anot",
             Self::Fdel => *b"fdel",
             Self::Mint => *b"mint",
             Self::Other(fourcc) => fourcc,
@@ -1087,6 +1139,14 @@ impl ReferenceType {
             b"exbl" => Self::Exbl,
             b"iloc" => Self::Iloc,
             b"font" => Self::Font,
+            b"pred" => Self::Pred,
+            b"prem" => Self::Prem,
+            b"dpnd" => Self::Dpnd,
+            b"mask" => Self::Mask,
+            b"eroi" => Self::Eroi,
+            b"drgn" => Self::Drgn,
+            b"rpds" => Self::Rpds,
+            b"anot" => Self::Anot,
             b"fdel" => Self::Fdel,
             b"mint" => Self::Mint,
             _ => Self::Other(fourcc),
@@ -1106,6 +1166,14 @@ impl ReferenceType {
             Self::Exbl => "exbl",
             Self::Iloc => "iloc",
             Self::Font => "font",
+            Self::Pred => "pred",
+            Self::Prem => "prem",
+            Self::Dpnd => "dpnd",
+            Self::Mask => "mask",
+            Self::Eroi => "eroi",
+            Self::Drgn => "drgn",
+            Self::Rpds => "rpds",
+            Self::Anot => "anot",
             Self::Fdel => "fdel",
             Self::Mint => "mint",
             Self::Other(_) => "other",
@@ -2200,7 +2268,7 @@ impl Serialize for ItemProtectionBox {
     }
 }
 
-/// A grouping type of an [`EntityToGroupBox`] (§8.15.3.1, ISO/IEC 23008-12:2017
+/// A grouping type of an [`EntityToGroupBox`] (§8.15.3.1, ISO/IEC 23008-12:2025
 /// 9.4.3.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -2210,10 +2278,42 @@ pub enum EntityGroupType {
     Altr,
     /// `prsl`: a preselection group (§8.15.4.1).
     Prsl,
-    /// `ster`: a stereo pair (ISO/IEC 23008-12:2017 9.4.3.1).
+    /// `ster`: a stereo pair (ISO/IEC 23008-12:2025 9.4.3.1).
     Ster,
-    /// `eqiv`: equivalent items and samples (ISO/IEC 23008-12:2017 6.8.1).
+    /// `eqiv`: equivalent items and samples (ISO/IEC 23008-12:2025 6.8.1).
     Eqiv,
+    /// `brst`: burst images (23008-12 6.8.2).
+    Brst,
+    /// `tsyn`: time-synchronized capture (6.8.3).
+    Tsyn,
+    /// `iaug`: audio-to-image association (6.8.4).
+    Iaug,
+    /// `stem`: stereo pair with a monoscopic fallback (Amd 1 6.8.11).
+    Stem,
+    /// `aebr`: auto exposure bracketing (6.8.6.2).
+    Aebr,
+    /// `wbbr`: white balance bracketing (6.8.6.3).
+    Wbbr,
+    /// `fobr`: focus bracketing (6.8.6.4).
+    Fobr,
+    /// `afbr`: flash exposure bracketing (6.8.6.5).
+    Afbr,
+    /// `dobr`: depth of field bracketing (6.8.6.6).
+    Dobr,
+    /// `albc`: album collection (6.8.7.1).
+    Albc,
+    /// `favc`: favorites collection (6.8.7.2).
+    Favc,
+    /// `pano`: panorama (6.8.8).
+    Pano,
+    /// `slid`: slideshow (6.8.9).
+    Slid,
+    /// `prgr`: progressive rendering (6.8.10).
+    Prgr,
+    /// `pymd`: image pyramid (Amd 1 6.8.12).
+    Pymd,
+    /// `rgpa`: region partition group (Amd 1 6.8.13).
+    Rgpa,
     /// Any other grouping type.
     Other([u8; BOX_TYPE_SIZE]),
 }
@@ -2233,6 +2333,22 @@ impl EntityGroupType {
             Self::Prsl => *b"prsl",
             Self::Ster => *b"ster",
             Self::Eqiv => *b"eqiv",
+            Self::Brst => *b"brst",
+            Self::Tsyn => *b"tsyn",
+            Self::Iaug => *b"iaug",
+            Self::Stem => *b"stem",
+            Self::Aebr => *b"aebr",
+            Self::Wbbr => *b"wbbr",
+            Self::Fobr => *b"fobr",
+            Self::Afbr => *b"afbr",
+            Self::Dobr => *b"dobr",
+            Self::Albc => *b"albc",
+            Self::Favc => *b"favc",
+            Self::Pano => *b"pano",
+            Self::Slid => *b"slid",
+            Self::Prgr => *b"prgr",
+            Self::Pymd => *b"pymd",
+            Self::Rgpa => *b"rgpa",
             Self::Other(fourcc) => fourcc,
         }
     }
@@ -2245,6 +2361,22 @@ impl EntityGroupType {
             b"prsl" => Self::Prsl,
             b"ster" => Self::Ster,
             b"eqiv" => Self::Eqiv,
+            b"brst" => Self::Brst,
+            b"tsyn" => Self::Tsyn,
+            b"iaug" => Self::Iaug,
+            b"stem" => Self::Stem,
+            b"aebr" => Self::Aebr,
+            b"wbbr" => Self::Wbbr,
+            b"fobr" => Self::Fobr,
+            b"afbr" => Self::Afbr,
+            b"dobr" => Self::Dobr,
+            b"albc" => Self::Albc,
+            b"favc" => Self::Favc,
+            b"pano" => Self::Pano,
+            b"slid" => Self::Slid,
+            b"prgr" => Self::Prgr,
+            b"pymd" => Self::Pymd,
+            b"rgpa" => Self::Rgpa,
             _ => Self::Other(fourcc),
         }
     }
@@ -2257,6 +2389,22 @@ impl EntityGroupType {
             Self::Prsl => "prsl",
             Self::Ster => "ster",
             Self::Eqiv => "eqiv",
+            Self::Brst => "brst",
+            Self::Tsyn => "tsyn",
+            Self::Iaug => "iaug",
+            Self::Stem => "stem",
+            Self::Aebr => "aebr",
+            Self::Wbbr => "wbbr",
+            Self::Fobr => "fobr",
+            Self::Afbr => "afbr",
+            Self::Dobr => "dobr",
+            Self::Albc => "albc",
+            Self::Favc => "favc",
+            Self::Pano => "pano",
+            Self::Slid => "slid",
+            Self::Prgr => "prgr",
+            Self::Pymd => "pymd",
+            Self::Rgpa => "rgpa",
             Self::Other(_) => "other",
         }
     }
@@ -2324,6 +2472,22 @@ impl EntityToGroupBox {
         self
     }
 
+    /// Set the FullBox version and flags (a typed body reads its flags).
+    #[must_use]
+    pub const fn with_version_flags(mut self, version: u8, flags: u32) -> Self {
+        self.version = version;
+        self.flags = flags;
+        self
+    }
+
+    /// Keep a typed body after the entity list.
+    pub fn with_body(mut self, body: &crate::image_groups::ImageGroupBody) -> Result<Self> {
+        let mut trailing = alloc::vec![0u8; body.serialized_len()];
+        body.serialize_into(&mut trailing)?;
+        self.trailing = trailing;
+        Ok(self)
+    }
+
     /// The grouping type.
     #[must_use]
     pub const fn grouping_type(&self) -> EntityGroupType {
@@ -2358,6 +2522,16 @@ impl EntityToGroupBox {
     #[must_use]
     pub fn trailing(&self) -> &[u8] {
         &self.trailing
+    }
+
+    /// The typed trailing body, for a grouping type this crate models.
+    pub fn image_body(&self) -> Result<crate::image_groups::ImageGroupBody> {
+        crate::image_groups::ImageGroupBody::parse(
+            self.grouping_type,
+            self.flags,
+            &self.trailing,
+            self.entity_ids.len(),
+        )
     }
 
     fn payload_len(&self) -> usize {

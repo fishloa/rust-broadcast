@@ -1,6 +1,7 @@
-//! Image item properties and derived image items — ISO/IEC 23008-12:2017
-//! (HEIF) clause 6, the AV1 Image File Format (AVIF) v1.2.0, and the item
-//! properties ISO/IEC 14496-12:2026 §8.11 itself defines.
+//! Image item properties and derived image items — ISO/IEC 23008-12:2025
+//! (HEIF, third edition) clause 6 as Amendment 1 applies, the AV1 Image File
+//! Format (AVIF) v1.2.0, and the item properties ISO/IEC 14496-12:2026 §8.11
+//! itself defines.
 //!
 //! | Type | Four-CC | Source |
 //! |------|---------|--------|
@@ -26,14 +27,16 @@
 //!
 //! The derived image item bodies are [`IdentityDerivation`] (`iden`),
 //! [`ImageOverlay`] (`iovl`) and [`ImageGrid`] (`grid`)
-//! (ISO/IEC 23008-12:2017 6.6.2). The reader and writer are
+//! (ISO/IEC 23008-12:2025 6.6.2). The reader and writer are
 //! [`crate::item_reader`] and [`crate::item_writer`].
 //!
-//! Sources: `private/specs-verified/mpeg/heif/iso-iec-23008-12-2017.md` with
-//! `iso-iec-23008-12-2017-cor1-2020.md` applied (the corrigendum corrects the
-//! `auxC` four-CC), and `private/specs/aom_av1_avif_image_file_format.html`
-//! (AVIF v1.2.0). Types whose syntax another clause of the base format already
-//! defines are that type here too, never a second parser.
+//! Sources: `private/specs-verified/mpeg/heif/iso-iec-23008-12-2025.md`
+//! clause 6 and `private/specs-verified/mpeg/heif/iso-iec-23008-12-2025-amd1-2025.md`
+//! (the third edition keeps every 2017 sub-clause this module types; the
+//! 2017 text is history only), and
+//! `private/specs/aom_av1_avif_image_file_format.html` (AVIF v1.2.0). Types
+//! whose syntax another clause of the base format already defines are that
+//! type here too, never a second parser.
 
 use alloc::vec::Vec;
 
@@ -54,6 +57,19 @@ use crate::hdr_boxes::{
     MasteringDisplayColourVolume,
 };
 use crate::hevc_config::HEVCConfigurationBox;
+use crate::image_derived::{ColourFormatEnhancement, ToneMapImage};
+use crate::image_props::{
+    AccessibilityTextProperty, AutoExposureProperty, CameraExtrinsicMatrixProperty,
+    CameraIntrinsicMatrixProperty, ConstrainedExtentsGridProperty, CreationTimeProperty,
+    DepthOfFieldProperty, DisparityAdjustmentProperty, FadeTransitionEffectProperty,
+    FlashExposureProperty, FocusProperty, ImageScaling, MaskConfigurationProperty,
+    ModificationTimeProperty, NominalDiffuseWhiteProperty, PanoramaProperty,
+    ProgressiveDerivedImageItemInformationProperty, ReferenceViewingEnvironmentProperty,
+    RequiredReferenceTypesProperty, SingleStreamProperty, SplitTransitionEffectProperty,
+    StereoAggressorsProperty, SuggestedTimeDisplayDurationProperty,
+    SuggestedTransitionPeriodProperty, TargetOutputLayerSetProperty, UserDescriptionProperty,
+    WhiteBalanceProperty, WipeTransitionEffectProperty, ZoomTransitionEffectProperty,
+};
 use crate::item::{BrandProperty, HandlerProperty};
 use crate::visual_ext::{
     AMVE, AmbientViewingEnvironmentBox, CCLV, CleanApertureBox, ColourInformationBox,
@@ -152,9 +168,9 @@ const LSEL_LEN: usize = core::mem::size_of::<u16>();
 pub const AUX_TYPE_ALPHA: &str = "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha";
 /// The `aux_type` URN of a depth auxiliary image (AVIF 4.1).
 pub const AUX_TYPE_DEPTH: &str = "urn:mpeg:mpegB:cicp:systems:auxiliary:depth";
-/// The `aux_type` URN of an HEVC alpha plane (ISO/IEC 23008-12:2017 B.2.3.3).
+/// The `aux_type` URN of an HEVC alpha plane (ISO/IEC 23008-12:2025 B.2.3.3).
 pub const AUX_TYPE_HEVC_ALPHA: &str = "urn:mpeg:hevc:2015:auxid:1";
-/// The `aux_type` URN of an HEVC depth image (ISO/IEC 23008-12:2017 B.2.3.3).
+/// The `aux_type` URN of an HEVC depth image (ISO/IEC 23008-12:2025 B.2.3.3).
 pub const AUX_TYPE_HEVC_DEPTH: &str = "urn:mpeg:hevc:2015:auxid:2";
 
 /// The `mif1` structural brand (23008-12 10.2.1).
@@ -184,11 +200,19 @@ pub fn is_still_image_brand(brand: [u8; BOX_TYPE_SIZE]) -> bool {
     )
 }
 
-fn body_of<'a>(bytes: &'a [u8], min_body: usize, what: &'static str) -> Result<&'a [u8]> {
+pub(crate) fn body_of<'a>(
+    bytes: &'a [u8],
+    min_body: usize,
+    what: &'static str,
+) -> Result<&'a [u8]> {
     crate::box_types::box_body(bytes, min_body, what)
 }
 
-fn expect_type(bytes: &[u8], fourcc: &[u8; BOX_TYPE_SIZE], what: &'static str) -> Result<()> {
+pub(crate) fn expect_type(
+    bytes: &[u8],
+    fourcc: &[u8; BOX_TYPE_SIZE],
+    what: &'static str,
+) -> Result<()> {
     need_in(bytes, BOX_HEADER_MIN_SIZE, what)?;
     if broadcast_core::wire::u32_at(bytes, crate::box_types::BOX_TYPE_OFFSET)
         != u32::from_be_bytes(*fourcc)
@@ -198,11 +222,11 @@ fn expect_type(bytes: &[u8], fourcc: &[u8; BOX_TYPE_SIZE], what: &'static str) -
     Ok(())
 }
 
-fn full_flags(body: &[u8]) -> u32 {
+pub(crate) fn full_flags(body: &[u8]) -> u32 {
     u24_at(body, crate::box_types::FULLBOX_FLAGS_OFFSET) & FULLBOX_FLAGS_MASK
 }
 
-/// Image Spatial Extents property (`ispe`) — ISO/IEC 23008-12:2017 6.5.3.
+/// Image Spatial Extents property (`ispe`) — ISO/IEC 23008-12:2025 6.5.3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -288,7 +312,7 @@ impl Serialize for ImageSpatialExtentsProperty {
     }
 }
 
-/// Pixel Information property (`pixi`) — ISO/IEC 23008-12:2017 6.5.6.
+/// Pixel Information property (`pixi`) — ISO/IEC 23008-12:2025 6.5.6.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -370,7 +394,7 @@ impl Serialize for PixelInformationProperty {
     }
 }
 
-/// Relative Location property (`rloc`) — ISO/IEC 23008-12:2017 6.5.7.
+/// Relative Location property (`rloc`) — ISO/IEC 23008-12:2025 6.5.7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -461,7 +485,7 @@ impl Serialize for RelativeLocationProperty {
     }
 }
 
-/// Auxiliary Type property (`auxC`) — ISO/IEC 23008-12:2017 6.5.8.
+/// Auxiliary Type property (`auxC`) — ISO/IEC 23008-12:2025 6.5.8.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -584,7 +608,7 @@ impl Serialize for AuxiliaryTypeProperty {
     }
 }
 
-/// Image Rotation property (`irot`) — ISO/IEC 23008-12:2017 6.5.10.
+/// Image Rotation property (`irot`) — ISO/IEC 23008-12:2025 6.5.10.
 ///
 /// The reconstructed image is rotated anti-clockwise by `angle * 90` degrees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -645,7 +669,7 @@ impl Serialize for ImageRotation {
     }
 }
 
-/// Layer Selector property (`lsel`) — ISO/IEC 23008-12:2017 6.5.11.
+/// Layer Selector property (`lsel`) — ISO/IEC 23008-12:2025 6.5.11.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -740,7 +764,7 @@ impl ImageMirrorAxis {
 
 broadcast_core::impl_spec_display!(ImageMirrorAxis);
 
-/// Image Mirror property (`imir`) — ISO/IEC 23008-12:2017 6.5.12.
+/// Image Mirror property (`imir`) — ISO/IEC 23008-12:2025 6.5.12.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -945,7 +969,7 @@ impl Serialize for Av1LayeredImageIndexingProperty {
     }
 }
 
-/// Identity derivation (`iden`) item body — ISO/IEC 23008-12:2017 6.6.2.1.
+/// Identity derivation (`iden`) item body — ISO/IEC 23008-12:2025 6.6.2.1.
 ///
 /// The body is empty: the output is the input with the item's transformative
 /// properties applied.
@@ -982,7 +1006,7 @@ impl IdentityDerivation {
     }
 }
 
-/// Image Overlay derivation (`iovl`) item body — ISO/IEC 23008-12:2017 6.6.2.2.
+/// Image Overlay derivation (`iovl`) item body — ISO/IEC 23008-12:2025 6.6.2.2.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -1145,7 +1169,7 @@ impl ImageOverlay {
     }
 }
 
-/// Image Grid derivation (`grid`) item body — ISO/IEC 23008-12:2017 6.6.2.3.
+/// Image Grid derivation (`grid`) item body — ISO/IEC 23008-12:2025 6.6.2.3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -1417,6 +1441,66 @@ pub enum ItemProperty {
     Amve(AmbientViewingEnvironmentBox),
     /// `cclv`: the content colour volume (§12.1.8).
     Cclv(ContentColourVolumeBox),
+    /// `iscl`: image scaling (23008-12 6.5.13).
+    Iscl(ImageScaling),
+    /// `rref`: required reference types (6.5.17).
+    Rref(RequiredReferenceTypesProperty),
+    /// `crtt`: creation time (6.5.18).
+    Crtt(CreationTimeProperty),
+    /// `mdft`: modification time (6.5.19).
+    Mdft(ModificationTimeProperty),
+    /// `udes`: user description (6.5.20).
+    Udes(UserDescriptionProperty),
+    /// `altt`: accessibility text (6.5.21).
+    Altt(AccessibilityTextProperty),
+    /// `aebr`: auto exposure (6.5.22).
+    Aebr(AutoExposureProperty),
+    /// `wbbr`: white balance (6.5.23).
+    Wbbr(WhiteBalanceProperty),
+    /// `fobr`: focus (6.5.24).
+    Fobr(FocusProperty),
+    /// `afbr`: flash exposure (6.5.25).
+    Afbr(FlashExposureProperty),
+    /// `dobr`: depth of field (6.5.26).
+    Dobr(DepthOfFieldProperty),
+    /// `pano`: panorama (6.5.27).
+    Pano(PanoramaProperty),
+    /// `tols`: target output layer set (6.5.29).
+    Tols(TargetOutputLayerSetProperty),
+    /// `wipe`: wipe transition (6.5.30).
+    Wipe(WipeTransitionEffectProperty),
+    /// `zoom`: zoom transition (6.5.31).
+    Zoom(ZoomTransitionEffectProperty),
+    /// `fade`: fade transition (6.5.32).
+    Fade(FadeTransitionEffectProperty),
+    /// `splt`: split transition (6.5.33).
+    Splt(SplitTransitionEffectProperty),
+    /// `stpe`: suggested transition period (6.5.34).
+    Stpe(SuggestedTransitionPeriodProperty),
+    /// `ssld`: suggested time display duration (6.5.35).
+    Ssld(SuggestedTimeDisplayDurationProperty),
+    /// `prdi`: progressive derived image item information (6.5.37).
+    Prdi(ProgressiveDerivedImageItemInformationProperty),
+    /// `sstr`: single stream (6.5.38).
+    Sstr(SingleStreamProperty),
+    /// `cmex`: camera extrinsic matrix (6.5.39).
+    Cmex(CameraExtrinsicMatrixProperty),
+    /// `cmin`: camera intrinsic matrix (6.5.40).
+    Cmin(CameraIntrinsicMatrixProperty),
+    /// `cexg`: constrained extents grid (Amd 1 6.5.41).
+    Cexg(ConstrainedExtentsGridProperty),
+    /// `dadj`: disparity adjustment (Amd 1 6.5.42).
+    Dadj(DisparityAdjustmentProperty),
+    /// `stag`: stereo aggressors (Amd 1 6.5.43).
+    Stag(StereoAggressorsProperty),
+    /// `reve`: reference viewing environment (Amd 1 6.5.44).
+    Reve(ReferenceViewingEnvironmentProperty),
+    /// `ndwt`: nominal diffuse white (Amd 1 6.5.45).
+    Ndwt(NominalDiffuseWhiteProperty),
+    /// `mskC`: mask configuration (11.2.2.2).
+    MskC(MaskConfigurationProperty),
+    /// `subs`: sub-sample information (6.5.28, the `subs` box reused).
+    Subs(crate::sample_groups::SubSampleInformationBox),
     /// Any property this crate does not model, preserved box and all.
     Opaque(OpaqueBox),
 }
@@ -1448,6 +1532,36 @@ impl ItemProperty {
             Self::Scrb(_) => crate::scheme::SCRB,
             Self::Amve(_) => AMVE,
             Self::Cclv(_) => CCLV,
+            Self::Iscl(_) => crate::image_props::ISCL,
+            Self::Rref(_) => crate::image_props::RREF,
+            Self::Crtt(_) => crate::image_props::CRTT,
+            Self::Mdft(_) => crate::image_props::MDFT,
+            Self::Udes(_) => crate::image_props::UDES,
+            Self::Altt(_) => crate::image_props::ALTT,
+            Self::Aebr(_) => crate::image_props::AEBR,
+            Self::Wbbr(_) => crate::image_props::WBBR,
+            Self::Fobr(_) => crate::image_props::FOBR,
+            Self::Afbr(_) => crate::image_props::AFBR,
+            Self::Dobr(_) => crate::image_props::DOBR,
+            Self::Pano(_) => crate::image_props::PANO,
+            Self::Tols(_) => crate::image_props::TOLS,
+            Self::Wipe(_) => crate::image_props::WIPE,
+            Self::Zoom(_) => crate::image_props::ZOOM,
+            Self::Fade(_) => crate::image_props::FADE,
+            Self::Splt(_) => crate::image_props::SPLT,
+            Self::Stpe(_) => crate::image_props::STPE,
+            Self::Ssld(_) => crate::image_props::SSLD,
+            Self::Prdi(_) => crate::image_props::PRDI,
+            Self::Sstr(_) => crate::image_props::SSTR,
+            Self::Cmex(_) => crate::image_props::CMEX,
+            Self::Cmin(_) => crate::image_props::CMIN,
+            Self::Cexg(_) => crate::image_props::CEXG,
+            Self::Dadj(_) => crate::image_props::DADJ,
+            Self::Stag(_) => crate::image_props::STAG,
+            Self::Reve(_) => crate::image_props::REVE,
+            Self::Ndwt(_) => crate::image_props::NDWT,
+            Self::MskC(_) => crate::image_props::MSKC,
+            Self::Subs(_) => *b"subs",
             Self::Opaque(opaque) => opaque.box_type,
         }
     }
@@ -1536,6 +1650,98 @@ impl ItemProperty {
             )?)),
             b"amve" => Ok(Self::Amve(AmbientViewingEnvironmentBox::parse(body)?)),
             b"cclv" => Ok(Self::Cclv(ContentColourVolumeBox::parse(body)?)),
+            b"iscl" => Ok(Self::Iscl(crate::image_props::ImageScaling::parse(
+                item.bytes,
+            )?)),
+            b"rref" => Ok(Self::Rref(
+                crate::image_props::RequiredReferenceTypesProperty::parse(item.bytes)?,
+            )),
+            b"crtt" => Ok(Self::Crtt(crate::image_props::CreationTimeProperty::parse(
+                item.bytes,
+            )?)),
+            b"mdft" => Ok(Self::Mdft(
+                crate::image_props::ModificationTimeProperty::parse(item.bytes)?,
+            )),
+            b"udes" => Ok(Self::Udes(
+                crate::image_props::UserDescriptionProperty::parse(item.bytes)?,
+            )),
+            b"altt" => Ok(Self::Altt(
+                crate::image_props::AccessibilityTextProperty::parse(item.bytes)?,
+            )),
+            b"aebr" => Ok(Self::Aebr(crate::image_props::AutoExposureProperty::parse(
+                item.bytes,
+            )?)),
+            b"wbbr" => Ok(Self::Wbbr(crate::image_props::WhiteBalanceProperty::parse(
+                item.bytes,
+            )?)),
+            b"fobr" => Ok(Self::Fobr(crate::image_props::FocusProperty::parse(
+                item.bytes,
+            )?)),
+            b"afbr" => Ok(Self::Afbr(
+                crate::image_props::FlashExposureProperty::parse(item.bytes)?,
+            )),
+            b"dobr" => Ok(Self::Dobr(crate::image_props::DepthOfFieldProperty::parse(
+                item.bytes,
+            )?)),
+            b"pano" => Ok(Self::Pano(crate::image_props::PanoramaProperty::parse(
+                item.bytes,
+            )?)),
+            b"tols" => Ok(Self::Tols(
+                crate::image_props::TargetOutputLayerSetProperty::parse(item.bytes)?,
+            )),
+            b"wipe" => Ok(Self::Wipe(
+                crate::image_props::WipeTransitionEffectProperty::parse(item.bytes)?,
+            )),
+            b"zoom" => Ok(Self::Zoom(
+                crate::image_props::ZoomTransitionEffectProperty::parse(item.bytes)?,
+            )),
+            b"fade" => Ok(Self::Fade(
+                crate::image_props::FadeTransitionEffectProperty::parse(item.bytes)?,
+            )),
+            b"splt" => Ok(Self::Splt(
+                crate::image_props::SplitTransitionEffectProperty::parse(item.bytes)?,
+            )),
+            b"stpe" => Ok(Self::Stpe(
+                crate::image_props::SuggestedTransitionPeriodProperty::parse(item.bytes)?,
+            )),
+            b"ssld" => Ok(Self::Ssld(
+                crate::image_props::SuggestedTimeDisplayDurationProperty::parse(item.bytes)?,
+            )),
+            b"prdi" => Ok(Self::Prdi(
+                crate::image_props::ProgressiveDerivedImageItemInformationProperty::parse(
+                    item.bytes,
+                )?,
+            )),
+            b"sstr" => Ok(Self::Sstr(crate::image_props::SingleStreamProperty::parse(
+                item.bytes,
+            )?)),
+            b"cmex" => Ok(Self::Cmex(
+                crate::image_props::CameraExtrinsicMatrixProperty::parse(item.bytes)?,
+            )),
+            b"cmin" => Ok(Self::Cmin(
+                crate::image_props::CameraIntrinsicMatrixProperty::parse(item.bytes)?,
+            )),
+            b"cexg" => Ok(Self::Cexg(
+                crate::image_props::ConstrainedExtentsGridProperty::parse(item.bytes)?,
+            )),
+            b"dadj" => Ok(Self::Dadj(
+                crate::image_props::DisparityAdjustmentProperty::parse(item.bytes)?,
+            )),
+            b"stag" => Ok(Self::Stag(
+                crate::image_props::StereoAggressorsProperty::parse(item.bytes)?,
+            )),
+            b"reve" => Ok(Self::Reve(
+                crate::image_props::ReferenceViewingEnvironmentProperty::parse(item.bytes)?,
+            )),
+            b"ndwt" => Ok(Self::Ndwt(
+                crate::image_props::NominalDiffuseWhiteProperty::parse(item.bytes)?,
+            )),
+            b"mskC" => Ok(Self::MskC(
+                crate::image_props::MaskConfigurationProperty::parse(item.bytes)?,
+            )),
+            b"subs" => Ok(Self::Subs(
+                crate::sample_groups::SubSampleInformationBox::parse(item.bytes)?,
+            )),
             _ => {
                 let mut opaque = OpaqueBox::new(item.four_cc(), item.payload().to_vec());
                 opaque.to_end = item.to_end();
@@ -1586,6 +1792,36 @@ impl Serialize for ItemProperty {
             Self::Scrb(value) => value.serialized_len(),
             Self::Amve(value) => box_len(BOX_HEADER_MIN_SIZE + value.serialized_len()),
             Self::Cclv(value) => box_len(BOX_HEADER_MIN_SIZE + value.serialized_len()),
+            Self::Iscl(value) => value.serialized_len(),
+            Self::Rref(value) => value.serialized_len(),
+            Self::Crtt(value) => value.serialized_len(),
+            Self::Mdft(value) => value.serialized_len(),
+            Self::Udes(value) => value.serialized_len(),
+            Self::Altt(value) => value.serialized_len(),
+            Self::Aebr(value) => value.serialized_len(),
+            Self::Wbbr(value) => value.serialized_len(),
+            Self::Fobr(value) => value.serialized_len(),
+            Self::Afbr(value) => value.serialized_len(),
+            Self::Dobr(value) => value.serialized_len(),
+            Self::Pano(value) => value.serialized_len(),
+            Self::Tols(value) => value.serialized_len(),
+            Self::Wipe(value) => value.serialized_len(),
+            Self::Zoom(value) => value.serialized_len(),
+            Self::Fade(value) => value.serialized_len(),
+            Self::Splt(value) => value.serialized_len(),
+            Self::Stpe(value) => value.serialized_len(),
+            Self::Ssld(value) => value.serialized_len(),
+            Self::Prdi(value) => value.serialized_len(),
+            Self::Sstr(value) => value.serialized_len(),
+            Self::Cmex(value) => value.serialized_len(),
+            Self::Cmin(value) => value.serialized_len(),
+            Self::Cexg(value) => value.serialized_len(),
+            Self::Dadj(value) => value.serialized_len(),
+            Self::Stag(value) => value.serialized_len(),
+            Self::Reve(value) => value.serialized_len(),
+            Self::Ndwt(value) => value.serialized_len(),
+            Self::MskC(value) => value.serialized_len(),
+            Self::Subs(value) => value.serialized_len(),
             Self::Opaque(value) => value.serialized_len(),
         }
     }
@@ -1614,12 +1850,43 @@ impl Serialize for ItemProperty {
             Self::Scrb(value) => value.serialize_into(buf),
             Self::Amve(value) => Self::write_body_box(buf, &AMVE, value.serialized_len(), value),
             Self::Cclv(value) => Self::write_body_box(buf, &CCLV, value.serialized_len(), value),
+            Self::Iscl(value) => value.serialize_into(buf),
+            Self::Rref(value) => value.serialize_into(buf),
+            Self::Crtt(value) => value.serialize_into(buf),
+            Self::Mdft(value) => value.serialize_into(buf),
+            Self::Udes(value) => value.serialize_into(buf),
+            Self::Altt(value) => value.serialize_into(buf),
+            Self::Aebr(value) => value.serialize_into(buf),
+            Self::Wbbr(value) => value.serialize_into(buf),
+            Self::Fobr(value) => value.serialize_into(buf),
+            Self::Afbr(value) => value.serialize_into(buf),
+            Self::Dobr(value) => value.serialize_into(buf),
+            Self::Pano(value) => value.serialize_into(buf),
+            Self::Tols(value) => value.serialize_into(buf),
+            Self::Wipe(value) => value.serialize_into(buf),
+            Self::Zoom(value) => value.serialize_into(buf),
+            Self::Fade(value) => value.serialize_into(buf),
+            Self::Splt(value) => value.serialize_into(buf),
+            Self::Stpe(value) => value.serialize_into(buf),
+            Self::Ssld(value) => value.serialize_into(buf),
+            Self::Prdi(value) => value.serialize_into(buf),
+            Self::Sstr(value) => value.serialize_into(buf),
+            Self::Cmex(value) => value.serialize_into(buf),
+            Self::Cmin(value) => value.serialize_into(buf),
+            Self::Cexg(value) => value.serialize_into(buf),
+            Self::Dadj(value) => value.serialize_into(buf),
+            Self::Stag(value) => value.serialize_into(buf),
+            Self::Reve(value) => value.serialize_into(buf),
+            Self::Ndwt(value) => value.serialize_into(buf),
+            Self::MskC(value) => value.serialize_into(buf),
+            Self::Subs(value) => value.serialize_into(buf),
             Self::Opaque(value) => value.serialize_into(buf),
         }
     }
 }
 
-/// A derived image item's typed body (ISO/IEC 23008-12:2017 6.6.2).
+/// A derived image item's typed body (ISO/IEC 23008-12:2025 6.6.2, Amd 1
+/// 6.6.2.4-6.6.2.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -1630,6 +1897,10 @@ pub enum DerivedImage {
     Overlay(ImageOverlay),
     /// `grid`: image grid.
     Grid(ImageGrid),
+    /// `tmap`: tone-map derivation (Amd 1 6.6.2.4).
+    ToneMap(ToneMapImage),
+    /// `cfen`: colour format enhancement (Amd 1 6.6.2.5).
+    ColourFormatEnhancement(ColourFormatEnhancement),
 }
 
 impl DerivedImage {
@@ -1649,6 +1920,21 @@ impl DerivedImage {
                 reference_count,
             )?)),
             ItemType::Grid => Ok(Self::Grid(ImageGrid::parse(body)?)),
+            ItemType::Tmap => {
+                let tone_map = ToneMapImage::parse(body)?;
+                if tone_map.version() != 0 {
+                    return Err(Error::UnsupportedFeature("tmap version"));
+                }
+                Ok(Self::ToneMap(tone_map))
+            }
+            ItemType::Cfen => {
+                let enhancement =
+                    ColourFormatEnhancement::parse_with_reference_count(body, reference_count)?;
+                if enhancement.version() != 0 {
+                    return Err(Error::UnsupportedFeature("cfen version"));
+                }
+                Ok(Self::ColourFormatEnhancement(enhancement))
+            }
             _ => Err(Error::UnsupportedFeature(
                 "item type is not a derived image",
             )),
@@ -1662,6 +1948,8 @@ impl DerivedImage {
             Self::Identity(value) => value.serialized_len(),
             Self::Overlay(value) => value.serialized_len(),
             Self::Grid(value) => value.serialized_len(),
+            Self::ToneMap(value) => value.serialized_len(),
+            Self::ColourFormatEnhancement(value) => value.serialized_len(),
         }
     }
 
@@ -1674,6 +1962,18 @@ impl DerivedImage {
             }
             Self::Overlay(value) => value.serialize_into(buf),
             Self::Grid(value) => value.serialize_into(buf),
+            Self::ToneMap(value) => value.serialize_into(buf),
+            Self::ColourFormatEnhancement(value) => value.serialize_into(buf),
         }
+    }
+}
+
+impl DerivedImage {
+    /// The body bytes, for a writer that adds a derived item whole.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = alloc::vec![0u8; self.serialized_len()];
+        let written = self.serialize_into(&mut out)?;
+        out.truncate(written);
+        Ok(out)
     }
 }

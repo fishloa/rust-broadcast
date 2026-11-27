@@ -79,6 +79,7 @@ example_args() {
             echo "fixtures/audio/aac.adts" ;;
         isobmff/heif_info) echo "fixtures/heif/thumb.heic" ;;
         isobmff/build_avif) echo "fixtures/avif/plain.avif" ;;
+        isobmff/heif_2025) echo "fixtures/heif/groups.mp4" ;;
         atsc3/parse_lls)      echo "fixtures/atsc3/slt-lls-2019-01-07.bin" ;;
         atsc3/parse_slt)      echo "fixtures/atsc3/slt-lls-2019-01-07.bin" ;;
         st2022/parse_hbrmt)   echo "fixtures/rtp/st2022-6-hbrmt-payload-header.bin" ;;
