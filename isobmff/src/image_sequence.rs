@@ -38,6 +38,8 @@ pub const MAX_REF_PER_PIC_UNRESTRICTED: u8 = 15;
 const MAX_REF_PER_PIC_SHIFT: u32 = 26;
 /// Mask of `max_ref_per_pic` in the 32-bit word.
 const MAX_REF_PER_PIC_MASK: u32 = 0x0f;
+/// Mask of the `reserved` run that follows `max_ref_per_pic` (7.2.3.3).
+const CCST_RESERVED_MASK: u32 = (1 << MAX_REF_PER_PIC_SHIFT) - 1;
 /// Offset of `intra_pred_used` in the 32-bit word.
 const INTRA_PRED_USED_SHIFT: u32 = 30;
 /// Offset of `all_ref_pics_intra` in the 32-bit word.
@@ -59,6 +61,7 @@ pub struct CodingConstraintsBox {
     all_ref_pics_intra: bool,
     intra_pred_used: bool,
     max_ref_per_pic: u8,
+    reserved: u32,
 }
 
 impl CodingConstraintsBox {
@@ -71,6 +74,7 @@ impl CodingConstraintsBox {
             all_ref_pics_intra,
             intra_pred_used,
             max_ref_per_pic,
+            reserved: 0,
         }
     }
 
@@ -91,6 +95,12 @@ impl CodingConstraintsBox {
     pub const fn max_ref_per_pic(&self) -> u8 {
         self.max_ref_per_pic
     }
+
+    /// The `reserved` run after `max_ref_per_pic`, kept verbatim.
+    #[must_use]
+    pub const fn reserved(&self) -> u32 {
+        self.reserved
+    }
 }
 
 impl<'a> Parse<'a> for CodingConstraintsBox {
@@ -102,6 +112,9 @@ impl<'a> Parse<'a> for CodingConstraintsBox {
             return Err(Error::InvalidInput("expected ccst"));
         }
         let body = crate::box_types::box_body(bytes, FULLBOX_EXTRA_SIZE + CCST_BODY_LEN, "ccst")?;
+        if body.len() != FULLBOX_EXTRA_SIZE + CCST_BODY_LEN {
+            return Err(Error::InvalidInput("ccst trailing bytes"));
+        }
         let word = be_u32(body, FULLBOX_EXTRA_SIZE, "ccst constraints")?;
         Ok(Self {
             version: body[0],
@@ -109,6 +122,7 @@ impl<'a> Parse<'a> for CodingConstraintsBox {
             all_ref_pics_intra: (word >> ALL_REF_PICS_INTRA_SHIFT) & 1 != 0,
             intra_pred_used: (word >> INTRA_PRED_USED_SHIFT) & 1 != 0,
             max_ref_per_pic: ((word >> MAX_REF_PER_PIC_SHIFT) & MAX_REF_PER_PIC_MASK) as u8,
+            reserved: word & CCST_RESERVED_MASK,
         })
     }
 }
@@ -128,6 +142,7 @@ impl Serialize for CodingConstraintsBox {
         word |= u32::from(self.intra_pred_used) << INTRA_PRED_USED_SHIFT;
         word |=
             u32::from(self.max_ref_per_pic & (MAX_REF_PER_PIC_MASK as u8)) << MAX_REF_PER_PIC_SHIFT;
+        word |= self.reserved & CCST_RESERVED_MASK;
         buf[cursor..cursor + CCST_BODY_LEN].copy_from_slice(&word.to_be_bytes());
         cursor += CCST_BODY_LEN;
         Ok(cursor)

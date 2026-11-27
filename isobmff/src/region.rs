@@ -44,6 +44,10 @@ const GEOMETRY_QUAD_FIELDS: usize = 4;
 const REGION_ITEM_PREFIX_LEN: usize = 2;
 /// Mask of `annotation_container_type` (11.4.3.1.2).
 const ANNOTATION_CONTAINER_MASK: u8 = 0x7;
+/// Width of `annotation_container_type` (11.4.3.1.2).
+const ANNOTATION_CONTAINER_TYPE_BITS: u32 = 3;
+/// Mask of the `reserved` value an association carries (11.4.3.1.2).
+const ANNOTATION_RESERVED_VALUE_MASK: u8 = 0x1f;
 /// Width of one `regm` association (11.4.3.1.2).
 const REGM_ASSOCIATION_LEN: usize = GEOMETRY_TYPE_LEN + 2 * WIDE_FIELD_LEN;
 /// Width of a narrow geometry field (11.2.1.3).
@@ -728,6 +732,7 @@ impl<'a> Parse<'a> for RegionTrackConfigBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        crate::image::expect_type(bytes, &RGA_CONFIG, "rgaC")?;
         need_in(bytes, BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE, "rgaC")?;
         let body = crate::box_types::box_body(bytes, FULLBOX_EXTRA_SIZE, "rgaC")?;
         let version = body[0];
@@ -981,6 +986,7 @@ impl RegionSample {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct RegionAnnotationAssociation {
+    reserved: u8,
     container_type: AnnotationContainerType,
     reference_type: [u8; BOX_TYPE_SIZE],
     index: u32,
@@ -995,10 +1001,17 @@ impl RegionAnnotationAssociation {
         index: u32,
     ) -> Self {
         Self {
+            reserved: 0,
             container_type,
             reference_type,
             index,
         }
+    }
+
+    /// The `reserved` run preceding `annotation_container_type`, kept verbatim.
+    #[must_use]
+    pub const fn reserved(&self) -> u8 {
+        self.reserved
     }
 
     /// `annotation_container_type`.
@@ -1117,19 +1130,22 @@ impl RegionAnnotationMap {
             let mut mapped = Vec::with_capacity(associations);
             for _ in 0..associations {
                 need_in(body, cursor + REGM_ASSOCIATION_LEN, "regm association")?;
+                let packed = body[cursor];
                 let container_type =
-                    AnnotationContainerType::from_value(body[cursor] & ANNOTATION_CONTAINER_MASK);
+                    AnnotationContainerType::from_value(packed & ANNOTATION_CONTAINER_MASK);
+                let reserved = packed >> ANNOTATION_CONTAINER_TYPE_BITS;
                 cursor += 1;
                 let mut reference_type = [0u8; BOX_TYPE_SIZE];
                 reference_type.copy_from_slice(&body[cursor..cursor + BOX_TYPE_SIZE]);
                 cursor += BOX_TYPE_SIZE;
                 let index = be_u32(body, cursor, "regm annotation_idx")?;
                 cursor += WIDE_FIELD_LEN;
-                mapped.push(RegionAnnotationAssociation::new(
+                mapped.push(RegionAnnotationAssociation {
+                    reserved,
                     container_type,
                     reference_type,
                     index,
-                ));
+                });
             }
             entries.push(RegionAnnotation {
                 region_id,
@@ -1163,7 +1179,9 @@ impl RegionAnnotationMap {
                 &fit_u16(entry.associations.len(), "regm association_count")?.to_be_bytes(),
             );
             for association in &entry.associations {
-                out.push(association.container_type.value() & ANNOTATION_CONTAINER_MASK);
+                let reserved = (association.reserved & ANNOTATION_RESERVED_VALUE_MASK)
+                    << ANNOTATION_CONTAINER_TYPE_BITS;
+                out.push(reserved | (association.container_type.value() & ANNOTATION_CONTAINER_MASK));
                 out.extend_from_slice(&association.reference_type);
                 out.extend_from_slice(&association.index.to_be_bytes());
             }
