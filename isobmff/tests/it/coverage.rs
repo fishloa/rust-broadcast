@@ -21,8 +21,7 @@ const UNTYPED_TIER_3: &[&str] = &[];
 
 /// Tier 4: newer signalling.
 const UNTYPED_TIER_4: &[&str] = &[
-    "aedb", "aelm", "aepp", "aepr", "aesb", "aesd", "amve", "ardi", "assp", "cclv", "cinf", "csch",
-    "rinf", "scrb", "spki",
+    "aedb", "aelm", "aepp", "aepr", "aesb", "aesd", "amve", "ardi", "assp", "cclv",
 ];
 
 /// Tier 5: legacy delivery and hint tracks (lowest value).

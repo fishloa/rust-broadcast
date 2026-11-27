@@ -1408,6 +1408,8 @@ pub enum ItemProperty {
     Brnd(BrandProperty),
     /// `hdlp`: a handler mapping.
     Hdlp(HandlerProperty),
+    /// `scrb`: a scramble scheme (§13.4.8).
+    Scrb(crate::scheme::ScrambleSchemeInfoBox),
     /// Any property this crate does not model, preserved box and all.
     Opaque(OpaqueBox),
 }
@@ -1436,6 +1438,7 @@ impl ItemProperty {
             Self::Clli(_) => CLLI_FOURCC,
             Self::Brnd(_) => crate::item::BRND,
             Self::Hdlp(_) => crate::item::HDLP,
+            Self::Scrb(_) => crate::scheme::SCRB,
             Self::Opaque(opaque) => opaque.box_type,
         }
     }
@@ -1519,6 +1522,9 @@ impl ItemProperty {
             b"clli" => Ok(Self::Clli(ContentLightLevel::parse(body)?)),
             b"brnd" => Ok(Self::Brnd(BrandProperty::parse(item.bytes)?)),
             b"hdlp" => Ok(Self::Hdlp(HandlerProperty::parse(item.bytes)?)),
+            b"scrb" => Ok(Self::Scrb(crate::scheme::ScrambleSchemeInfoBox::parse(
+                item.bytes,
+            )?)),
             _ => {
                 let mut opaque = OpaqueBox::new(item.four_cc(), item.payload().to_vec());
                 opaque.to_end = item.to_end();
@@ -1566,6 +1572,7 @@ impl Serialize for ItemProperty {
             Self::A1lx(value) => value.serialized_len(),
             Self::Brnd(value) => value.serialized_len(),
             Self::Hdlp(value) => value.serialized_len(),
+            Self::Scrb(value) => value.serialized_len(),
             Self::Opaque(value) => value.serialized_len(),
         }
     }
@@ -1591,6 +1598,7 @@ impl Serialize for ItemProperty {
             Self::A1lx(value) => value.serialize_into(buf),
             Self::Brnd(value) => value.serialize_into(buf),
             Self::Hdlp(value) => value.serialize_into(buf),
+            Self::Scrb(value) => value.serialize_into(buf),
             Self::Opaque(value) => value.serialize_into(buf),
         }
     }

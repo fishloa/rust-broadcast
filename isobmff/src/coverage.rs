@@ -158,6 +158,8 @@ leaf! {
     p_strd: b"strd", crate::track_desc::SubTrackDefinitionBox, &[];
     p_mehd: b"mehd", crate::init_segment::MovieExtendsHeaderBox, &MINIMAL_BODY;
     p_vvhd: b"vvhd", crate::init_segment::VolumetricVisualMediaHeaderBox, &MINIMAL_BODY;
+    p_csch: b"csch", crate::scheme::CompatibleSchemeTypeBox, &MINIMAL_BODY;
+    p_spki: b"spki", crate::scheme::SamplePackingInformationBox, &MINIMAL_BODY;
     p_brnd: b"brnd", crate::item::BrandProperty, &MINIMAL_BODY;
     p_grpl: b"grpl", crate::item::GroupsListBox, &[];
     p_idat: b"idat", crate::item::ItemDataBox, &MINIMAL_BODY;
@@ -292,6 +294,21 @@ fn p_otyp() -> Result<()> {
     crate::segments::OriginalFileTypeBox::parse(&boxed(*b"otyp", &body)).map(|_| ())
 }
 
+fn p_rinf() -> Result<()> {
+    let body = boxed(*b"schm", &[0u8; 12]);
+    crate::scheme::RestrictedSchemeInfoBox::parse(&boxed(*b"rinf", &body)).map(|_| ())
+}
+
+fn p_scrb() -> Result<()> {
+    let body = boxed(*b"schm", &[0u8; 12]);
+    crate::scheme::ScrambleSchemeInfoBox::parse(&boxed(*b"scrb", &body)).map(|_| ())
+}
+
+fn p_cinf() -> Result<()> {
+    let body = boxed(*b"frma", b"mp4v");
+    crate::scheme::CompleteTrackInfoBox::parse(&boxed(*b"cinf", &body)).map(|_| ())
+}
+
 fn p_strk() -> Result<()> {
     let body = boxed(*b"stri", &MINIMAL_BODY);
     crate::track_desc::SubTrackBox::parse(&boxed(*b"strk", &body)).map(|_| ())
@@ -421,6 +438,11 @@ typed! {
         p_etyp: b"etyp", "etyp", "ExtendedTypeBox";
         p_otyp: b"otyp", "otyp", "OriginalFileTypeBox";
         p_strk: b"strk", "strk", "SubTrackBox";
+        p_csch: b"csch", "csch", "CompatibleSchemeTypeBox";
+        p_spki: b"spki", "spki", "SamplePackingInformationBox";
+        p_rinf: b"rinf", "rinf", "RestrictedSchemeInfoBox";
+        p_cinf: b"cinf", "cinf", "CompleteTrackInfoBox";
+        p_scrb: b"scrb", "scrb", "ScrambleSchemeInfoBox";
 }
 
 #[cfg(test)]

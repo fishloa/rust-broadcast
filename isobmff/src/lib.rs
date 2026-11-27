@@ -162,6 +162,7 @@ pub mod sample_entries;
 pub mod sample_groups;
 pub mod sample_table;
 pub mod sample_tables_extra;
+pub mod scheme;
 pub mod segments;
 pub mod subtitle_entries;
 pub mod timing;
@@ -286,6 +287,10 @@ pub use sample_table::{
 };
 pub use sample_tables_extra::{
     DegradationPriorityBox, PADB, PaddingBitsBox, STDP, STSG, SubTrackSampleGroupBox,
+};
+pub use scheme::{
+    CINF, CSCH, CompatibleSchemeTypeBox, CompleteTrackInfoBox, RINF, SCRB, SPKI,
+    SamplePackingInformationBox, ScrambleSchemeInfoBox,
 };
 pub use segments::{
     ETYP, ExtendedTypeBox, IMDA, IdentifiedMediaDataBox, OTYP, OriginalFileTypeBox, TYCO,

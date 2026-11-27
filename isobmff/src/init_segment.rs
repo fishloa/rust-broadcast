@@ -5476,6 +5476,7 @@ pub fn protect_sample_entry(
         scheme_info: Some(crate::cenc::SchemeInformationBox {
             tenc: Some(tenc.clone()),
             stvi: None,
+            spki: None,
             extra_boxes: Vec::new(),
         }),
         extra_boxes: Vec::new(),

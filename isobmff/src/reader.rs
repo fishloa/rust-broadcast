@@ -461,6 +461,72 @@ impl SampleEntryInfo {
         }
     }
 
+    /// The restriction scheme (`rinf`, §13.5.3) this sample description
+    /// carries, when it carries one — either because the entry's four-CC is a
+    /// restricted code (`resv`, `resa`, …) or because an advisory `rinf` sits
+    /// inside an untransformed entry.
+    #[must_use]
+    pub fn restricted_scheme(&self) -> Option<crate::scheme::RestrictedSchemeInfoBox> {
+        self.entry_child(b"rinf")
+            .and_then(|bytes| crate::scheme::RestrictedSchemeInfoBox::parse(bytes).ok())
+    }
+
+    /// The scrambling scheme (`scrb`, §13.4.8) this sample description
+    /// carries, when it carries one.
+    #[must_use]
+    pub fn scramble_scheme(&self) -> Option<crate::scheme::ScrambleSchemeInfoBox> {
+        self.entry_child(b"scrb")
+            .and_then(|bytes| crate::scheme::ScrambleSchemeInfoBox::parse(bytes).ok())
+    }
+
+    /// The complete-track information (`cinf`, §13.6.3) an incomplete track's
+    /// sample description carries, when it carries one.
+    #[must_use]
+    pub fn complete_track_info(&self) -> Option<crate::scheme::CompleteTrackInfoBox> {
+        self.entry_child(b"cinf")
+            .and_then(|bytes| crate::scheme::CompleteTrackInfoBox::parse(bytes).ok())
+    }
+
+    /// One child box of the entry, by four-CC, from the entry's own bytes.
+    ///
+    /// The children start after the SampleEntry fixed part, whose length
+    /// depends on the entry's class (§8.5.2.2, §12.1.3, §12.2.3): a visual
+    /// entry's 78 bytes, an audio entry's 28, and 8 for the metadata, text and
+    /// subtitle classes. A restricted (`resv`/`resa`/...) or incomplete
+    /// (`icpv`/`icpa`) entry keeps its replaced class's fixed part
+    /// (§13.5.2 Table 14, §13.6.2), so the four-CC decides when no typed form
+    /// names the class.
+    fn entry_child(&self, fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&[u8]> {
+        let body = parse_box(&self.body).ok()?.0.body;
+        let fixed = self.entry_fixed_len();
+        let region = body.get(fixed..)?;
+        crate::box_types::BoxIter::new(region)
+            .filter_map(|child| child.ok())
+            .find(|child| child.four_cc() == *fourcc)
+            .map(|child| child.bytes)
+    }
+
+    /// The SampleEntry fixed-part length this entry uses, in bytes.
+    fn entry_fixed_len(&self) -> usize {
+        use crate::init_segment::SampleEntryVariant as V;
+        const SAMPLE_ENTRY_BASE: usize = 8;
+        const AUDIO_FIXED: usize = 28;
+        const VISUAL_FIXED: usize = 78;
+        match self.typed.as_ref() {
+            Some(V::Avc1(_) | V::Hevc1(_) | V::Vvc(_) | V::Mp4v(_) | V::Av01(_) | V::Vp09(_)) => {
+                VISUAL_FIXED
+            }
+            Some(V::Mp4a(_) | V::Ac3(_) | V::Ec3(_) | V::Ac4(_) | V::Opus(_) | V::Flac(_))
+            | Some(V::Mha(_) | V::Dts(_)) => AUDIO_FIXED,
+            Some(_) => SAMPLE_ENTRY_BASE,
+            None => match &self.fourcc {
+                b"resv" | b"icpv" => VISUAL_FIXED,
+                b"resa" | b"icpa" => AUDIO_FIXED,
+                _ => SAMPLE_ENTRY_BASE,
+            },
+        }
+    }
+
     /// The channel layout (`chnl`, §12.2.4) this audio entry carries, when
     /// present.
     #[must_use]
