@@ -1862,6 +1862,23 @@ fn rendered_total(metric: &str, route_label: &str) -> Option<f64> {
         .and_then(|v| v.parse::<f64>().ok())
 }
 
+/// The rendered sample line for `metric` carrying every `(label, value)` pair,
+/// so a test can assert one label without depending on the others' order.
+fn rendered_line(metric: &str, labels: &[(&str, &str)]) -> Option<String> {
+    crate::prometheus::install()
+        .render()
+        .lines()
+        .find_map(|line| {
+            if !line.starts_with(metric) {
+                return None;
+            }
+            let all = labels
+                .iter()
+                .all(|(name, value)| line.contains(&format!("{name}=\"{value}\"")));
+            all.then(|| line.to_string())
+        })
+}
+
 #[test]
 fn an_init_from_event_publishes_the_init_on_the_route() {
     let route = RouteHandle::new(
@@ -1963,6 +1980,100 @@ fn an_input_damage_report_reaches_the_route_metrics() {
         Some(1.0),
         "nothing new, nothing counted"
     );
+}
+
+/// The damage counter carries the input kind, and every input kind has a
+/// token for it: the label's cardinality is the fixed input set, never a URL.
+#[test]
+fn the_damage_counter_states_the_input_kind() {
+    crate::prometheus::install();
+    let cases = [
+        (
+            serde_json::json!({ "type": "rtsp", "url": "rtsp://h/s" }),
+            "rtsp",
+        ),
+        (
+            serde_json::json!({
+                "type": "rtp", "addr": "127.0.0.1:5000", "sdp": "v=0", "socket": {},
+            }),
+            "rtp",
+        ),
+        (
+            serde_json::json!({ "type": "ts_udp", "addr": "127.0.0.1:5000", "socket": {} }),
+            "ts_udp",
+        ),
+        (
+            serde_json::json!({ "type": "ts_http", "url": "http://h/x" }),
+            "ts_http",
+        ),
+        (
+            serde_json::json!({ "type": "hls_pull", "url": "http://h/x.m3u8" }),
+            "hls_pull",
+        ),
+        (
+            serde_json::json!({ "type": "dash_pull", "url": "http://h/x.mpd" }),
+            "dash_pull",
+        ),
+        (
+            serde_json::json!({ "type": "smooth_pull", "url": "http://h/x" }),
+            "smooth_pull",
+        ),
+        (
+            serde_json::json!({ "type": "rtmp", "listen": "127.0.0.1:1935" }),
+            "rtmp",
+        ),
+        (
+            serde_json::json!({ "type": "dashif_ingest", "listen": "127.0.0.1:8081" }),
+            "dashif_ingest",
+        ),
+        (
+            serde_json::json!({ "type": "srt", "listen": "127.0.0.1:9000" }),
+            "srt",
+        ),
+        (
+            serde_json::json!({ "type": "custom", "type_tag": "x" }),
+            "custom",
+        ),
+        (
+            serde_json::json!({ "type": "file", "path": "/tmp/x.ts" }),
+            "file",
+        ),
+    ];
+    for (json, token) in cases {
+        let input: crate::config::InputSpec = serde_json::from_value(json).expect("an input spec");
+        assert_eq!(crate::origin::admin::input_kind_name(&input), token);
+        let name = format!("damage-input-{token}");
+        let route = RouteHandle::new(RouteConfig::default())
+            .with_name(name.clone())
+            .with_input_kind(crate::origin::admin::input_kind_name(&input));
+        let report = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "PES packet",
+        );
+        let mut driver = IngestDriver::new(
+            DamageSession {
+                report: Some(report),
+            },
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        driver.feed(b"x", Timestamp::from_nanos(0));
+        let mut published = HashSet::new();
+        report_driver_progress(&mut driver, &route, &mut published);
+        let line = rendered_line(
+            "multimux_source_damage_total",
+            &[
+                ("route", &name),
+                ("source", token),
+                ("kind", "media unit dropped"),
+                ("severity", "degraded"),
+            ],
+        );
+        assert!(
+            line.is_some(),
+            "{token}: no damage line with its input kind"
+        );
+    }
 }
 
 #[test]

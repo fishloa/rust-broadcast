@@ -286,6 +286,7 @@ pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
             metrics::counter!(
                 crate::prometheus::SOURCE_DAMAGE_TOTAL,
                 "route" => route.clone(),
+                "source" => route_handle.input_kind(),
                 "kind" => damage.kind().name(),
                 "severity" => damage.severity().name(),
             )

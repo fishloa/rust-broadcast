@@ -21,6 +21,7 @@ const GUARD: Duration = Duration::from_secs(40);
 
 fn route_with(outputs: Vec<OutputKind>) -> Route {
     Route {
+        damage_policy: Default::default(),
         name: "cam".to_string(),
         input: InputSpec::File {
             path: fixture_string("ts/h264-aac.ts"),

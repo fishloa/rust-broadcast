@@ -152,8 +152,9 @@ pub(crate) const TS_BACKLOG_DROPPED_TOTAL: &str = "multimux_ts_backlog_dropped_t
 
 /// Counter: one damage report an input's reader published — content the
 /// viewer lost (`severity="degraded"`) or metadata it did not interpret
-/// (`severity="informational"`), by the report's own kind. Labels: `route`,
-/// `kind`, `severity`.
+/// (`severity="informational"`), by the report's own kind and by the input
+/// kind that read it. Labels: `route`, `source` (the input kind token, e.g.
+/// `hls_pull`, `rtmp` — a fixed set, never a URL), `kind`, `severity`.
 pub(crate) const SOURCE_DAMAGE_TOTAL: &str = "multimux_source_damage_total";
 
 /// Counter: a classic-TS (`ts_hls`) output passed its IDR-wait bound without an

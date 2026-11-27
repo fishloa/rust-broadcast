@@ -657,6 +657,56 @@ mod tests {
     /// as issue #957 reports, rather than the task ending on its own.
     /// Recompiled and re-ran to confirm that exact timeout, then restored
     /// the permanence block.
+    /// A route whose `damage_policy` fails on a report ends *that input's*
+    /// run (the source returns an error), and the supervisor restarts it just
+    /// as it restarts any failed input — the route goes back to `Live` when a
+    /// later attempt succeeds. Nothing else on the origin is touched: the
+    /// supervisor owns one route.
+    #[tokio::test]
+    async fn an_input_whose_run_ends_at_a_report_is_restarted() {
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_part_target(Duration::from_millis(500))
+                .with_window_segments(8),
+        ));
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let attempts = call_count.clone();
+        let attempt = move |handle: Arc<RouteHandle>| {
+            let n = attempts.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                if n == 0 {
+                    // The first run is the one the route's `Fail` policy ends
+                    // at a report: the source returns Err, exactly as an error
+                    // from its run does.
+                    handle.set_health(HealthState::Live);
+                    return Err(MultimuxError::Connect {
+                        reason: "damage policy refused".to_string(),
+                    });
+                }
+                // The restart is healthy and keeps running until cancelled.
+                handle.set_health(HealthState::Live);
+                std::future::pending::<()>().await;
+                Ok(())
+            })
+        };
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route.clone(),
+            Ok(tiny_backoff()),
+            "damage-fail-route".to_string(),
+            cancel.clone(),
+        ));
+        let restarted = wait_until(Duration::from_secs(5), || {
+            call_count.load(Ordering::SeqCst) >= 2 && route.health() == HealthState::Live
+        })
+        .await;
+        assert!(restarted, "the input must be restarted and come back Live");
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+    }
+
     #[tokio::test]
     async fn a_wrong_password_stops_retrying_after_the_bound_and_marks_the_route_failed() {
         let route = Arc::new(RouteHandle::new(

@@ -106,6 +106,7 @@ async fn http_input(path: &Path) -> (InputSpec, tokio::task::JoinHandle<()>) {
 
 fn route(name: &str, input: InputSpec, fallback: TsHlsIdrFallback) -> Route {
     Route {
+        damage_policy: Default::default(),
         name: name.to_string(),
         input,
         outputs: vec![OutputKind::TsHls],

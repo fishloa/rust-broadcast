@@ -98,6 +98,7 @@ pub(crate) fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {
+            damage_policy: Default::default(),
             name: "cam".to_string(),
             input,
             outputs: vec![OutputKind::LlHls],

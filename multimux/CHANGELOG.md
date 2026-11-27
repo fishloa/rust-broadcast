@@ -4,6 +4,20 @@
 
 ### Added
 
+- `Route::damage_policy` (JSON, default-report): what each damage report from
+  that route's input means. `{"degraded": "fail"}` ends *that input's* run at
+  the report, and the supervisor restarts it exactly as it restarts any failed
+  input — the origin and its other routes are untouched. Carried today by the
+  pull-family inputs (`hls_pull`, `dash_pull`, `smooth_pull`).
+- `multimux_source_damage_total` gains a `source` label: the input kind token
+  the report came from (`hls_pull`, `rtmp`, ...), the admin API's fixed token
+  set, so cardinality stays bounded. A test drives every input kind through a
+  route and checks the label.
+- `RouteHandle::with_input_kind`/`input_kind`, and the supervisor's restart of
+  an input whose run ended at a refused report.
+
+### Added
+
 - Every damage report an input publishes is forwarded to the route's log and
   the Prometheus facade as the new `multimux_source_damage_total` counter
   (labels `route`, `kind`, `severity`). No protocol knowledge is added: the

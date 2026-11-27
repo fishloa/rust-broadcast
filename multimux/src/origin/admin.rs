@@ -1148,7 +1148,9 @@ impl RouteStatus {
     }
 }
 
-fn input_kind_name(input: &crate::config::InputSpec) -> &'static str {
+/// The admin JSON token of an input kind — also the damage metric's `source`
+/// label, so the two cannot drift.
+pub(crate) fn input_kind_name(input: &crate::config::InputSpec) -> &'static str {
     use crate::config::InputSpec::*;
     match input {
         Rtsp { .. } => "rtsp",
@@ -1722,6 +1724,7 @@ mod tests {
 
     fn rtsp_route(name: &str, url: &str) -> Route {
         Route {
+            damage_policy: Default::default(),
             name: name.to_string(),
             input: InputSpec::Rtsp {
                 url: url.to_string(),
@@ -2463,6 +2466,7 @@ mod tests {
     async fn add_route_rejects_invalid_route_before_mutating() {
         let registry = RouteRegistry::new(ctx_for_tests(), None);
         let bad = Route {
+            damage_policy: Default::default(),
             name: "cam1".to_string(),
             input: InputSpec::Rtsp {
                 url: "rtsp://host/a".to_string(),

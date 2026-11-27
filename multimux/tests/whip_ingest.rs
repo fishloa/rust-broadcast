@@ -197,6 +197,7 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {
+            damage_policy: Default::default(),
             name: "cam".to_string(),
             input: InputSpec::Whip {
                 listen: whip_addr.to_string(),
@@ -286,6 +287,7 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
         .with_window_segments(8)
         .with_ingest_connect_timeout(Duration::from_secs(3))
         .with_routes(vec![Route {
+            damage_policy: Default::default(),
             name: "cam".to_string(),
             input: InputSpec::Whip {
                 listen: whip_addr.to_string(),

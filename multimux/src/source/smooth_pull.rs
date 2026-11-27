@@ -54,6 +54,7 @@ impl crate::source::pull_target::PullDrive for SmoothPullKind {
 
 fn session_config(route: &SmoothPullRoute) -> Config {
     let mut config = Config::relay();
+    config.damage_policy = route.target.damage_policy.clone();
     config.kind = SourceKind::Smooth;
     let mut config = config.with_timeouts(route.target.timeouts);
     config.max_queued_bytes = crate::source::SEGMENTED_EVENT_QUEUE_BYTES;

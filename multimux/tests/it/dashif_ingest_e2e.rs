@@ -104,6 +104,7 @@ fn config_with(
         .with_window_segments(8)
         .with_hold_cold_playlist(false)
         .with_routes(vec![Route {
+            damage_policy: Default::default(),
             name: "cam".to_string(),
             input: InputSpec::DashifIngest {
                 listen: ingest.to_string(),
