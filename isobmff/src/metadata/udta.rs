@@ -15,6 +15,7 @@
 //! Unknown children (GoPro `FIRM`, `GPMF`, `free`, …) are an [`OpaqueBox`] at
 //! the position they occupied, so a camera file round-trips byte for byte.
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use broadcast_core::len::{need_in, need_out};
@@ -146,6 +147,10 @@ pub enum UdtaChild {
     Copyright(crate::meta_track::CopyrightBox),
     /// A sub-track's information and definition (§8.13.3).
     SubTrack(crate::track_desc::SubTrackBox),
+    /// Hint information (`hnti`, §9.1.4).
+    HintInformation(Box<crate::hint::HintInformationBox>),
+    /// Hint statistics (`hinf`, §9.1.5).
+    HintStatistics(Box<crate::hint::HintStatisticsBox>),
     /// Any other child, preserved verbatim.
     Opaque(OpaqueBox),
 }
@@ -165,6 +170,8 @@ impl Serialize for UdtaChild {
             Self::TrackSelection(selection) => selection.serialized_len(),
             Self::Copyright(copyright) => copyright.serialized_len(),
             Self::SubTrack(subtrack) => subtrack.serialized_len(),
+            Self::HintInformation(hint) => hint.serialized_len(),
+            Self::HintStatistics(statistics) => statistics.serialized_len(),
             Self::Opaque(opaque) => opaque.serialized_len(),
         }
     }
@@ -181,6 +188,8 @@ impl Serialize for UdtaChild {
             Self::TrackSelection(selection) => selection.serialize_into(buf),
             Self::Copyright(copyright) => copyright.serialize_into(buf),
             Self::SubTrack(subtrack) => subtrack.serialize_into(buf),
+            Self::HintInformation(hint) => hint.serialize_into(buf),
+            Self::HintStatistics(statistics) => statistics.serialize_into(buf),
             Self::Opaque(opaque) => opaque.serialize_into(buf),
         }
     }
@@ -265,6 +274,12 @@ impl Udta {
                 crate::track_desc::TSEL => UdtaChild::TrackSelection(
                     crate::track_desc::TrackSelectionBox::parse_body(child.body)?,
                 ),
+                crate::hint::HNTI => UdtaChild::HintInformation(Box::new(
+                    crate::hint::HintInformationBox::parse_body(child.body)?,
+                )),
+                crate::hint::HINF => UdtaChild::HintStatistics(Box::new(
+                    crate::hint::HintStatisticsBox::parse_body(child.body)?,
+                )),
                 _ if super::is_text_key(&fourcc) => {
                     UdtaChild::Text(parse_text(fourcc, child.body)?)
                 }

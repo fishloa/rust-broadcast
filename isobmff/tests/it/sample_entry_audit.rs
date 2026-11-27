@@ -22,6 +22,12 @@ const VISUAL_FIXED_LEN: usize = 78;
 const AUDIO_FIXED_LEN: usize = 28;
 /// QuickTime timecode sample entry fixed fields through `number_of_frames`.
 const TIMECODE_FIXED_LEN: usize = 25;
+/// RTP/SRTP/RTCP/FD hint entry fixed fields after the box header:
+/// `hinttrackversion`, `highestcompatibleversion` and either `maxpacketsize`
+/// or the FD partition/overhead words (§9.1.2, §9.2.3, §9.4.1).
+const HINT_RTP_FIXED_LEN: usize = 16;
+/// MPEG-2 TS hint entry fixed fields after the box header (§9.3.3).
+const HINT_TS_FIXED_LEN: usize = 15;
 /// A byte value unlikely to equal a field's default.
 const NON_DEFAULT: u8 = 0xA5;
 
@@ -80,6 +86,10 @@ fn fixed_len(fourcc: &[u8]) -> usize {
         | b"in32" | b"sowt" | b"twos" | b"raw " | b"fl32" | b"fl64" | b"ima4" | b"MAC3 "
         | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" => AUDIO_FIXED_LEN,
         b"tmcd" => TIMECODE_FIXED_LEN,
+        b"rtp " | b"srtp" | b"rrtp" | b"rsrp" | b"rtcp" | b"stcp" | b"prtp" | b"fdp " => {
+            HINT_RTP_FIXED_LEN
+        }
+        b"rm2t" | b"sm2t" | b"pm2t" => HINT_TS_FIXED_LEN,
         _ => SAMPLE_ENTRY_FIXED_LEN,
     }
 }
@@ -253,4 +263,46 @@ fn image_sequence_fixture_entries_are_byte_exact() {
         2 * VISUAL_FIXED_LEN,
         "every visual fixed byte of both sequence entries is exercised"
     );
+}
+
+#[test]
+fn hint_entries_from_the_committed_hint_fixtures_are_byte_exact() {
+    let mut entries_seen = 0usize;
+    let mut checked = 0usize;
+    for fixture in [
+        "mp4/boxes/hint-hmhd.mp4",
+        "mp4/boxes/hint-offsets.mp4",
+        "mp4/boxes/hint-mtu-copy.mp4",
+        "mp4/boxes/hint-latm.mp4",
+    ] {
+        for entry in entries(&fixtures::read(fixture), fixture) {
+            if !matches!(
+                &entry.bytes[4..8],
+                b"rtp "
+                    | b"srtp"
+                    | b"rrtp"
+                    | b"rsrp"
+                    | b"rtcp"
+                    | b"stcp"
+                    | b"prtp"
+                    | b"rm2t"
+                    | b"sm2t"
+                    | b"pm2t"
+                    | b"fdp "
+            ) {
+                continue;
+            }
+            entries_seen += 1;
+            checked += audit(&entry);
+            let variant = sample_entry_variant(&entry.bytes)
+                .unwrap_or_else(|err| panic!("{fixture} hint entry: parse failed: {err}"));
+            assert_eq!(
+                variant.try_to_bytes().expect("entry serializes"),
+                entry.bytes,
+                "{fixture} hint entry does not round-trip"
+            );
+        }
+    }
+    assert_eq!(entries_seen, 7, "the committed hint fixtures' rtp entries");
+    assert!(checked > 0, "at least one hint fixed byte was exercised");
 }

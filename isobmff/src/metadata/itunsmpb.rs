@@ -160,6 +160,7 @@ mod tests {
                 name: ITUNSMPB_NAME.into(),
                 values,
             }],
+            fd_item_information: None,
         }
     }
 

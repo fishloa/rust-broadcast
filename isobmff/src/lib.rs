@@ -106,6 +106,14 @@
 //!   `csch`, `spki`, `scrb`, `cinf`.
 //! - [`audio_elements`] — audio rendering and element signalling: `ardi`,
 //!   `aelm`, `aedb`, `aepp`, `aepr`, `aesb`, `aesd`.
+//! - [`hint`] — the hint-track layer: `hnti`/`rtp `/`sdp `, the `hinf`
+//!   counters, `tims`/`tsro`/`snro`/`tssy`/`rssr`/`srpp`/`rtpx`/`rcsr`,
+//!   `tPAT`/`tPMT`/`tsti`/`istm`, the RTP/MPEG-2 TS hint sample entries and
+//!   the RTP sample format.
+//! - [`file_delivery`] — FLUTE file delivery: `fiin`/`paen`/`fpar`/`fecr`/
+//!   `fire`/`segr`/`gitn`, `fdsa`/`fdpa`/`extr`/`feci`, the FD hint sample
+//!   entry and the FD sample format; the `fdel` item information extension is
+//!   in [`item`].
 //!
 //! # Spec citations
 //!
@@ -150,11 +158,13 @@ pub mod driver;
 pub mod dts;
 pub mod emsg;
 pub mod error;
+pub mod file_delivery;
 pub mod flac;
 pub mod frag_layout;
 pub mod frag_offsets;
 pub mod hdr_boxes;
 pub mod hevc_config;
+pub mod hint;
 pub mod image;
 pub mod image_brands;
 pub mod image_derived;
@@ -309,14 +319,15 @@ pub use reader::{
     ByteRange, Mode, Reader, ReaderConfig, SampleEntryInfo, SampleOrder, Source, Step, TrackInfo,
 };
 pub use sample_entries::{
-    AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VVCSampleEntry,
+    AVCSampleEntry, BitRateBox, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VVCSampleEntry,
     VisualSampleEntryFields,
 };
 pub use sample_table::{
     CursorState, SampleRef, TrackCursor, build_ctts, build_stsc, build_stss, build_stts,
 };
 pub use sample_tables_extra::{
-    DegradationPriorityBox, PADB, PaddingBitsBox, STDP, STSG, SubTrackSampleGroupBox,
+    DegradationPriorityBox, PADB, PaddingBitsBox, STDP, STSG, STSH, ShadowSyncEntry,
+    ShadowSyncSampleBox, SubTrackSampleGroupBox,
 };
 pub use scheme::{
     CINF, CSCH, CompatibleSchemeTypeBox, CompleteTrackInfoBox, RINF, RestrictedSchemeInfoBox, SCRB,

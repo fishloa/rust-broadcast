@@ -485,7 +485,7 @@ impl Serialize for OpaqueBox {
 impl OpaqueBox {
     /// Serialize as a child of a container, telling the writer whether it is
     /// the container's last child (see [`OpaqueBox::declared_size`]).
-    fn serialize_child_into(&self, buf: &mut [u8], is_last: bool) -> Result<usize> {
+    pub(crate) fn serialize_child_into(&self, buf: &mut [u8], is_last: bool) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let size = self.declared_size(is_last)?;
