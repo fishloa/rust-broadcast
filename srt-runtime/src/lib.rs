@@ -14,6 +14,7 @@ pub mod caller;
 #[cfg(feature = "crypto")]
 #[cfg_attr(docsrs, doc(cfg(feature = "crypto")))]
 pub mod crypto;
+pub mod damage;
 pub mod error;
 pub mod filecc;
 pub mod handshake_sm;

@@ -9,7 +9,29 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.
+- `tsbpd::TickOutcome::dropped` is a `Vec<DroppedPacket>` (the sequence
+  number plus a `DropReason` and the play time it was due at), not a
+  `Vec<u32>`: a caller can now tell a too-late arrival from a skipped gap or
+  a peer drop request.
+- `io::SrtSocket::recv_event` is the connection's output channel and
+  `io::SrtEvent` its item (`Payload` or `Damage`). `recv` stays the
+  payload-only convenience over it; damage reports it reads past are held for
+  `SrtSocket::next_damage`. `SrtSocketConfig` gains `damage_policy`
+  (`with_damage_policy`), and `Error` gains `Damage` carrying the report the
+  policy refused.
+
 ### Added
+
+- The SRT delivery engine reports what the viewer lost through
+  `broadcast_core::damage::Damage`: every contiguous run of sequence numbers
+  TSBPD gave up on (§4.6 too-late, rule 21 gap skip, §3.2.9 DROPREQ — one
+  report per run, not one per packet, with the run's first sequence number
+  and its play-time span), plus a one-off report per cause for the losses the
+  adapter only counts (an encrypted packet with no usable key, a datagram
+  beyond the flow window, an unparseable datagram, a payload the application
+  read too slowly, and a peer `PeerError`). With
+  `SrtSocketConfig::damage_policy` set to `Fail`, the connection ends with the
+  same report inside `Error::Damage`.
 
 - `crypto::AES_BLOCK_LEN`, `crypto::WRAP_ICV_LEN`, `handshake_sm::IPV4_ADDR_WORDS`, `packet::handshake::PEER_IP_WORDS` and `packet::key_material::ICV_LEN`: the lengths these modules expose in their public function signatures and public field types, so a caller can size its own buffers from them.
 

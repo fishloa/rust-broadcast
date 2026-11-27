@@ -94,7 +94,65 @@ const MAX_TLPKT_SKIP_SPAN: u32 = 1 << 16;
 /// once reached, further gaps are cleared by the too-late skip instead.
 const MAX_SKIPS: usize = 1024;
 
-/// `now` as whole microseconds, saturating (a `Duration` past ~584 000 years).
+/// Why the scheduler gave a sequence number up.
+///
+/// Carried by every [`DroppedPacket`], so the caller can report what the
+/// viewer lost with the reason it was lost.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum DropReason {
+    /// The packet arrived after its play time by more than the too-late
+    /// threshold (§4.6, rule 19).
+    TooLate,
+    /// The packet never arrived and the earliest buffered successor reached
+    /// its play time, so the gap was skipped (§4.6, rule 21).
+    GapSkipped,
+    /// The peer sent a DROPREQ announcing it will never deliver the range
+    /// (§3.2.9).
+    DropRequested,
+}
+
+impl DropReason {
+    /// Spec label for this reason — used by `Display`.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            DropReason::TooLate => "too late",
+            DropReason::GapSkipped => "gap skipped",
+            DropReason::DropRequested => "drop requested",
+        }
+    }
+}
+
+broadcast_core::impl_spec_display!(DropReason);
+
+/// One sequence number the scheduler gave up on, with the reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct DroppedPacket {
+    /// The sequence number dropped.
+    pub seq_number: u32,
+    /// Why it was dropped.
+    pub reason: DropReason,
+    /// The play time (`PktTsbpdTime`, µs) the packet was due at, when the
+    /// scheduler knew it.
+    pub due_us: Option<u64>,
+}
+
+impl DroppedPacket {
+    /// A drop of `seq_number` for `reason`, due at `due_us` when known.
+    #[must_use]
+    pub const fn new(seq_number: u32, reason: DropReason, due_us: Option<u64>) -> Self {
+        Self {
+            seq_number,
+            reason,
+            due_us,
+        }
+    }
+}
+
 /// Outcome of one [`TsbpdScheduler::tick`] call.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -106,7 +164,7 @@ pub struct TickOutcome {
     /// too-late threshold upon arrival (or before `tick` could release them),
     /// or skipped as unrecoverable when a gap's earliest buffered successor
     /// went too late (§4.6, rule 21).
-    pub dropped: Vec<u32>,
+    pub dropped: Vec<DroppedPacket>,
 }
 
 /// Recommended too-late threshold is `1.25 × SRT latency` (rule 19), as the
@@ -178,6 +236,9 @@ pub struct TsbpdScheduler {
     /// inclusive `(first, last)` pairs. `release_ready` jumps the cursor past
     /// them on arrival; pruned once passed.
     pending_skips: Vec<(u32, u32)>,
+    /// Drops [`Self::skip_range`] made immediately, held until the next
+    /// `tick`/`feed_data` reports them in its outcome.
+    pending_drops: Vec<DroppedPacket>,
     /// The current reference point for unwrapping the 32-bit wire timestamp
     /// into an always-increasing microsecond value (issue #1063): the most
     /// recently *advanced-to* raw timestamp and the absolute value it was
@@ -235,6 +296,7 @@ impl TsbpdScheduler {
             buffer: BTreeMap::new(),
             highest_fed: None,
             pending_skips: Vec::new(),
+            pending_drops: Vec::new(),
             ts_unwrap_reference: None,
         }
     }
@@ -392,7 +454,11 @@ impl TsbpdScheduler {
             let drop_before = now_us.saturating_sub(self.tlpktdrop_threshold_us);
             if pkt_tsbpd_time < drop_before {
                 // Packet is too late — drop it immediately.
-                let mut dropped = alloc::vec![seq_number];
+                let mut dropped = alloc::vec![DroppedPacket::new(
+                    seq_number,
+                    DropReason::TooLate,
+                    Some(pkt_tsbpd_time),
+                )];
                 // Advance past the dropped sequence if it's the next
                 // expected, so the queue doesn't stall.
                 if seq_number == self.next_release {
@@ -484,9 +550,9 @@ impl TsbpdScheduler {
     ///     pos = i + 1;
     /// }
     /// ```
-    fn release_ready(&mut self, now_us: u64) -> (Vec<u32>, Vec<u32>) {
+    fn release_ready(&mut self, now_us: u64) -> (Vec<u32>, Vec<DroppedPacket>) {
         let mut delivered = Vec::new();
-        let mut dropped = Vec::new();
+        let mut dropped = core::mem::take(&mut self.pending_drops);
 
         loop {
             if let Some(&tsbpd_time) = self.buffer.get(&self.next_release) {
@@ -505,7 +571,11 @@ impl TsbpdScheduler {
                         // i" — i.e. we drop the packet at position i and
                         // advance past it. (rule 21, L2693-2715)
                         self.buffer.remove(&self.next_release);
-                        dropped.push(self.next_release);
+                        dropped.push(DroppedPacket::new(
+                            self.next_release,
+                            DropReason::TooLate,
+                            Some(tsbpd_time),
+                        ));
                         self.next_release = seq::seq_next(self.next_release);
                         continue;
                     }
@@ -527,6 +597,22 @@ impl TsbpdScheduler {
                 .position(|&(f, l)| seq::seq_in_closed_range(self.next_release, f, l))
             {
                 let (_, last) = self.pending_skips.remove(pos);
+                let span = seq::seq_diff(last, self.next_release);
+                if u32::try_from(span).is_ok_and(|span| span <= MAX_TLPKT_SKIP_SPAN) {
+                    while self.next_release != last {
+                        dropped.push(DroppedPacket::new(
+                            self.next_release,
+                            DropReason::DropRequested,
+                            None,
+                        ));
+                        self.next_release = seq::seq_next(self.next_release);
+                    }
+                }
+                dropped.push(DroppedPacket::new(
+                    self.next_release,
+                    DropReason::DropRequested,
+                    None,
+                ));
                 self.next_release = seq::seq_next(last);
                 continue;
             }
@@ -570,7 +656,7 @@ impl TsbpdScheduler {
             let mut s = self.next_release;
             while s != skip_to {
                 self.buffer.remove(&s);
-                dropped.push(s);
+                dropped.push(DroppedPacket::new(s, DropReason::GapSkipped, None));
                 s = seq::seq_next(s);
             }
             self.next_release = skip_to;
@@ -617,6 +703,19 @@ impl TsbpdScheduler {
         self.pending_skips
             .retain(|&(_, l)| !seq::seq_lt(l, self.next_release));
         if seq::seq_in_closed_range(self.next_release, first, last) {
+            while self.next_release != last {
+                self.pending_drops.push(DroppedPacket::new(
+                    self.next_release,
+                    DropReason::DropRequested,
+                    None,
+                ));
+                self.next_release = seq::seq_next(self.next_release);
+            }
+            self.pending_drops.push(DroppedPacket::new(
+                self.next_release,
+                DropReason::DropRequested,
+                None,
+            ));
             self.next_release = seq::seq_next(last);
         } else if seq::seq_lt(self.next_release, first) && self.pending_skips.len() < MAX_SKIPS {
             // Ahead of the cursor: remember it so `release_ready` jumps the
@@ -640,6 +739,10 @@ impl TsbpdScheduler {
 
 #[cfg(test)]
 mod tests {
+
+    fn dropped_seqs(outcome: &TickOutcome) -> Vec<u32> {
+        outcome.dropped.iter().map(|d| d.seq_number).collect()
+    }
     use super::*;
     use alloc::vec;
     use core::time::Duration;
@@ -776,7 +879,7 @@ mod tests {
             outcome.delivered.is_empty(),
             "should not deliver late packet"
         );
-        assert_eq!(outcome.dropped, vec![0]);
+        assert_eq!(dropped_seqs(&outcome), vec![0]);
     }
 
     #[test]
@@ -805,14 +908,14 @@ mod tests {
         let pkt1_tsbpd = TIME_BASE + 10_000 + DELAY_MS * 1000;
         let outcome = s.tick(Timestamp::from_micros(pkt1_tsbpd));
         assert_eq!(outcome.delivered, vec![1]);
-        assert_eq!(outcome.dropped, vec![0]);
+        assert_eq!(dropped_seqs(&outcome), vec![0]);
 
         // Packet 2 is now left sitting past its too-late threshold.
         let pkt2_tsbpd = TIME_BASE + 20_000 + DELAY_MS * 1000;
         let threshold = (DELAY_MS * 5).div_ceil(4) * 1000;
         let outcome = s.tick(Timestamp::from_micros(pkt2_tsbpd + threshold + 1));
         assert!(outcome.delivered.is_empty());
-        assert_eq!(outcome.dropped, vec![2]);
+        assert_eq!(dropped_seqs(&outcome), vec![2]);
 
         // A late duplicate of the skipped packet 0 is a no-op — the cursor
         // has already advanced past it.
@@ -1046,7 +1149,7 @@ mod tests {
             "the successor must be delivered at its play time"
         );
         assert_eq!(
-            outcome.dropped,
+            dropped_seqs(&outcome),
             vec![0],
             "the missing packet must be reported as dropped"
         );
@@ -1230,10 +1333,10 @@ mod tests {
             let raw = u32::try_from(true_ts & 0xFFFF_FFFF).unwrap();
             last_now = true_ts + 10_000;
             let out = s.feed_data(i, raw, Timestamp::from_micros(last_now));
-            dropped.extend(out.dropped);
+            dropped.extend(out.dropped.iter().map(|d| d.seq_number));
         }
         let out = s.tick(Timestamp::from_micros(last_now + DELAY_MS * 1000));
-        dropped.extend(out.dropped);
+        dropped.extend(out.dropped.iter().map(|d| d.seq_number));
         assert!(dropped.is_empty(), "dropped across the wrap: {dropped:?}");
         assert_eq!(s.next_release(), PACKETS, "every packet was released");
         assert_eq!(s.buffered_count(), 0);
@@ -1271,7 +1374,7 @@ mod tests {
 
         let mut s = sched();
         let out = s.feed_data(0, 0, Timestamp::from_micros(pkt_tsbpd + threshold_us + 1));
-        assert_eq!(out.dropped, vec![0]);
+        assert_eq!(dropped_seqs(&out), vec![0]);
         assert_eq!(s.buffered_count(), 0);
     }
 
@@ -1291,7 +1394,7 @@ mod tests {
         let mut s = sched();
         let _ = s.feed_data(0, 0, Timestamp::ZERO);
         let out = s.tick(Timestamp::from_micros(pkt_tsbpd + threshold_us + 1));
-        assert_eq!(out.dropped, vec![0]);
+        assert_eq!(dropped_seqs(&out), vec![0]);
         assert!(out.delivered.is_empty());
     }
 

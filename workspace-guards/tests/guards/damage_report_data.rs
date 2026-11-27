@@ -40,6 +40,14 @@ pub const READERS: &[Reader] = &[
         status: Status::Converted,
         reports: &["Event"],
     },
+    // Lane dm3: the SRT delivery engine reports every packet run TSBPD gave
+    // up on (too late, gap skipped, peer drop request) and every datum it
+    // dropped before the scheduler saw it, as `SrtEvent::Damage`.
+    Reader {
+        name: "srt-runtime",
+        status: Status::Converted,
+        reports: &["SrtEvent"],
+    },
     // Pending: #4191 converts the remaining readers to the one report.
     Reader {
         name: "isobmff",

@@ -125,6 +125,11 @@ pub enum Error {
         #[source]
         source: alloc::boxed::Box<Error>,
     },
+    /// The caller's [`broadcast_core::damage::DamagePolicy`] refused a
+    /// damage report: the connection ends with the same report inside this
+    /// error (`crate::io::SrtSocket::recv_event`).
+    #[error(transparent)]
+    Damage(#[from] broadcast_core::damage::DamageError),
     /// A real-socket I/O failure surfaced by [`crate::io`]'s tokio adapter
     /// (feature `tokio`, which implies `std`). Carries the OS
     /// [`std::io::ErrorKind`] — so e.g. a bind failure (`AddrInUse`) is
