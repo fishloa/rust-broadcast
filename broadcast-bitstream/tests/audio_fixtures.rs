@@ -98,7 +98,7 @@ fn broadcast_capture_yields_131_aac_frames() {
 #[test]
 fn ac3_fixture_parses_every_frame() {
     let es = test_fixtures::read("ps/ffmpeg-mpeg2video-2xac3.a0.ac3");
-    let frames = split_ac3_syncframes(&es);
+    let frames = split_ac3_syncframes(&es, &mut broadcast_bitstream::Findings::new());
     let first = Ac3SyncframeInfo::from_es(&es).expect("an AC-3 syncframe");
     let sample_rate = first.sample_rate();
     let channels = first.channel_count();
@@ -123,7 +123,7 @@ fn ac3_fixture_parses_every_frame() {
 #[test]
 fn eac3_fixture_parses_every_access_unit() {
     let es = test_fixtures::read("crypto/sample-aes-eac3/clear.ec3");
-    let units = split_eac3_syncframes(&es);
+    let units = split_eac3_syncframes(&es, &mut broadcast_bitstream::Findings::new());
     let first = Ec3SyncframeInfo::from_es(&es).expect("an E-AC-3 syncframe");
     let sample_rate = first.sample_rate();
     let channels = first.channel_count();

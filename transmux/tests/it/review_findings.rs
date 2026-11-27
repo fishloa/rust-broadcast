@@ -34,7 +34,7 @@ fn eac3_cc_gap_in_next_pes_drops_the_held_intact_access_unit() {
     let Some(es) = private("audio/eac3-dependent/the-great-wall-7.1.eac3") else {
         return;
     };
-    let aus: Vec<Vec<u8>> = split_eac3_syncframes(&es)
+    let aus: Vec<Vec<u8>> = split_eac3_syncframes(&es, &mut broadcast_bitstream::Findings::new())
         .into_iter()
         .map(|u| u.data().to_vec())
         .collect();

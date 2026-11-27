@@ -18,8 +18,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = Ec3SyncframeInfo::first_crc_verified_bsmod(data, 0);
     let _ = ec3_specific_box_from_syncframes(&frames);
 
-    let units = split_eac3_syncframes(data);
-    let ranges = split_eac3_syncframe_ranges(data);
+    let units = split_eac3_syncframes(data, &mut broadcast_bitstream::Findings::new());
+    let ranges = split_eac3_syncframe_ranges(data, &mut broadcast_bitstream::Findings::new());
     for u in &units {
         let _ = u.info().samples_per_frame();
         for f in &frames {

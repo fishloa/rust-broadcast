@@ -54,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the best-effort rule requires for a repaired timeline, with the track, the
   new media time and the packet's byte offset — and a signalled discontinuity
   whose rebase lifts a track's timeline now publishes that report as well.
+- The streaming demuxers forward every parse failure `broadcast-bitstream`
+  tolerates as `DemuxEvent::Damage` (issue #4196): a rejected parameter set
+  (already reported), a malformed SEI in the display walk, HDR metadata that
+  does not parse, an audio frame whose header fails, and an access unit the
+  Program Stream splitter cannot delimit. Each report names the structure, the
+  track (when resolved), the media time and the byte offset. A caller that
+  fails on the report stops there with the same `Damage` inside the error.
 
 ### Breaking
 

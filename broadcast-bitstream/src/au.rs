@@ -37,6 +37,7 @@ use broadcast_core::error::InvalidValue;
 
 use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::error::{Error, Result as AuResult};
+use crate::findings::{Findings, ParseFinding};
 use crate::nal::{NalCodec, nal_unit_type};
 
 // ── NAL-type classification (VCL ranges + AUD), per each codec's Table 7-1 / 5 ──
@@ -217,6 +218,9 @@ pub struct AccessUnitSplitter {
     au_has_vcl: bool,
     /// Completed access units awaiting [`pop`](Self::pop).
     ready: VecDeque<Vec<u8>>,
+    /// Structures this splitter could not delimit (leading junk, a NAL too
+    /// short to carry a header). Drained by [`take_findings`](Self::take_findings).
+    findings: Findings,
     /// Total bytes walked by the start-code scan, across every `push`.
     ///
     /// Present only in test builds, where it pins the r04-W3 guarantee: the
@@ -237,6 +241,7 @@ impl AccessUnitSplitter {
             au: Vec::new(),
             au_has_vcl: false,
             ready: VecDeque::new(),
+            findings: Findings::new(),
             #[cfg(test)]
             scanned_bytes: 0,
         }
@@ -266,6 +271,13 @@ impl AccessUnitSplitter {
     /// Pop the next completed access unit, if any.
     pub fn pop(&mut self) -> Option<Vec<u8>> {
         self.ready.pop_front()
+    }
+
+    /// The structures the splitter has skipped since the last call: leading
+    /// bytes before the first start code, and a NAL too short to carry a
+    /// header.
+    pub fn take_findings(&mut self) -> Findings {
+        core::mem::take(&mut self.findings)
     }
 
     /// Flush at end of stream: complete the trailing NAL and emit the final
@@ -300,6 +312,7 @@ impl AccessUnitSplitter {
                 Some(first) => {
                     if first > 0 {
                         self.buf.drain(..first);
+                        self.findings.push(ParseFinding::access_unit(first));
                     }
                     self.primed = true;
                     self.scanned = 0;
@@ -414,7 +427,8 @@ impl AccessUnitSplitter {
         // classification only reads the header bytes at its front.
         let body = &nal_with_code[start_code_len(nal_with_code)..];
         let Some(t) = nal_unit_type(self.codec, body) else {
-            // Too short to carry a NAL header — attach to the current AU verbatim.
+            // Too short to carry a NAL header — attach to the current AU verbatim
+            // (nothing is skipped, so there is nothing to report).
             self.au.extend_from_slice(nal_with_code);
             return;
         };
@@ -454,7 +468,7 @@ fn start_code_len(nal_with_code: &[u8]) -> usize {
 ///
 /// Convenience wrapper over [`AccessUnitSplitter`] for a buffer already held in
 /// full (feeds it, finishes, and collects every access unit).
-pub fn split_access_units(codec: NalCodec, annexb: &[u8]) -> Vec<Vec<u8>> {
+pub fn split_access_units(codec: NalCodec, annexb: &[u8], findings: &mut Findings) -> Vec<Vec<u8>> {
     let mut s = AccessUnitSplitter::new(codec);
     // The one-shot convenience wrapper has no way to surface a mid-stream
     // error, and its buffer is the caller's whole stream; stop the feed on an
@@ -463,6 +477,7 @@ pub fn split_access_units(codec: NalCodec, annexb: &[u8]) -> Vec<Vec<u8>> {
         return Vec::new();
     }
     s.finish();
+    findings.absorb(s.take_findings());
     let mut out = Vec::new();
     while let Some(au) = s.pop() {
         out.push(au);
@@ -533,7 +548,7 @@ mod tests {
             avc_aud(),
             avc_p_first(),
         ]);
-        let aus = split_access_units(NalCodec::Avc, &stream);
+        let aus = split_access_units(NalCodec::Avc, &stream, &mut Findings::new());
         assert_eq!(aus.len(), 2, "two AUDs → two access units");
         assert_eq!(concat(&aus), stream, "AU concatenation is byte-exact");
     }
@@ -548,7 +563,7 @@ mod tests {
             avc_p_first(),
             avc_p_first(),
         ]);
-        let aus = split_access_units(NalCodec::Avc, &stream);
+        let aus = split_access_units(NalCodec::Avc, &stream, &mut Findings::new());
         assert_eq!(aus.len(), 3);
         assert_eq!(concat(&aus), stream);
         // First AU carries the parameter sets.
@@ -560,7 +575,7 @@ mod tests {
         // One picture split into two slices: first_mb==0 then first_mb!=0.
         let stream = concat(&[avc_sps(), avc_idr_first(), avc_p_cont()]);
         // Note: avc_p_cont has first_mb!=0, so it must NOT open a new AU.
-        let aus = split_access_units(NalCodec::Avc, &stream);
+        let aus = split_access_units(NalCodec::Avc, &stream, &mut Findings::new());
         assert_eq!(aus.len(), 1, "continuation slice stays in the same AU");
         assert_eq!(concat(&aus), stream);
     }
@@ -578,7 +593,7 @@ mod tests {
             avc_aud(),
             avc_p_first(),
         ]);
-        let whole = split_access_units(NalCodec::Avc, &stream);
+        let whole = split_access_units(NalCodec::Avc, &stream, &mut Findings::new());
         // Feed one byte at a time — the hardest chunk boundary case.
         let mut s = AccessUnitSplitter::new(NalCodec::Avc);
         let mut chunked = Vec::new();
@@ -603,7 +618,7 @@ mod tests {
         let vps = vec![0x00u8, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c];
         let idr = vec![0x00u8, 0x00, 0x01, 0x26, 0x01, 0x80]; // first_slice=1 (0x80)
         let stream = concat(&[aud.clone(), vps, idr, aud]);
-        let aus = split_access_units(NalCodec::Hevc, &stream);
+        let aus = split_access_units(NalCodec::Hevc, &stream, &mut Findings::new());
         assert_eq!(aus.len(), 2);
         assert_eq!(concat(&aus), stream);
     }
@@ -612,7 +627,7 @@ mod tests {
     fn leading_junk_before_first_start_code_is_dropped() {
         let mut stream = vec![0xaa, 0xbb, 0xcc];
         stream.extend_from_slice(&concat(&[avc_aud(), avc_idr_first()]));
-        let aus = split_access_units(NalCodec::Avc, &stream);
+        let aus = split_access_units(NalCodec::Avc, &stream, &mut Findings::new());
         assert_eq!(aus.len(), 1);
         // Junk dropped: AU begins at the first start code.
         assert_eq!(&aus[0][..4], &[0x00, 0x00, 0x00, 0x01]);
@@ -636,7 +651,7 @@ mod tests {
             avc_p_first(),
             filler,
         ]);
-        let aus = split_access_units(NalCodec::Avc, &stream);
+        let aus = split_access_units(NalCodec::Avc, &stream, &mut Findings::new());
         assert_eq!(aus.len(), 2, "filler/EOS must not open an access unit");
         assert_eq!(concat(&aus), stream, "concatenation stays byte-exact");
         // Every emitted AU carries a coded slice (the pre-fix output alternated).
@@ -685,7 +700,7 @@ mod tests {
             p,
             aud,
         ]);
-        let aus = split_access_units(NalCodec::Hevc, &stream);
+        let aus = split_access_units(NalCodec::Hevc, &stream, &mut Findings::new());
         // AU 1 = picture + every suffix NAL; AU 2 = the prefix-class NALs and
         // the next slice; AU 3 = the trailing AUD alone.
         assert_eq!(
@@ -748,7 +763,7 @@ mod tests {
             filler.extend_from_slice(&alloc::vec![0xffu8; 3000 + i as usize]);
             stream.extend_from_slice(&filler);
         }
-        let whole = split_access_units(NalCodec::Avc, &stream);
+        let whole = split_access_units(NalCodec::Avc, &stream, &mut Findings::new());
         assert_eq!(whole.len(), 4, "four AUD-led access units");
 
         // Feed in small chunks: 512 bytes is well inside the long filler NALs,
@@ -783,7 +798,7 @@ mod tests {
         let mut big = avc_idr_first();
         big.extend_from_slice(&vec![0x55u8; 200_000]);
         let stream = concat(&[avc_aud(), big, avc_p_first(), avc_aud()]);
-        let whole = split_access_units(NalCodec::Avc, &stream);
+        let whole = split_access_units(NalCodec::Avc, &stream, &mut Findings::new());
 
         // 1316 bytes is the classic TS/RTMP payload size; the pre-fix splitter
         // rescanned the whole buffer on every one of these pushes.
@@ -843,7 +858,10 @@ mod tests {
         while let Some(au) = s2.pop() {
             chunked.push(au);
         }
-        assert_eq!(chunked, split_access_units(NalCodec::Avc, &stream));
+        assert_eq!(
+            chunked,
+            split_access_units(NalCodec::Avc, &stream, &mut Findings::new())
+        );
     }
 
     /// r04-W3: a stream that never emits another start code (or whose single NAL
@@ -901,7 +919,7 @@ mod tests {
         let mut stream = avc_idr_first();
         stream.extend_from_slice(&vec![0x55u8; 4 * 1024 * 1024]);
         stream.extend_from_slice(&avc_p_first());
-        let aus = split_access_units(NalCodec::Avc, &stream);
+        let aus = split_access_units(NalCodec::Avc, &stream, &mut Findings::new());
         assert_eq!(aus.len(), 2, "a 4 MiB IDR must be accepted");
         assert_eq!(concat(&aus), stream);
         assert!(aus[0].len() > 4 * 1024 * 1024);
@@ -944,7 +962,7 @@ mod tests {
             hevc_nal(1, true),   // TRAIL_R first slice → AU 3
             hevc_nal(1, false),  // continuation slice stays in AU 3
         ]);
-        let aus = split_access_units(NalCodec::Hevc, &stream);
+        let aus = split_access_units(NalCodec::Hevc, &stream, &mut Findings::new());
         assert_eq!(aus.len(), 3, "each first-slice flag opens an AU");
         assert_eq!(concat(&aus), stream);
         assert!(contains_nal_type(&aus[0], NalCodec::Hevc, &[19, 32]));
@@ -963,7 +981,7 @@ mod tests {
             vvc_nal(20), // AUD
             vvc_nal(7),  // IDR_W_RADL
         ]);
-        let aus = split_access_units(NalCodec::Vvc, &stream);
+        let aus = split_access_units(NalCodec::Vvc, &stream, &mut Findings::new());
         assert_eq!(aus.len(), 2, "VVC splits on its AUD type 20");
         assert_eq!(concat(&aus), stream);
         assert!(contains_nal_type(&aus[0], NalCodec::Vvc, &[7, 15, 16, 20]));
@@ -983,7 +1001,7 @@ mod tests {
             vvc_nal(17), // PREFIX_APS_NUT stays in AU 2
             vvc_nal(7),  // IDR_W_RADL
         ]);
-        let aus = split_access_units(NalCodec::Vvc, &stream);
+        let aus = split_access_units(NalCodec::Vvc, &stream, &mut Findings::new());
         assert_eq!(aus.len(), 2, "the prefix SEI opens the second AU");
         assert_eq!(concat(&aus), stream);
         assert!(contains_nal_type(&aus[0], NalCodec::Vvc, &[7, 21, 24, 25]));
@@ -995,7 +1013,7 @@ mod tests {
     #[test]
     fn an_aud_closes_a_config_only_access_unit() {
         let avc = concat(&[avc_aud(), avc_sps(), avc_aud(), avc_idr_first()]);
-        let avc_aus = split_access_units(NalCodec::Avc, &avc);
+        let avc_aus = split_access_units(NalCodec::Avc, &avc, &mut Findings::new());
         assert_eq!(avc_aus.len(), 2, "the second AUD closes the SPS-only AU");
         assert_eq!(concat(&avc_aus), avc);
         assert!(contains_nal_type(&avc_aus[0], NalCodec::Avc, &[7, 9]));
@@ -1007,7 +1025,7 @@ mod tests {
             hevc_nal(35, false), // AUD
             hevc_nal(19, true),  // IDR
         ]);
-        let hevc_aus = split_access_units(NalCodec::Hevc, &hevc);
+        let hevc_aus = split_access_units(NalCodec::Hevc, &hevc, &mut Findings::new());
         assert_eq!(hevc_aus.len(), 2, "the second AUD closes the VPS-only AU");
         assert_eq!(concat(&hevc_aus), hevc);
         assert!(contains_nal_type(&hevc_aus[0], NalCodec::Hevc, &[32, 35]));
@@ -1022,6 +1040,8 @@ mod tests {
         s.push(&[0xAA, 0xBB, 0xCC]).unwrap();
         s.finish();
         assert!(s.pop().is_none(), "leading junk must not become an AU");
-        assert!(split_access_units(NalCodec::Avc, &[1, 2, 3, 4, 5]).is_empty());
+        assert!(
+            split_access_units(NalCodec::Avc, &[1, 2, 3, 4, 5], &mut Findings::new()).is_empty()
+        );
     }
 }

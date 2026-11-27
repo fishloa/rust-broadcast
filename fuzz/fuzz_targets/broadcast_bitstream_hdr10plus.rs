@@ -16,7 +16,7 @@ fuzz_target!(|data: &[u8]| {
         }
         let _ = meta.to_hevc_prefix_sei_nal();
     }
-    let _ = Hdr10PlusMetadata::hevc_sei_nal_payloads(data);
+    let _ = Hdr10PlusMetadata::hevc_sei_nal_payloads(data, &mut broadcast_bitstream::Findings::new());
     let _ = Hdr10PlusMetadata::from_hevc_sei_nal(data);
     let _ = Hdr10PlusMetadata::hevc_sei_nal_carries_hdr10plus(data);
     let _ = Hdr10PlusMetadata::annexb_access_unit_carries_hdr10plus(data);

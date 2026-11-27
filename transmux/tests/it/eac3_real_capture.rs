@@ -105,19 +105,19 @@ fn a_truncated_last_eac3_frame_is_dropped() {
         .iter()
         .flat_map(|s| s.data.iter().copied())
         .collect();
-    let whole = split_eac3_syncframes(&es);
-    let ranges = split_eac3_syncframe_ranges(&es);
+    let whole = split_eac3_syncframes(&es, &mut broadcast_bitstream::Findings::new());
+    let ranges = split_eac3_syncframe_ranges(&es, &mut broadcast_bitstream::Findings::new());
     assert_eq!(whole.len(), 58);
     assert_eq!(ranges.len(), whole.len());
     assert_eq!(ranges.last().unwrap().1, es.len());
 
     let cut = &es[..es.len() - 1];
     assert_eq!(
-        split_eac3_syncframes(cut).len(),
+        split_eac3_syncframes(cut, &mut broadcast_bitstream::Findings::new()).len(),
         whole.len() - 1,
         "only the complete frames are access units"
     );
-    let cut_ranges = split_eac3_syncframe_ranges(cut);
+    let cut_ranges = split_eac3_syncframe_ranges(cut, &mut broadcast_bitstream::Findings::new());
     assert_eq!(cut_ranges.len(), whole.len() - 1);
     assert!(
         cut_ranges.iter().all(|&(_, end)| end <= cut.len()),
@@ -126,8 +126,14 @@ fn a_truncated_last_eac3_frame_is_dropped() {
 
     let first_len = ranges[0].1 - ranges[0].0;
     let one_plus_two = &es[..first_len + 2];
-    assert_eq!(split_eac3_syncframes(one_plus_two).len(), 1);
-    assert_eq!(split_eac3_syncframe_ranges(one_plus_two), [(0, first_len)]);
+    assert_eq!(
+        split_eac3_syncframes(one_plus_two, &mut broadcast_bitstream::Findings::new()).len(),
+        1
+    );
+    assert_eq!(
+        split_eac3_syncframe_ranges(one_plus_two, &mut broadcast_bitstream::Findings::new()),
+        [(0, first_len)]
+    );
 }
 
 #[test]

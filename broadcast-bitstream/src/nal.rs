@@ -754,20 +754,28 @@ fn sei_varint(rbsp: &[u8], pos: &mut usize) -> Option<u32> {
 /// as `(payloadType, unescaped payload bytes)` — ITU-T H.264 §7.3.2.3.1 /
 /// H.265 §7.3.5 (identical `payloadType`/`payloadSize` coding). Stops at the
 /// first truncated message or at `rbsp_trailing_bits`, keeping what was read,
-/// so a malformed SEI yields fewer messages rather than an error.
-pub fn sei_messages(nal_body: &[u8]) -> Vec<(u32, Vec<u8>)> {
+/// so a malformed SEI yields fewer messages rather than an error; the bytes the
+/// walk could not reach are reported through `findings` rather than dropped
+/// silently.
+pub fn sei_messages(
+    nal_body: &[u8],
+    findings: &mut crate::findings::Findings,
+) -> Vec<(u32, Vec<u8>)> {
     let rbsp = crate::rbsp::unescape(nal_body);
     let mut out = Vec::new();
     let mut pos = 0usize;
     // `more_rbsp_data()`: anything left other than the single trailing byte.
     while pos < rbsp.len() && !(pos + 1 == rbsp.len() && rbsp[pos] == SEI_RBSP_TRAILING_BYTE) {
         let Some(payload_type) = sei_varint(&rbsp, &mut pos) else {
+            findings.push(crate::findings::ParseFinding::malformed_sei(pos));
             break;
         };
         let Some(size) = sei_varint(&rbsp, &mut pos) else {
+            findings.push(crate::findings::ParseFinding::malformed_sei(pos));
             break;
         };
         let Some(end) = pos.checked_add(size as usize).filter(|&e| e <= rbsp.len()) else {
+            findings.push(crate::findings::ParseFinding::malformed_sei(pos));
             break;
         };
         out.push((payload_type, rbsp[pos..end].to_vec()));
@@ -1003,16 +1011,24 @@ fn append_if_atsc_cc_data(payload: &[u8], out: &mut Vec<u8>) {
 /// several `sei_message()`s (e.g. `buffering_period`/`pic_timing`/caption)
 /// into one NAL, so every message is checked. Stops silently (no panic) on a
 /// truncated or malformed NAL, matching that function's convention.
-fn append_atsc_cc_data_from_sei_nal(codec: NalCodec, nal: &[u8], out: &mut Vec<u8>) {
+fn append_atsc_cc_data_from_sei_nal(
+    codec: NalCodec,
+    nal: &[u8],
+    out: &mut Vec<u8>,
+    findings: &mut crate::findings::Findings,
+) {
     if !is_sei_nal(codec, nal) {
         return;
     }
-    let mut bytes = EbspBytes::new(&nal[codec.header_len()..]).peekable();
+    let body = codec.header_len();
+    let mut bytes = EbspBytes::new(&nal[body..]).peekable();
     loop {
         let Some(payload_type) = read_sei_varint(&mut bytes) else {
+            findings.push(crate::findings::ParseFinding::malformed_sei(body));
             return;
         };
         let Some(payload_size) = read_sei_varint(&mut bytes) else {
+            findings.push(crate::findings::ParseFinding::malformed_sei(body));
             return;
         };
         let payload_size = payload_size as usize;
@@ -1021,12 +1037,14 @@ fn append_atsc_cc_data_from_sei_nal(codec: NalCodec, nal: &[u8], out: &mut Vec<u
             if payload.len() != payload_size {
                 // Truncated mid-payload: no more bytes to find further
                 // messages either.
+                findings.push(crate::findings::ParseFinding::malformed_sei(body));
                 return;
             }
             append_if_atsc_cc_data(&payload, out);
         } else {
             for _ in 0..payload_size {
                 if bytes.next().is_none() {
+                    findings.push(crate::findings::ParseFinding::malformed_sei(body));
                     return;
                 }
             }
@@ -1059,17 +1077,25 @@ fn append_atsc_cc_data_from_sei_nal(codec: NalCodec, nal: &[u8], out: &mut Vec<u
 /// yield an empty `Vec` rather than an error — "no captions in this AU" is
 /// the expected common case, not a failure. VVC always yields empty: no
 /// caption SEI convention is defined for it here.
-pub fn caption_cc_data(codec: NalCodec, au: &[u8], length_prefixed: bool) -> Vec<u8> {
+pub fn caption_cc_data(
+    codec: NalCodec,
+    au: &[u8],
+    length_prefixed: bool,
+    findings: &mut crate::findings::Findings,
+) -> Vec<u8> {
     let mut out = Vec::new();
     if length_prefixed {
-        if let Ok(nals) = iter_length_prefixed_nals(au) {
-            for nal in nals {
-                append_atsc_cc_data_from_sei_nal(codec, nal, &mut out);
+        match iter_length_prefixed_nals(au) {
+            Ok(nals) => {
+                for nal in nals {
+                    append_atsc_cc_data_from_sei_nal(codec, nal, &mut out, findings);
+                }
             }
+            Err(_) => findings.push(crate::findings::ParseFinding::access_unit(0)),
         }
     } else {
         for nal in iter_annexb_nals(au) {
-            append_atsc_cc_data_from_sei_nal(codec, nal, &mut out);
+            append_atsc_cc_data_from_sei_nal(codec, nal, &mut out, findings);
         }
     }
     out
@@ -1078,6 +1104,7 @@ pub fn caption_cc_data(codec: NalCodec, au: &[u8], length_prefixed: bool) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::findings::Findings;
     use alloc::string::ToString;
     use alloc::vec;
 
@@ -1421,17 +1448,22 @@ mod tests {
         assert_eq!(china[6], 0xB5);
         china[6] = 0x26;
         assert_eq!(
-            caption_cc_data(NalCodec::Avc, &china, false),
+            caption_cc_data(NalCodec::Avc, &china, false, &mut Findings::new()),
             REAL_A53_CC_DATA
         );
         let mut other = REAL_A53_SEI_NAL;
         other[6] = 0x27;
-        assert!(caption_cc_data(NalCodec::Avc, &other, false).is_empty());
+        assert!(caption_cc_data(NalCodec::Avc, &other, false, &mut Findings::new()).is_empty());
     }
 
     #[test]
     fn caption_cc_data_extracts_real_atsc_a53_sei() {
-        let extracted = caption_cc_data(NalCodec::Avc, &REAL_A53_SEI_NAL, false);
+        let extracted = caption_cc_data(
+            NalCodec::Avc,
+            &REAL_A53_SEI_NAL,
+            false,
+            &mut Findings::new(),
+        );
         assert_eq!(extracted, REAL_A53_CC_DATA);
     }
 
@@ -1444,14 +1476,14 @@ mod tests {
         au.extend_from_slice(&[0x00, 0x00, 0x01, 0x41, 0x9a]); // non-IDR slice
         au.extend_from_slice(&REAL_A53_SEI_NAL);
         au.extend_from_slice(&[0x00, 0x00, 0x01, 0x41, 0x9b]); // non-IDR slice
-        let extracted = caption_cc_data(NalCodec::Avc, &au, false);
+        let extracted = caption_cc_data(NalCodec::Avc, &au, false, &mut Findings::new());
         assert_eq!(extracted, REAL_A53_CC_DATA);
     }
 
     #[test]
     fn caption_cc_data_length_prefixed_matches_annexb() {
         let lp = crate::annexb::annexb_to_length_prefixed(&REAL_A53_SEI_NAL);
-        let extracted = caption_cc_data(NalCodec::Avc, &lp, true);
+        let extracted = caption_cc_data(NalCodec::Avc, &lp, true, &mut Findings::new());
         assert_eq!(extracted, REAL_A53_CC_DATA);
     }
 
@@ -1461,11 +1493,15 @@ mod tests {
         // must not be mistaken for a caption SEI (bites the payloadType
         // discrimination, not just the T.35 signature check).
         let recovery_point = [0x00, 0x00, 0x01, 0x06, 0x06, 0x00];
-        assert!(caption_cc_data(NalCodec::Avc, &recovery_point, false).is_empty());
+        assert!(
+            caption_cc_data(NalCodec::Avc, &recovery_point, false, &mut Findings::new()).is_empty()
+        );
 
         // pic_timing SEI (payloadType 1) with an arbitrary payload.
         let pic_timing = [0x00, 0x00, 0x01, 0x06, 0x01, 0x02, 0xAA, 0xBB];
-        assert!(caption_cc_data(NalCodec::Avc, &pic_timing, false).is_empty());
+        assert!(
+            caption_cc_data(NalCodec::Avc, &pic_timing, false, &mut Findings::new()).is_empty()
+        );
 
         // user_data_registered_itu_t_t35 (payloadType 4) but the wrong
         // provider/country signature (not ATSC/GA94) — must not match.
@@ -1474,7 +1510,10 @@ mod tests {
             0x04, 0x08, // payloadType 4, payloadSize 8
             0xB5, 0x00, 0x99, b'X', b'X', b'X', b'X', 0x03, // wrong provider
         ];
-        assert!(caption_cc_data(NalCodec::Avc, &wrong_signature, false).is_empty());
+        assert!(
+            caption_cc_data(NalCodec::Avc, &wrong_signature, false, &mut Findings::new())
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1488,7 +1527,7 @@ mod tests {
             0xB5, 0x00, 0x31, 0x47, 0x41, 0x39, 0x34, 0x03, // T.35 + GA94 + type 0x03
             0x9F, 0xFF, // cc_data() header: cc_count = 31 (needs 96 more bytes, has 0)
         ];
-        assert!(caption_cc_data(NalCodec::Avc, &truncated, false).is_empty());
+        assert!(caption_cc_data(NalCodec::Avc, &truncated, false, &mut Findings::new()).is_empty());
     }
 
     #[test]
@@ -1508,7 +1547,7 @@ mod tests {
             au.push(0x04); // payloadType 4
             au.push(0x47); // payloadSize 71
             au.extend_from_slice(t35_and_cc_data);
-            let extracted = caption_cc_data(NalCodec::Hevc, &au, false);
+            let extracted = caption_cc_data(NalCodec::Hevc, &au, false, &mut Findings::new());
             assert_eq!(extracted, REAL_A53_CC_DATA, "HEVC {label} SEI");
         }
     }
@@ -1517,7 +1556,12 @@ mod tests {
     fn caption_cc_data_vvc_is_always_empty() {
         // No caption SEI convention is defined for VVC here — even a byte
         // sequence that would match on AVC/HEVC must yield nothing.
-        let extracted = caption_cc_data(NalCodec::Vvc, &REAL_A53_SEI_NAL, false);
+        let extracted = caption_cc_data(
+            NalCodec::Vvc,
+            &REAL_A53_SEI_NAL,
+            false,
+            &mut Findings::new(),
+        );
         assert!(extracted.is_empty());
     }
 
@@ -1530,18 +1574,24 @@ mod tests {
         // captions found" (possibly non-empty in a way we don't assert here —
         // the property under test is "doesn't panic", not a specific value).
         for codec in [NalCodec::Avc, NalCodec::Hevc, NalCodec::Vvc] {
-            let _ = caption_cc_data(codec, &[], false);
-            let _ = caption_cc_data(codec, &[], true);
-            let _ = caption_cc_data(codec, &[0x06], false);
-            let _ = caption_cc_data(codec, &[0xFF; 32], false);
-            let _ = caption_cc_data(codec, &[0x00, 0x00, 0x01, 0x06, 0xFF, 0xFF, 0xFF], false);
+            let _ = caption_cc_data(codec, &[], false, &mut Findings::new());
+            let _ = caption_cc_data(codec, &[], true, &mut Findings::new());
+            let _ = caption_cc_data(codec, &[0x06], false, &mut Findings::new());
+            let _ = caption_cc_data(codec, &[0xFF; 32], false, &mut Findings::new());
+            let _ = caption_cc_data(
+                codec,
+                &[0x00, 0x00, 0x01, 0x06, 0xFF, 0xFF, 0xFF],
+                false,
+                &mut Findings::new(),
+            );
             for cut in 0..=REAL_A53_SEI_NAL.len() {
-                let _ = caption_cc_data(codec, &REAL_A53_SEI_NAL[..cut], false);
+                let _ =
+                    caption_cc_data(codec, &REAL_A53_SEI_NAL[..cut], false, &mut Findings::new());
             }
             // Malformed length-prefixed buffer: declares a length past the
             // end of the buffer.
             let bad_lp = [0x00, 0x00, 0x00, 0x63, 0x06, 0x04];
-            let _ = caption_cc_data(codec, &bad_lp, true);
+            let _ = caption_cc_data(codec, &bad_lp, true, &mut Findings::new());
         }
     }
 
@@ -1551,7 +1601,7 @@ mod tests {
         assert_eq!(nal[2], 0xFF, "payloadType 300 starts with 0xFF");
         assert_eq!(nal[3], 0x2D, "300 - 255 = 45 = 0x2D");
         assert_eq!(
-            sei_messages(&nal[2..]),
+            sei_messages(&nal[2..], &mut Findings::new()),
             alloc::vec![
                 (300, alloc::vec![1, 2, 3]),
                 (255, alloc::vec![]),
@@ -1565,7 +1615,7 @@ mod tests {
         // payloadType 128 (0x80) size 2, then type 5 size 1, then trailing bits.
         let body = [0x80u8, 0x02, 0xAA, 0xBB, 0x05, 0x01, 0xCC, 0x80];
         assert_eq!(
-            sei_messages(&body),
+            sei_messages(&body, &mut Findings::new()),
             alloc::vec![(128, alloc::vec![0xAA, 0xBB]), (5, alloc::vec![0xCC])]
         );
     }
@@ -1611,7 +1661,7 @@ mod tests {
             0x06, 0x04, 0x00, 0x00, 0x03, 0x04, // recovery_point: type 6, size 4
             0x80, // rbsp_trailing_bits
         ];
-        let messages = sei_messages(&body);
+        let messages = sei_messages(&body, &mut Findings::new());
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].0, 6);
         assert_eq!(

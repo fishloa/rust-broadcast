@@ -1130,10 +1130,17 @@ struct FrameSplit<'a, H> {
 /// Behaviour on the whole-frame part is the historical (#638) one: a bad sync
 /// resyncs to the next valid header, a `frame_length` below the minimum stops
 /// the split, and the scan stays linear in `buf`.
-fn split_frames_with_tail<F: FrameSync>(buf: &[u8]) -> FrameSplit<'_, F::Hdr> {
+fn split_frames_with_tail<'a, F: FrameSync>(
+    buf: &'a [u8],
+    findings: &mut broadcast_bitstream::Findings,
+) -> FrameSplit<'a, F::Hdr> {
     let mut frames: Vec<(usize, &[u8], F::Hdr)> = Vec::new();
     let mut at = 0usize;
     let mut tail_start = buf.len();
+    // Start of the current run of bytes that did not begin a frame header; the
+    // run is reported as one finding when a frame is found (or the buffer
+    // ends), so a garbage payload costs one report, not one per byte.
+    let mut skipped_from: Option<usize> = None;
     while at < buf.len() {
         record_sync_probe();
         match F::parse(&buf[at..]) {
@@ -1146,6 +1153,9 @@ fn split_frames_with_tail<F: FrameSync>(buf: &[u8]) -> FrameSplit<'_, F::Hdr> {
                     // A real frame header whose frame runs past the buffer.
                     tail_start = at;
                     break;
+                }
+                if let Some(from) = skipped_from.take() {
+                    findings.push(broadcast_bitstream::ParseFinding::audio_frame_header(from));
                 }
                 match frames.last_mut() {
                     Some(prev) if F::folds_into_previous(&hdr) && prev.0 + prev.1.len() == at => {
@@ -1168,8 +1178,14 @@ fn split_frames_with_tail<F: FrameSync>(buf: &[u8]) -> FrameSplit<'_, F::Hdr> {
                 tail_start = at;
                 break;
             }
-            SyncParse::NeedMore | SyncParse::NotSync => at += 1,
+            SyncParse::NeedMore | SyncParse::NotSync => {
+                skipped_from.get_or_insert(at);
+                at += 1;
+            }
         }
+    }
+    if let Some(from) = skipped_from {
+        findings.push(broadcast_bitstream::ParseFinding::audio_frame_header(from));
     }
     FrameSplit { frames, tail_start }
 }
@@ -1202,8 +1218,11 @@ fn find_adts_sync(data: &[u8]) -> Option<(usize, AdtsHeader)> {
 /// including any CRC, so this boundary-finding needs no change for C11
 /// (#1012) — only the caller's fixed 7-byte strip did.
 #[cfg(test)]
-fn split_adts_frames(payload: &[u8]) -> Vec<(&[u8], AdtsHeader)> {
-    split_frames_with_tail::<AdtsSync>(payload)
+fn split_adts_frames<'a>(
+    payload: &'a [u8],
+    findings: &mut broadcast_bitstream::Findings,
+) -> Vec<(&'a [u8], AdtsHeader)> {
+    split_frames_with_tail::<AdtsSync>(payload, findings)
         .frames
         .into_iter()
         .map(|(_, f, h)| (f, h))
@@ -1324,6 +1343,8 @@ struct BufferedAu {
     data: Vec<u8>,
     pts_uw: i128,
     dts_uw: i128,
+    /// Input byte offset of the PES packet the access unit arrived in.
+    pes_offset: u64,
 }
 
 /// Per-PID state accumulated while scanning access units for the codec
@@ -1717,7 +1738,11 @@ impl LiveTrack {
     /// Before the first resolved access unit the change is *seed-pending*:
     /// it is released with the first sample (the level-triggered start of
     /// design §5.2, Q2 = emit).
-    fn display(&mut self, au: &[u8]) -> Option<Arc<DisplayInfo>> {
+    fn display(
+        &mut self,
+        au: &[u8],
+        findings: &mut broadcast_bitstream::Findings,
+    ) -> Option<Arc<DisplayInfo>> {
         if let Some(tracker) = self.mpeg2_tracker.as_mut() {
             if let Mpeg2Outcome::Changed {
                 display, changed, ..
@@ -1734,6 +1759,7 @@ impl LiveTrack {
         {
             self.display = Some((display, changed));
         }
+        findings.absorb(tracker.take_findings());
         tracker.state().cloned()
     }
 }
@@ -2232,6 +2258,32 @@ fn report_timeline_break(
     )));
 }
 
+/// Forward the findings of one bitstream parser call as the demuxer's one
+/// report: each [`broadcast_bitstream::ParseFinding`] becomes a
+/// [`DemuxEvent::Damage`], shifted by `base` (the byte offset of the bytes the
+/// parser read) and located at the track and media time the demuxer knows.
+fn report_parse_findings(
+    events: &mut VecDeque<DemuxEvent>,
+    findings: broadcast_bitstream::Findings,
+    base: u64,
+    track: Option<TrackId>,
+    media_time: Option<MediaTimeRange>,
+) {
+    for finding in findings.into_vec() {
+        let offset = finding
+            .offset()
+            .map_or(base, |offset| base.saturating_add(offset as u64));
+        let mut damage = Damage::from(finding).at_byte_range(ByteRange::new(offset, 0));
+        if let Some(track) = track {
+            damage = damage.for_track(track.value());
+        }
+        if let Some(time) = media_time {
+            damage = damage.at_media_time(time);
+        }
+        events.push_back(DemuxEvent::damage(damage));
+    }
+}
+
 /// Report one degradation: the existing [`DemuxEvent::InputDegraded`] and,
 /// beside it, the one [`DemuxEvent::Damage`] report every reader publishes.
 fn report_degradation(
@@ -2589,8 +2641,9 @@ fn plan_with<'a, F: FrameSync>(
     data: &'a [u8],
     carry_len: usize,
     shape: impl Fn(&F::Hdr) -> (usize, u32),
+    findings: &mut broadcast_bitstream::Findings,
 ) -> AudioPlan<'a> {
-    let split = split_frames_with_tail::<F>(data);
+    let split = split_frames_with_tail::<F>(data, findings);
     let carry_ok = carry_len == 0
         || match split.frames.first() {
             // The carried frame must start at byte 0 and, when enough bytes
@@ -2636,29 +2689,47 @@ fn plan_audio_frames<'a>(
     kind: &AudioKind,
     data: &'a [u8],
     carry_len: usize,
+    findings: &mut broadcast_bitstream::Findings,
 ) -> Option<AudioPlan<'a>> {
     match kind {
-        AudioKind::Aac => Some(plan_with::<AdtsSync>(data, carry_len, |h| {
-            (
-                adts_header_len(h),
-                AAC_SAMPLES_PER_FRAME * (h.num_raw_data_blocks() as u32 + 1),
-            )
-        })),
+        AudioKind::Aac => Some(plan_with::<AdtsSync>(
+            data,
+            carry_len,
+            |h| {
+                (
+                    adts_header_len(h),
+                    AAC_SAMPLES_PER_FRAME * (h.num_raw_data_blocks() as u32 + 1),
+                )
+            },
+            findings,
+        )),
         AudioKind::MpegAudio { samples_per_frame } => {
             let spf = *samples_per_frame;
-            Some(plan_with::<MpegAudioSync>(data, carry_len, move |_| {
-                (0, spf)
-            }))
+            Some(plan_with::<MpegAudioSync>(
+                data,
+                carry_len,
+                move |_| (0, spf),
+                findings,
+            ))
         }
-        AudioKind::Ac3 => Some(plan_with::<Ac3Sync>(data, carry_len, |_| {
-            (0, AC3_SAMPLES_PER_SYNCFRAME)
-        })),
-        AudioKind::Eac3 => Some(plan_with::<Eac3Sync>(data, carry_len, |h| {
-            (0, h.samples_per_frame())
-        })),
-        AudioKind::Dts => Some(plan_with::<DtsSync>(data, carry_len, |h| {
-            (0, h.samples_per_frame())
-        })),
+        AudioKind::Ac3 => Some(plan_with::<Ac3Sync>(
+            data,
+            carry_len,
+            |_| (0, AC3_SAMPLES_PER_SYNCFRAME),
+            findings,
+        )),
+        AudioKind::Eac3 => Some(plan_with::<Eac3Sync>(
+            data,
+            carry_len,
+            |h| (0, h.samples_per_frame()),
+            findings,
+        )),
+        AudioKind::Dts => Some(plan_with::<DtsSync>(
+            data,
+            carry_len,
+            |h| (0, h.samples_per_frame()),
+            findings,
+        )),
     }
 }
 
@@ -2770,12 +2841,23 @@ fn emit_audio_au(
         joined = [carry.as_slice(), au_data].concat();
         (joined.as_slice(), carry.len())
     };
-    let mut plan = plan_audio_frames(kind, data, carry_len);
+    let mut findings = broadcast_bitstream::Findings::new();
+    let mut plan = plan_audio_frames(kind, data, carry_len, &mut findings);
     if carry_len > 0 && plan.as_ref().is_none_or(|p| !p.carry_ok) {
         // The carried bytes did not join cleanly (a false sync at the end of
         // the previous payload): resync on this payload alone.
-        plan = plan_audio_frames(kind, au_data, 0);
+        plan = plan_audio_frames(kind, au_data, 0, &mut findings);
     }
+    report_parse_findings(
+        events,
+        findings,
+        provenance
+            .packet_index
+            .unwrap_or(0)
+            .saturating_mul(TS_PACKET_BYTES),
+        Some(track_id),
+        Some(MediaTimeRange::at(VIDEO_TIMESCALE, to_ticks(dts_uw))),
+    );
     scale_plan_durations(&mut plan, anchor.duration_scale);
     let lead_ticks: i64 = plan.as_ref().map_or(0, |p| {
         p.frames
@@ -2993,7 +3075,13 @@ fn flush_audio_carry(
     let (Some(seed), false) = (anchor.seed, carry.is_empty()) else {
         return Ok(());
     };
-    let mut plan = plan_audio_frames(kind, &carry, 0);
+    let mut findings = broadcast_bitstream::Findings::new();
+    let mut plan = plan_audio_frames(kind, &carry, 0, &mut findings);
+    for finding in findings.into_vec() {
+        events.push_back(DemuxEvent::damage(
+            Damage::from(finding).for_track(track_id.value()),
+        ));
+    }
     scale_plan_durations(&mut plan, anchor.duration_scale);
     let Some(plan) = plan else {
         return Ok(());
@@ -3213,6 +3301,7 @@ fn reprobe_if_config_changed(
     stream: &mut StreamState,
     live: &mut LiveTrack,
     data: &[u8],
+    findings: &mut broadcast_bitstream::Findings,
 ) -> Option<(CodecConfig, Timescale)> {
     let changed = match stream.codec {
         Codec::H264 | Codec::Hevc => {
@@ -3246,7 +3335,7 @@ fn reprobe_if_config_changed(
     let descriptors = stream.descriptors.clone();
     let mut probe = initial_probe(stream.codec);
     seed_probe_parameter_sets(&mut probe, &live.parameter_sets);
-    let recovered = finalize_probe(stream.codec, &descriptors, &mut probe, data);
+    let recovered = finalize_probe(stream.codec, &descriptors, &mut probe, data, findings);
     let (config, timescale, _kind) = recovered?;
     Some((config, timescale))
 }
@@ -3487,7 +3576,10 @@ fn harvest_damaged_au(
     };
     let new_track = match track {
         TrackState::Probing { mut probe, backlog } => {
-            let resolved = finalize_probe(stream.codec, &descriptors, &mut probe, data);
+            let mut findings = broadcast_bitstream::Findings::new();
+            let resolved =
+                finalize_probe(stream.codec, &descriptors, &mut probe, data, &mut findings);
+            report_parse_findings(events, findings, stream.pes_start_offset, None, None);
             match resolved {
                 Some((config, timescale, kind)) => {
                     stream.damaged_promotion = true;
@@ -3544,6 +3636,7 @@ fn finalize_probe(
     descriptors: &[u8],
     probe: &mut ConfigProbe,
     latest: &[u8],
+    findings: &mut broadcast_bitstream::Findings,
 ) -> Option<(CodecConfig, Timescale, LiveKind)> {
     // One pass over the newest access unit — the thing the r04-W47 bound is
     // about. Counted here so the H.264/HEVC arms, whose NAL walk has no
@@ -3703,10 +3796,10 @@ fn finalize_probe(
                     Some(HEVC_PREFIX_SEI_NUT) => {
                         let mut have = HdrStaticMetadata::default();
                         for kept in hdr_sei.iter() {
-                            have.absorb_hevc_sei_nal(kept);
+                            have.absorb_hevc_sei_nal(kept, findings);
                         }
                         let mut with = have;
-                        with.absorb_hevc_sei_nal(nal);
+                        with.absorb_hevc_sei_nal(nal, findings);
                         if with != have
                             && let Ok(Some(declarative)) = with.to_hevc_declarative_sei_nal()
                         {
@@ -3818,7 +3911,11 @@ fn finalize_probe(
             // real broadcast payload is not guaranteed to start on a frame
             // sync.
             let (sync_offset, first) = find_mpeg_audio_sync(latest)?;
-            let padding = lame_padding(&latest[sync_offset..]).unwrap_or(GaplessTrim::NONE);
+            let lame_window = &latest[sync_offset..];
+            if broadcast_bitstream::parse_lame_tag(lame_window).is_err() {
+                findings.push(broadcast_bitstream::ParseFinding::lame_tag(0));
+            }
+            let padding = lame_padding(lame_window).unwrap_or(GaplessTrim::NONE);
             let sample_rate = first.sample_rate();
             let timescale = Timescale::try_new(sample_rate).ok()?;
             let channel_count = first.channels();
@@ -4104,6 +4201,7 @@ fn advance_track(
             // header-looking byte pair there (`aac_frame_length` bits and
             // `adts_buffer_fullness` routinely read as a 12-bit `0xFFF`
             // syncword) is not a header and would flap the config.
+            let mut findings = broadcast_bitstream::Findings::new();
             let skip = carried_frame_remainder(&live, data);
             let new_config = if live.skip_next_reprobe {
                 let changed =
@@ -4113,12 +4211,19 @@ fn advance_track(
                 }
                 None
             } else {
-                reprobe_if_config_changed(stream, &mut live, &data[skip..])
+                reprobe_if_config_changed(stream, &mut live, &data[skip..], &mut findings)
             };
             // The display geometry the access unit activates (see
             // [`LiveTrack::display`]); it must be decided before the access
             // unit is applied, whether or not its codec config changed.
-            let display = live.display(data);
+            let display = live.display(data, &mut findings);
+            report_parse_findings(
+                events,
+                findings,
+                stream.pes_start_offset,
+                Some(live.track_id),
+                Some(MediaTimeRange::at(VIDEO_TIMESCALE, to_ticks(dts_uw))),
+            );
             if live.suppress_next_display_change {
                 live.display = None;
                 live.suppress_next_display_change = false;
@@ -4179,6 +4284,7 @@ fn advance_track(
                 data: data.to_vec(),
                 pts_uw,
                 dts_uw,
+                pes_offset: stream.pes_start_offset,
             });
             if stream.backlog_bytes > MAX_PROBE_BACKLOG_BYTES {
                 abandon_backlog(stream, pid, events)
@@ -4195,6 +4301,7 @@ fn advance_track(
                 data: data.to_vec(),
                 pts_uw,
                 dts_uw,
+                pes_offset: stream.pes_start_offset,
             });
             // `backlog` is never empty here: the newest access unit was just
             // pushed above. Degrade to "not resolvable yet" rather than
@@ -4234,13 +4341,25 @@ fn advance_track(
             let eac3_window: Option<&[u8]> = eac3_all
                 .as_deref()
                 .filter(|_| !stream.probe_tail.is_empty());
+            let mut probe_findings = broadcast_bitstream::Findings::new();
             let mut resolved = match eac3_window {
-                Some(w) => finalize_probe(stream.codec, &stream.descriptors, &mut probe, w),
+                Some(w) => finalize_probe(
+                    stream.codec,
+                    &stream.descriptors,
+                    &mut probe,
+                    w,
+                    &mut probe_findings,
+                ),
                 None => None,
             };
             if resolved.is_none() {
-                resolved =
-                    finalize_probe(stream.codec, &stream.descriptors, &mut probe, &latest.data);
+                resolved = finalize_probe(
+                    stream.codec,
+                    &stream.descriptors,
+                    &mut probe,
+                    &latest.data,
+                    &mut probe_findings,
+                );
             }
             // Audio config recovery across PES boundaries (issue #1160): a PES
             // may be shorter than a frame header, or a header may straddle two
@@ -4253,8 +4372,15 @@ fn advance_track(
                 && let Some(window) =
                     audio_probe_window(stream.codec, &stream.probe_tail, &latest.data)
             {
-                resolved = finalize_probe(stream.codec, &stream.descriptors, &mut probe, &window);
+                resolved = finalize_probe(
+                    stream.codec,
+                    &stream.descriptors,
+                    &mut probe,
+                    &window,
+                    &mut probe_findings,
+                );
             }
+            report_parse_findings(events, probe_findings, stream.pes_start_offset, None, None);
             stream.probe_aus = stream.probe_aus.saturating_add(1);
             // Fallbacks for a first access unit that is never proven complete
             // (a lossy capture), tried only after the chain-verified attempts
@@ -6619,7 +6745,15 @@ impl StreamingTsDemux {
                         program_number: None,
                     };
                     for au in backlog {
-                        let display = live.display(&au.data);
+                        let mut findings = broadcast_bitstream::Findings::new();
+                        let display = live.display(&au.data, &mut findings);
+                        report_parse_findings(
+                            &mut self.events,
+                            findings,
+                            au.pes_offset,
+                            Some(live.track_id),
+                            Some(MediaTimeRange::at(VIDEO_TIMESCALE, to_ticks(au.dts_uw))),
+                        );
                         push_live_au(
                             &mut live,
                             &au.data,
@@ -11932,7 +12066,8 @@ pub(crate) mod tests {
         let mut off = 0usize;
         while off < es.len() {
             let end = (off + CHUNK).min(es.len());
-            recovered += split_adts_frames(&es[off..end]).len();
+            recovered +=
+                split_adts_frames(&es[off..end], &mut broadcast_bitstream::Findings::new()).len();
             off = end;
         }
 
@@ -13680,6 +13815,17 @@ pub(crate) mod tests {
         }
     }
 
+    /// A hostile garbage payload costs one finding for the skipped run and
+    /// the frame walk stays linear in the bytes supplied.
+    #[test]
+    fn a_garbage_audio_payload_costs_one_finding() {
+        let garbage = alloc::vec![0u8; 1 << 20];
+        let mut findings = broadcast_bitstream::Findings::new();
+        let split = split_frames_with_tail::<AdtsSync>(&garbage, &mut findings);
+        assert!(split.frames.is_empty());
+        assert_eq!(findings.len(), 1, "one skipped run, one finding");
+    }
+
     /// The tail reported for carry: a whole header whose frame overruns, or a
     /// 1..HEADER_LEN byte prefix of one; nothing when the buffer ends on a
     /// frame boundary or in non-sync bytes.
@@ -13688,22 +13834,32 @@ pub(crate) mod tests {
         let (f0, f1) = (mp2_frame(1), mp2_frame(2));
         let mut buf = f0.clone();
         buf.extend_from_slice(&f1[..100]);
-        let s = split_frames_with_tail::<MpegAudioSync>(&buf);
+        let s = split_frames_with_tail::<MpegAudioSync>(
+            &buf,
+            &mut broadcast_bitstream::Findings::new(),
+        );
         assert_eq!(s.frames.len(), 1);
         assert_eq!(s.tail_start, f0.len(), "valid header, frame overruns");
 
         for k in 1..4 {
             let mut buf = f0.clone();
             buf.extend_from_slice(&f1[..k]);
-            let s = split_frames_with_tail::<MpegAudioSync>(&buf);
+            let s = split_frames_with_tail::<MpegAudioSync>(
+                &buf,
+                &mut broadcast_bitstream::Findings::new(),
+            );
             assert_eq!(s.frames.len(), 1);
             assert_eq!(s.tail_start, f0.len(), "{k}-byte header prefix is held");
         }
-        let s = split_frames_with_tail::<MpegAudioSync>(&f0);
+        let s =
+            split_frames_with_tail::<MpegAudioSync>(&f0, &mut broadcast_bitstream::Findings::new());
         assert_eq!(s.tail_start, f0.len(), "exact end: nothing to carry");
         let mut buf = f0.clone();
         buf.extend_from_slice(&[0x12, 0x34, 0x56]);
-        let s = split_frames_with_tail::<MpegAudioSync>(&buf);
+        let s = split_frames_with_tail::<MpegAudioSync>(
+            &buf,
+            &mut broadcast_bitstream::Findings::new(),
+        );
         assert_eq!(
             s.tail_start,
             buf.len(),
@@ -14630,7 +14786,8 @@ pub(crate) mod tests {
             matches!(Eac3Sync::parse(&buf), SyncParse::Frame(_, 2)),
             "the header parses and announces (frmsiz 0 + 1) * 2 bytes"
         );
-        let split = split_frames_with_tail::<Eac3Sync>(&buf);
+        let split =
+            split_frames_with_tail::<Eac3Sync>(&buf, &mut broadcast_bitstream::Findings::new());
         assert!(
             split.frames.is_empty(),
             "a frame shorter than the minimum is not emitted"
@@ -14644,7 +14801,8 @@ pub(crate) mod tests {
     fn a_frame_of_exactly_the_minimum_length_is_split() {
         let mut buf = alloc::vec![0x0B, 0x77, 0x00, 0x03, 0x00, 0x80];
         buf.extend_from_slice(&[0u8; 18]);
-        let split = split_frames_with_tail::<Eac3Sync>(&buf);
+        let split =
+            split_frames_with_tail::<Eac3Sync>(&buf, &mut broadcast_bitstream::Findings::new());
         assert_eq!(split.frames.len(), 1, "one whole frame");
         assert_eq!(split.frames[0].1.len(), Eac3Sync::MIN_FRAME_LEN);
         assert_eq!(split.frames[0].0, 0);
@@ -15936,7 +16094,14 @@ pub(crate) mod tests {
             hdr_sei: Vec::new(),
         };
         let data = annexb_au(&[&vps, &sps, &pps]);
-        let (config, _, _) = finalize_probe(Codec::Hevc, &[], &mut probe, &data).expect("resolves");
+        let (config, _, _) = finalize_probe(
+            Codec::Hevc,
+            &[],
+            &mut probe,
+            &data,
+            &mut broadcast_bitstream::Findings::new(),
+        )
+        .expect("resolves");
         let CodecConfig::Hevc { config, .. } = config else {
             panic!("expected an HEVC config");
         };
@@ -15966,8 +16131,14 @@ pub(crate) mod tests {
             hdr_sei: Vec::new(),
         };
         let data = annexb_au(&[&vps, &sps, &pps]);
-        let (config, _, _) =
-            finalize_probe(Codec::Hevc, &[], &mut probe, &data).expect("resolves with the seeds");
+        let (config, _, _) = finalize_probe(
+            Codec::Hevc,
+            &[],
+            &mut probe,
+            &data,
+            &mut broadcast_bitstream::Findings::new(),
+        )
+        .expect("resolves with the seeds");
         let CodecConfig::Hevc { config, .. } = config else {
             panic!("expected an HEVC config");
         };
@@ -15999,7 +16170,14 @@ pub(crate) mod tests {
             pps: Some(seed_pps.clone()),
         };
         let data = annexb_au(&[&later_sps, &later_pps]);
-        let (config, _, _) = finalize_probe(Codec::H264, &[], &mut probe, &data).expect("resolves");
+        let (config, _, _) = finalize_probe(
+            Codec::H264,
+            &[],
+            &mut probe,
+            &data,
+            &mut broadcast_bitstream::Findings::new(),
+        )
+        .expect("resolves");
         let CodecConfig::Avc { config, .. } = config else {
             panic!("expected AVC");
         };
@@ -16019,7 +16197,8 @@ pub(crate) mod tests {
                 Codec::H264,
                 &[],
                 &mut probe_with(vec![0x67, 0x42, 0x00, 0x1E]),
-                &[]
+                &[],
+                &mut broadcast_bitstream::Findings::new(),
             )
             .is_some()
         );
@@ -16028,7 +16207,8 @@ pub(crate) mod tests {
                 Codec::H264,
                 &[],
                 &mut probe_with(vec![0x67, 0x42, 0x00, 0x1E, 0x00]),
-                &[]
+                &[],
+                &mut broadcast_bitstream::Findings::new(),
             )
             .is_some()
         );
@@ -16037,7 +16217,8 @@ pub(crate) mod tests {
                 Codec::H264,
                 &[],
                 &mut probe_with(vec![0x67, 0x42, 0x00]),
-                &[]
+                &[],
+                &mut broadcast_bitstream::Findings::new(),
             )
             .is_none()
         );
@@ -16062,7 +16243,14 @@ pub(crate) mod tests {
         );
         let mut probe = ConfigProbe::MpegH;
         assert!(
-            finalize_probe(Codec::MpegH, &[], &mut probe, &data).is_some(),
+            finalize_probe(
+                Codec::MpegH,
+                &[],
+                &mut probe,
+                &data,
+                &mut broadcast_bitstream::Findings::new()
+            )
+            .is_some(),
             "exactly 65 535 config bytes is representable"
         );
     }
@@ -17364,7 +17552,14 @@ pub(crate) mod tests {
         assert_eq!(find_mpegh3da_config(&data), Some(payload.as_slice()));
         let mut probe = ConfigProbe::MpegH;
         assert!(
-            finalize_probe(Codec::MpegH, &[], &mut probe, &data).is_some(),
+            finalize_probe(
+                Codec::MpegH,
+                &[],
+                &mut probe,
+                &data,
+                &mut broadcast_bitstream::Findings::new()
+            )
+            .is_some(),
             "a small config is not oversized"
         );
     }
@@ -17384,8 +17579,14 @@ pub(crate) mod tests {
             broadcast_bitstream::aac_asc::build_adts_header(1, 7, 2, len as u16).to_vec();
         frame.extend_from_slice(&body);
         let mut probe = ConfigProbe::Aac;
-        let (config, _, kind) =
-            finalize_probe(Codec::Aac, &descriptors, &mut probe, &frame).expect("resolves");
+        let (config, _, kind) = finalize_probe(
+            Codec::Aac,
+            &descriptors,
+            &mut probe,
+            &frame,
+            &mut broadcast_bitstream::Findings::new(),
+        )
+        .expect("resolves");
         assert_eq!(config.audio_sample_rate(), Some(44_100));
         match kind {
             LiveKind::Audio { anchor, .. } => {
