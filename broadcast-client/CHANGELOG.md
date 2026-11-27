@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Event::Damage(broadcast_core::damage::Damage)` (and the session-level
+  `tshttp` event of the same name): a player learns every skip its reader
+  tolerated, in order with the samples around it.
+  `TsHttpConfig::damage_policy` (with `with_damage_policy`) decides what each
+  report means: `Report` for everything by default, or `Fail`, which ends the
+  session with the typed `transmux::Error::Damage` carrying the same report.
+
 ### Breaking
 
 - `avc_access_unit_parameter_sets` now comes from `broadcast-bitstream` and returns that crate's typed parameter-set wrappers; the RTSP path converts them into the `isobmff` newtypes. The NAL/Annex B helpers move there too, and the crate gains the `broadcast-bitstream` dependency.

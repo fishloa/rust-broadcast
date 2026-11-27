@@ -47,7 +47,7 @@ pub struct Config {
     /// source shares.
     pub max_pes_unit_bytes: Option<NonZeroUsize>,
     /// What each damage report means: `Report` (the default for everything)
-    /// keeps playing and publishes [`crate::tshttp::Event::Damage`]; `Fail`
+    /// keeps playing and publishes [`crate::Event::Damage`]; `Fail`
     /// ends the session with a [`transmux::Error::Damage`] carrying the same
     /// report. The library chooses no policy: this is the caller's decision
     /// (`docs/API-CONVENTIONS.md` § Best-effort reading).

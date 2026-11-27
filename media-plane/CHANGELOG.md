@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `SessionEvent::Damage` carries the one `broadcast_core::damage::Damage`
+  report through ingest, with the program the damaged track belongs to when
+  it is known. `IngestDriver::damage_report_count` (and the
+  `ListenDriver` counterpart) counts how many a session produced, so a host
+  can see how damaged an input is without holding every report.
+
 ### Breaking
 
 - `NalCodec`, `access_unit_is_idr` and `annexb_to_length_prefixed` now come from `broadcast-bitstream`, the new codec-bitstream layer below the muxing hub; the crate gains that dependency.

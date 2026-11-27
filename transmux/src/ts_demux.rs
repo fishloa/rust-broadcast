@@ -16009,8 +16009,24 @@ pub(crate) mod tests {
             last: None,
             splice_offset: None,
         };
-        on_completed_pes(stream, ES_PID_UNDER_TEST, None, &pes, &mut epoch, &mut events).expect("first");
-        on_completed_pes(stream, ES_PID_UNDER_TEST, None, &pes, &mut epoch, &mut events).expect("second");
+        on_completed_pes(
+            stream,
+            ES_PID_UNDER_TEST,
+            None,
+            &pes,
+            &mut epoch,
+            &mut events,
+        )
+        .expect("first");
+        on_completed_pes(
+            stream,
+            ES_PID_UNDER_TEST,
+            None,
+            &pes,
+            &mut epoch,
+            &mut events,
+        )
+        .expect("second");
         assert!(
             !stream.recent_steps.contains(&0),
             "a zero span is not evidence of cadence"
@@ -16040,8 +16056,15 @@ pub(crate) mod tests {
             last: None,
             splice_offset: None,
         };
-        on_completed_pes(stream, ES_PID_UNDER_TEST, None, &pes, &mut epoch, &mut events)
-            .expect("unstamped");
+        on_completed_pes(
+            stream,
+            ES_PID_UNDER_TEST,
+            None,
+            &pes,
+            &mut epoch,
+            &mut events,
+        )
+        .expect("unstamped");
         assert_eq!(stream.fallback.0, 10, "prev + step mod 2^33");
         assert!(stream.fallback.0 < TS_WRAP);
     }
