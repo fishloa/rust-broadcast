@@ -142,6 +142,16 @@ leaf! {
     p_stdp: b"stdp", crate::sample_tables_extra::DegradationPriorityBox, &MINIMAL_BODY;
     p_padb: b"padb", crate::sample_tables_extra::PaddingBitsBox, &MINIMAL_BODY;
     p_stsg: b"stsg", crate::sample_tables_extra::SubTrackSampleGroupBox, &MINIMAL_BODY;
+    p_uri: b"uri ", crate::meta_track::UriBox, &MINIMAL_BODY;
+    p_urii: b"uriI", crate::meta_track::UriInitBox, &MINIMAL_BODY;
+    p_xml: b"xml ", crate::meta_track::XmlBox, &MINIMAL_BODY;
+    p_bxml: b"bxml", crate::meta_track::BinaryXmlBox, &MINIMAL_BODY;
+    p_keyd: b"keyd", crate::meta_track::MetadataKeyDeclarationBox, &MINIMAL_BODY;
+    p_loca: b"loca", crate::meta_track::MetadataLocaleBox, &MINIMAL_BODY;
+    p_setu: b"setu", crate::meta_track::MetadataSetupBox, &MINIMAL_BODY;
+    p_cprt: b"cprt", crate::meta_track::CopyrightBox, &MINIMAL_BODY;
+    p_nmhd: b"nmhd", crate::init_segment::NullMediaHeaderBox, &MINIMAL_BODY;
+    p_hmhd: b"hmhd", crate::init_segment::HintMediaHeaderBox, &MINIMAL_BODY;
     p_brnd: b"brnd", crate::item::BrandProperty, &MINIMAL_BODY;
     p_grpl: b"grpl", crate::item::GroupsListBox, &[];
     p_idat: b"idat", crate::item::ItemDataBox, &MINIMAL_BODY;
@@ -370,6 +380,16 @@ typed! {
         p_moof: b"moof", "moof", "MovieFragmentBox";
         p_traf: b"traf", "traf", "TrackFragmentBox";
         p_trun: b"trun", "trun", "TrackFragmentRunBox";
+        p_uri: b"uri ", "uri ", "UriBox";
+        p_urii: b"uriI", "uriI", "UriInitBox";
+        p_xml: b"xml ", "xml ", "XmlBox";
+        p_bxml: b"bxml", "bxml", "BinaryXmlBox";
+        p_keyd: b"keyd", "keyd", "MetadataKeyDeclarationBox";
+        p_loca: b"loca", "loca", "MetadataLocaleBox";
+        p_setu: b"setu", "setu", "MetadataSetupBox";
+        p_cprt: b"cprt", "cprt", "CopyrightBox";
+        p_nmhd: b"nmhd", "nmhd", "NullMediaHeaderBox";
+        p_hmhd: b"hmhd", "hmhd", "HintMediaHeaderBox";
 }
 
 #[cfg(test)]

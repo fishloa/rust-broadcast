@@ -265,7 +265,101 @@ pub struct SampleEntryInfo {
     pub registered: Option<crate::registry::RegisteredEntry>,
 }
 
+/// A timed-metadata sample entry, as the configured entry variant.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum TimedMetadataEntry<'a> {
+    /// `metx` — [`XmlMetaDataSampleEntry`](crate::meta_track::XmlMetaDataSampleEntry).
+    Xml(&'a crate::meta_track::XmlMetaDataSampleEntry),
+    /// `mett` or `stxt` — [`TextMetaDataSampleEntry`](crate::meta_track::TextMetaDataSampleEntry).
+    Text(&'a crate::meta_track::TextMetaDataSampleEntry),
+    /// `urim` — [`UriMetaDataSampleEntry`](crate::meta_track::UriMetaDataSampleEntry).
+    Uri(&'a crate::meta_track::UriMetaDataSampleEntry),
+    /// `mebx` — [`BoxedMetaDataSampleEntry`](crate::meta_track::BoxedMetaDataSampleEntry).
+    Boxed(&'a crate::meta_track::BoxedMetaDataSampleEntry),
+}
+
+impl TimedMetadataEntry<'_> {
+    /// The entry's four-CC.
+    #[must_use]
+    pub fn fourcc(&self) -> [u8; BOX_TYPE_SIZE] {
+        match self {
+            Self::Xml(_) => crate::meta_track::METX,
+            Self::Text(entry) => entry.codec_type(),
+            Self::Uri(_) => crate::meta_track::URIM,
+            Self::Boxed(_) => crate::meta_track::MEBX,
+        }
+    }
+
+    /// The metadata form's URI (`uri `), for a `urim` entry.
+    #[must_use]
+    pub fn uri(&self) -> Option<&crate::meta_track::UriBox> {
+        match self {
+            Self::Uri(entry) => Some(entry.uri()),
+            _ => None,
+        }
+    }
+
+    /// The URI initialization data (`uriI`), for a `urim` entry that carries
+    /// it.
+    #[must_use]
+    pub fn uri_init(&self) -> Option<&crate::meta_track::UriInitBox> {
+        match self {
+            Self::Uri(entry) => entry.uri_init(),
+            _ => None,
+        }
+    }
+
+    /// The key table (`keys`), for a `mebx` entry.
+    #[must_use]
+    pub fn key_table(&self) -> Option<&crate::meta_track::MetadataKeyTableBox> {
+        match self {
+            Self::Boxed(entry) => Some(entry.key_table()),
+            _ => None,
+        }
+    }
+
+    /// The XML namespaces (`utf8list`), for a `metx` entry.
+    #[must_use]
+    pub fn namespace(&self) -> Option<&[u8]> {
+        match self {
+            Self::Xml(entry) => Some(entry.namespace()),
+            _ => None,
+        }
+    }
+
+    /// The MIME format, for a `mett`/`stxt` entry.
+    #[must_use]
+    pub fn mime_format(&self) -> Option<&[u8]> {
+        match self {
+            Self::Text(entry) => Some(entry.mime_format()),
+            _ => None,
+        }
+    }
+}
+
 impl SampleEntryInfo {
+    /// The timed-metadata entry this sample description is, when it is one
+    /// (§12.3.3, §12.5.3, §12.8.4.1).
+    #[must_use]
+    pub fn timed_metadata(&self) -> Option<TimedMetadataEntry<'_>> {
+        match self.typed.as_ref()? {
+            crate::init_segment::SampleEntryVariant::Metx(entry) => {
+                Some(TimedMetadataEntry::Xml(entry))
+            }
+            crate::init_segment::SampleEntryVariant::Text(entry) => {
+                Some(TimedMetadataEntry::Text(entry))
+            }
+            crate::init_segment::SampleEntryVariant::Urim(entry) => {
+                Some(TimedMetadataEntry::Uri(entry))
+            }
+            crate::init_segment::SampleEntryVariant::Mebx(entry) => {
+                Some(TimedMetadataEntry::Boxed(entry))
+            }
+            _ => None,
+        }
+    }
+
     /// The channel layout (`chnl`, §12.2.4) this audio entry carries, when
     /// present.
     #[must_use]
@@ -322,6 +416,9 @@ pub struct TrackInfo {
     pub loudness: Option<crate::audio_boxes::LoudnessBox>,
     /// The track selection (`tsel`, §8.10.3), when present.
     pub track_selection: Option<crate::track_desc::TrackSelectionBox>,
+    /// The media information header (`vmhd`/`smhd`/`nmhd`/`hmhd`/`vvhd`,
+    /// §8.4.5), when the crate models it.
+    pub media_header: Option<crate::init_segment::MediaInformationHeader>,
 }
 
 impl TrackInfo {
@@ -422,6 +519,7 @@ impl TrackInfo {
             labels: desc.labels,
             loudness: desc.loudness,
             track_selection: desc.track_selection,
+            media_header: desc.media_header,
         })
     }
 }
@@ -2326,12 +2424,18 @@ struct TrackDescription {
     labels: Vec<crate::audio_boxes::LabelBox>,
     loudness: Option<crate::audio_boxes::LoudnessBox>,
     track_selection: Option<crate::track_desc::TrackSelectionBox>,
+    media_header: Option<crate::init_segment::MediaInformationHeader>,
 }
 
 fn track_description(trak: &TrackBox) -> TrackDescription {
     use crate::metadata::UdtaChild;
     let mut out = TrackDescription {
         extended_language: trak.mdia.as_ref().and_then(|mdia| mdia.elng.clone()),
+        media_header: trak
+            .mdia
+            .as_ref()
+            .and_then(|mdia| mdia.minf.as_ref())
+            .and_then(|minf| minf.media_header()),
         track_groups: trak.trgr.clone(),
         ..TrackDescription::default()
     };
@@ -2442,6 +2546,7 @@ fn build_track_info(
         labels: desc.labels,
         loudness: desc.loudness,
         track_selection: desc.track_selection,
+        media_header: desc.media_header,
     })
 }
 

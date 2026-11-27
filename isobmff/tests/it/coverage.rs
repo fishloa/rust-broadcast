@@ -17,10 +17,7 @@ use std::collections::BTreeSet;
 use isobmff::coverage::TYPED_BOXES;
 
 /// Tier 3: metadata tracks.
-const UNTYPED_TIER_3: &[&str] = &[
-    "bxml", "cprt", "etyp", "hmhd", "imda", "keyd", "loca", "nmhd", "otyp", "setu", "strd", "stri",
-    "strk", "uri ", "uriI", "xml ",
-];
+const UNTYPED_TIER_3: &[&str] = &["etyp", "imda", "otyp", "strd", "stri", "strk"];
 
 /// Tier 4: newer signalling.
 const UNTYPED_TIER_4: &[&str] = &[

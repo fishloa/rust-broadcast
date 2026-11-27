@@ -147,6 +147,7 @@ pub mod item;
 pub mod item_reader;
 pub mod item_writer;
 pub mod limits;
+pub mod meta_track;
 pub mod metadata;
 pub mod movie_fragment;
 pub mod mp4esds;
@@ -230,6 +231,10 @@ pub use init_segment::{
     SampleTableBox, SampleToChunkBox, SamplingRateBox, SoundMediaHeaderBox, StblChild, StscEntry,
     SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
+pub use init_segment::{
+    HMHD, HintMediaHeaderBox, MediaInformationHeader, NMHD, NullMediaHeaderBox, VVHD,
+    VolumetricVisualMediaHeaderBox,
+};
 pub use item::{
     BrandProperty, ConstructionMethod, EntityGroupType, EntityToGroupBox, GroupId, GroupsListBox,
     HandlerProperty, ItemDataBox, ItemExtent, ItemId, ItemInfoBox, ItemInfoEntry, ItemLocationBox,
@@ -243,6 +248,13 @@ pub use item_reader::{
 };
 pub use item_writer::ItemWriter;
 pub use limits::Limits;
+pub use meta_track::{
+    BXML, BinaryXmlBox, BoxedMetaDataSampleEntry, CPRT, CopyrightBox, KEYD, KEYS, LOCA, MEBX, METT,
+    METX, MIME, MetadataKeyBox, MetadataKeyChild, MetadataKeyDeclarationBox, MetadataKeyTableBox,
+    MetadataLocaleBox, MetadataSetupBox, SETU, STXT, TXTC, TextConfigBox, TextMetaDataSampleEntry,
+    URI, URI_INIT, URIM, UriBox, UriInitBox, UriMetaDataSampleEntry, XML, XmlBox,
+    XmlMetaDataSampleEntry,
+};
 pub use mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG1_AUDIO,
     OTI_MPEG2_AUDIO, OTI_MPEG4_AUDIO, ObjectTypeIndication, SLConfigDescriptor, STREAM_TYPE_AUDIO,

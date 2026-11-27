@@ -118,6 +118,8 @@ pub enum UdtaChild {
     Loudness(crate::audio_boxes::LoudnessBox),
     /// A track selection (§8.10.3).
     TrackSelection(crate::track_desc::TrackSelectionBox),
+    /// A copyright declaration (§8.10.2).
+    Copyright(crate::meta_track::CopyrightBox),
     /// Any other child, preserved verbatim.
     Opaque(OpaqueBox),
 }
@@ -135,6 +137,7 @@ impl Serialize for UdtaChild {
             Self::Label(label) => label.serialized_len(),
             Self::Loudness(loudness) => loudness.serialized_len(),
             Self::TrackSelection(selection) => selection.serialized_len(),
+            Self::Copyright(copyright) => copyright.serialized_len(),
             Self::Opaque(opaque) => opaque.serialized_len(),
         }
     }
@@ -149,6 +152,7 @@ impl Serialize for UdtaChild {
             Self::Label(label) => label.serialize_into(buf),
             Self::Loudness(loudness) => loudness.serialize_into(buf),
             Self::TrackSelection(selection) => selection.serialize_into(buf),
+            Self::Copyright(copyright) => copyright.serialize_into(buf),
             Self::Opaque(opaque) => opaque.serialize_into(buf),
         }
     }
@@ -216,6 +220,9 @@ impl Udta {
                 }
                 crate::audio_boxes::LUDT => {
                     UdtaChild::Loudness(crate::audio_boxes::LoudnessBox::parse_body(child.body)?)
+                }
+                crate::meta_track::CPRT => {
+                    UdtaChild::Copyright(crate::meta_track::CopyrightBox::parse_body(child.body)?)
                 }
                 crate::track_desc::TSEL => UdtaChild::TrackSelection(
                     crate::track_desc::TrackSelectionBox::parse_body(child.body)?,
