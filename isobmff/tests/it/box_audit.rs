@@ -365,7 +365,7 @@ fn parse_schm(bytes: &[u8]) -> Result<Vec<u8>, Error> {
 }
 
 fn custom_parser(fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<Typed> {
-    let whole = |parser: Parser| {
+    let as_whole = |parser: Parser| {
         Some(Typed {
             parser,
             shape: Shape::Whole,
@@ -376,17 +376,20 @@ fn custom_parser(fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<Typed> {
             parser: parse_fdsa as Parser,
             shape: Shape::Body,
         }),
-        b"ipco" => whole(parse_ipco),
-        b"mdat" => whole(parse_mdat),
-        b"mfhd" => whole(parse_mfhd),
-        b"moof" => whole(parse_moof),
-        b"saio" => whole(parse_saio),
-        b"saiz" => whole(parse_saiz),
-        b"schm" => whole(parse_schm),
-        b"tfdt" => whole(parse_tfdt),
-        b"tfhd" => whole(parse_tfhd),
-        b"traf" => whole(parse_traf),
-        b"trun" => whole(parse_trun),
+        b"ipco" => as_whole(parse_ipco),
+        b"mdat" => as_whole(parse_mdat),
+        b"mfhd" => as_whole(parse_mfhd),
+        b"moof" => as_whole(parse_moof),
+        b"saio" => as_whole(parse_saio),
+        b"saiz" => as_whole(parse_saiz),
+        b"schm" => as_whole(parse_schm),
+        b"tfdt" => as_whole(parse_tfdt),
+        b"tfhd" => as_whole(parse_tfhd),
+        b"traf" => as_whole(parse_traf),
+        b"trun" => as_whole(parse_trun),
+        b"d263" => as_whole(whole::<isobmff::threegpp::H263DecoderSpecificBox>),
+        b"load" => as_whole(whole::<isobmff::quicktime::PreloadBox>),
+        b"urat" => as_whole(whole::<isobmff::threegpp::UserRatingBox>),
         _ => None,
     }
 }

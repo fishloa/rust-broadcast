@@ -137,31 +137,40 @@ fn audit(entry: &Entry) -> usize {
     checked
 }
 
+/// The committed fixtures whose sample entries this audit reads.
+const FIXTURES: [&str; 20] = [
+    "mp4/frag/av1.frag.mp4",
+    "mp4/frag/hevc-main.frag.mp4",
+    "mp4/frag/vvc.frag.mp4",
+    "mp4/cmaf/av-frag.mp4",
+    "mp4/flac.mp4",
+    "mp4/opus.mp4",
+    "mp4/stpp.mp4",
+    "mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
+    "mp4/quicktime/qt-prores-apco.mov",
+    "mp4/quicktime/qt-prores-apcs.mov",
+    "mp4/quicktime/qt-prores-apcn.mov",
+    "mp4/quicktime/qt-prores-apch.mov",
+    "mp4/quicktime/qt-prores-ap4h.mov",
+    "mp4/quicktime/qt-prores-ap4x.mov",
+    "mp4/quicktime/qt-mjpeg.mov",
+    "mp4/quicktime/qt-svq1.mov",
+    "mp4/quicktime/qt-h263.mov",
+    "mp4/quicktime/qt-pcm-s16le.mov",
+    "mp4/quicktime/qt-pcm-s24le.mov",
+    "mp4/3gpp/h263.3gp",
+];
+
+/// Bytes appended to an entry's child region.
+const TRAILER: [u8; 4] = [0xD1, 0x2C, 0x9B, 0x5E];
+/// Where an entry's four-CC sits in its header.
+const FOURCC_RANGE: core::ops::Range<usize> =
+    BOX_HEADER_MIN_SIZE - core::mem::size_of::<u32>()..BOX_HEADER_MIN_SIZE;
+
 #[test]
 fn committed_visual_audio_and_subtitle_entries_are_byte_exact() {
     let mut all = Vec::new();
-    for fixture in [
-        "mp4/frag/av1.frag.mp4",
-        "mp4/frag/hevc-main.frag.mp4",
-        "mp4/frag/vvc.frag.mp4",
-        "mp4/cmaf/av-frag.mp4",
-        "mp4/flac.mp4",
-        "mp4/opus.mp4",
-        "mp4/stpp.mp4",
-        "mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
-        "mp4/quicktime/qt-prores-apco.mov",
-        "mp4/quicktime/qt-prores-apcs.mov",
-        "mp4/quicktime/qt-prores-apcn.mov",
-        "mp4/quicktime/qt-prores-apch.mov",
-        "mp4/quicktime/qt-prores-ap4h.mov",
-        "mp4/quicktime/qt-prores-ap4x.mov",
-        "mp4/quicktime/qt-mjpeg.mov",
-        "mp4/quicktime/qt-svq1.mov",
-        "mp4/quicktime/qt-h263.mov",
-        "mp4/quicktime/qt-pcm-s16le.mov",
-        "mp4/quicktime/qt-pcm-s24le.mov",
-        "mp4/3gpp/h263.3gp",
-    ] {
+    for fixture in FIXTURES {
         let data = fixtures::read(fixture);
         all.extend(entries(&data, fixture));
     }
@@ -170,6 +179,41 @@ fn committed_visual_audio_and_subtitle_entries_are_byte_exact() {
         checked += audit(entry);
     }
     assert!(checked > 0, "at least one fixed byte was exercised");
+}
+
+/// An entry a reader must locate samples through keeps a child region its own
+/// syntax does not describe: four bytes appended past its last child grow its
+/// size and come back out.
+#[test]
+fn a_committed_entry_keeps_a_trailing_region_it_does_not_describe() {
+    let mut checked = 0usize;
+    let mut dropped = Vec::new();
+    for fixture in FIXTURES {
+        let data = fixtures::read(fixture);
+        for entry in entries(&data, fixture) {
+            let mut grown = entry.bytes.clone();
+            grown.extend_from_slice(&TRAILER);
+            let total = u32::try_from(grown.len()).expect("entry length");
+            grown[..FOURCC_RANGE.start].copy_from_slice(&total.to_be_bytes());
+            let Ok(variant) = sample_entry_variant(&grown) else {
+                continue;
+            };
+            let out = variant.try_to_bytes().unwrap_or_else(|err| {
+                panic!("{fixture} entry: serialize failed after parse: {err}")
+            });
+            if out != grown {
+                let fourcc = String::from_utf8_lossy(&grown[FOURCC_RANGE]).into_owned();
+                dropped.push(format!("{fixture} {fourcc}: {} in, {} out", grown.len(), out.len()));
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "at least one entry was exercised");
+    assert!(
+        dropped.is_empty(),
+        "{} entries dropped bytes past their last child: {dropped:?}",
+        dropped.len()
+    );
 }
 
 #[test]
@@ -253,6 +297,37 @@ fn rgan_entry_keeps_its_reserved_block_and_unwalkable_tail() {
         }),
         SAMPLE_ENTRY_FIXED_LEN,
         "every rgan fixed byte is exercised"
+    );
+}
+
+/// An assembled `stpp` entry whose child region ends in bytes no header
+/// accounts for: three of them are too few to frame a box, and the fourth
+/// declares a `btrt` longer than the entry holds.
+#[test]
+fn stpp_entry_keeps_an_unframeable_child_region() {
+    let mut body = Vec::new();
+    body.extend_from_slice(&[0u8; SAMPLE_ENTRY_FIXED_LEN]);
+    body.extend_from_slice(b"http://www.w3.org/ns/ttml\0");
+    body.extend_from_slice(&[0, 0]);
+    body.extend_from_slice(&[0, 0, 0, 20, b'b', b't', b'r', b't', 0, 0, 0, 0]);
+    body.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+    let total = u32::try_from(body.len() + BOX_HEADER_MIN_SIZE).expect("entry length");
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&total.to_be_bytes());
+    bytes.extend_from_slice(b"stpp");
+    bytes.extend_from_slice(&body);
+
+    let SampleEntryVariant::Stpp(entry) = sample_entry_variant(&bytes).expect("stpp parses") else {
+        panic!("expected the stpp entry kind");
+    };
+    assert_eq!(
+        entry.trailing,
+        [0, 0, 0, 20, b'b', b't', b'r', b't', 0, 0, 0, 0, 0xAA, 0xBB, 0xCC]
+    );
+    assert_eq!(
+        entry.try_to_bytes().expect("stpp serializes"),
+        bytes,
+        "the unframeable region is carried"
     );
 }
 

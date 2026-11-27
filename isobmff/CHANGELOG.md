@@ -55,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `stpp`, so a protected `encu` entry round-trips. A struct literal must name
   it (or start from `new`).
 
+- `subtitle_entries::XmlSubtitleSampleEntry` gains a public `trailing` field:
+  the bytes after its last complete child box — a header cut short by the
+  entry's own size, or a region too small to frame one — are carried instead of
+  being dropped on a rewrite. A struct literal must name it (or start from
+  `new`).
+
 - `threegpp`: the 3GPP TS 26.244 code points — `ThreeGppAudioEntry`
   (`samr`/`sawb`/`sawp`/`sevs`, with `AmrDecoderSpecificBox` and
   `AmrwbPlusDecoderSpecificBox`), `H263SampleEntry` and

@@ -368,7 +368,8 @@ impl Udta {
                 }
                 crate::threegpp::KYWD => {
                     crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
-                        crate::threegpp::KeywordsBox::parse_body(child.body).map(UdtaChild::Keywords)
+                        crate::threegpp::KeywordsBox::parse_body(child.body)
+                            .map(UdtaChild::Keywords)
                     })?
                 }
                 crate::threegpp::RTNG => {

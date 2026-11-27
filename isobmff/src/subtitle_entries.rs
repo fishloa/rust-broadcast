@@ -105,6 +105,12 @@ pub struct XmlSubtitleSampleEntry {
     pub codec_type: [u8; BOX_TYPE_SIZE],
     /// Optional trailing boxes (e.g. `btrt`) preserved verbatim for round-trip.
     pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
+    /// Bytes after the last complete child box that no header accounts for.
+    ///
+    /// An entry is needed to locate its samples, so its left-over bytes are
+    /// carried rather than refused: a child header cut short, or a region too
+    /// small to frame one, is written back where it was.
+    pub trailing: Vec<u8>,
 }
 
 impl XmlSubtitleSampleEntry {
@@ -118,6 +124,7 @@ impl XmlSubtitleSampleEntry {
             auxiliary_mime_types: String::new(),
             codec_type: STPP,
             extra_boxes: Vec::new(),
+            trailing: Vec::new(),
         }
     }
 
@@ -146,27 +153,8 @@ impl XmlSubtitleSampleEntry {
         let (schema_location, pos) = parse_cstring(body, pos)?;
         let (auxiliary_mime_types, pos) = parse_cstring(body, pos)?;
 
-        let mut extra_boxes = Vec::new();
-        let mut at = pos;
-        while at + BOX_HEADER_MIN_SIZE <= body.len() {
-            let sz = be_u32(body, at, "child box size")? as usize;
-            if sz < BOX_HEADER_MIN_SIZE {
-                break;
-            }
-            let end = at.saturating_add(sz);
-            if end > body.len() {
-                return Err(Error::BufferTooShort(BufferTooShort {
-                    need: end,
-                    have: body.len(),
-                    what: "stpp child box",
-                }));
-            }
-            let mut bt = [0u8; BOX_TYPE_SIZE];
-            bt.copy_from_slice(&body[at + BOX_TYPE_OFFSET..at + BOX_HEADER_MIN_SIZE]);
-            let data = body[at + BOX_HEADER_MIN_SIZE..end].to_vec();
-            extra_boxes.push(crate::box_support::OpaqueBox::new(bt, data));
-            at = end;
-        }
+        let (extra_boxes, trailing) =
+            crate::box_support::capture_children(body.get(pos..).unwrap_or_default()).into_parts();
 
         Ok(Self {
             reserved,
@@ -176,6 +164,7 @@ impl XmlSubtitleSampleEntry {
             auxiliary_mime_types,
             codec_type,
             extra_boxes,
+            trailing,
         })
     }
 }
@@ -202,6 +191,7 @@ impl Serialize for XmlSubtitleSampleEntry {
         for eb in &self.extra_boxes {
             n += eb.serialized_len();
         }
+        n += self.trailing.len();
         crate::box_types::box_len(n)
     }
 
@@ -237,7 +227,8 @@ impl Serialize for XmlSubtitleSampleEntry {
         for eb in &self.extra_boxes {
             c += eb.serialize_into(&mut buf[c..])?;
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
