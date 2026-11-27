@@ -415,3 +415,51 @@ fn block_group_discard_padding_and_seek_pre_roll_are_reported() {
         "no other block states DiscardPadding"
     );
 }
+
+/// A damaged `CodecDelay` (its size VINT zeroed) is broken metadata: the
+/// `TrackEntry` is re-typed around the broken run, every track is still
+/// announced, its samples still arrive, and the damage is reported.
+#[test]
+fn a_corrupt_track_entry_child_keeps_the_track() {
+    use broadcast_matroska::Limits;
+    use broadcast_matroska::reader::{Mode, Reader, Source, Step};
+
+    let mut bytes = test_fixtures::read("mkv/vp9-opus.webm");
+    let codec_delay = bytes
+        .windows(2)
+        .position(|window| window == [0x56, 0xAA])
+        .expect("a CodecDelay element");
+    let size_at = codec_delay + 2;
+    assert_eq!(bytes[size_at], 0x83, "a three-octet CodecDelay payload");
+    bytes[size_at] = 0x80;
+
+    let mut reader = Reader::new(
+        Source::Seekable {
+            len: bytes.len() as u64,
+        },
+        Mode::Permissive,
+        Limits::new(),
+    );
+    let mut tracks = 0usize;
+    let mut warnings = 0usize;
+    let mut blocks = 0usize;
+    loop {
+        match reader.step().expect("step") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let len = usize::try_from(range.len).expect("length");
+                let end = start.saturating_add(len).min(bytes.len());
+                let supplied = bytes.get(start..end).unwrap_or(&[]);
+                reader.supply(range.offset, supplied).expect("supply");
+            }
+            Step::Tracks { tracks: table, .. } => tracks = table.len(),
+            Step::Warning(_) => warnings += 1,
+            Step::Block(_) => blocks += 1,
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(tracks, 2, "the audio track survives its damaged CodecDelay");
+    assert!(blocks > 0, "the media still plays");
+    assert!(warnings >= 1, "the broken element was not reported");
+}

@@ -299,6 +299,12 @@ to the clean run apart from the damaged unit, the tail after a mid-stream
 damage preserved, timestamps monotonic wherever the clean input's are, and a
 finding for a delete/insert that lost samples. All 232 cells pass.
 
+`metadata_damage_does_not_stop_the_media` adds three Matroska cells that the
+positional matrix cannot reach (they need a file that carries the elements):
+zeroing the size VINT of `CodecDelay`, `SeekPreRoll`, and `DiscardPadding` in
+`mkv/vp9-opus.webm` leaves both tracks, the same 151 samples, and one finding
+per cell, so broken gapless metadata costs a field and not the track.
+
 Per damage class (a cell is `ok` when it neither errored nor lost more than two
 samples around the damage):
 
@@ -366,7 +372,31 @@ ts at 30949 Delete: ours=204 ffprobe=205
 flv at 31237 Delete: ours=205 ffprobe=206
 flv at 15618 Random: ours=205 ffprobe=206
 ```
-We are never more than the one damaged unit behind.
+We are never more than the one damaged unit behind. The three one-packet
+differences, packet by packet:
+
+- **TS, delete at 30949** — the extra ffprobe packet is the video access unit
+  at dts 2.4 s (216 000 ticks, a 3 486-byte sample whose PES starts at byte 27 072). Its
+  own bytes are intact; what our resync costs is the *next* `0x100` packet
+  (continuity counter 14, the 2.44 s unit's `payload_unit_start`), which the
+  five-sync lock consumes while re-locking after the 16-byte deletion. The
+  following `0x100` packet then shows a continuity gap on a continuation
+  packet, and the demuxer's rule for that case (a unit whose continuation
+  packet was lost is dropped, never delivered truncated) cannot tell a lost
+  continuation from a lost terminator, so the 2.4 s unit goes with it. ffmpeg
+  pays the same resync cost (it loses the 2.44 s unit too) but flushes the
+  pending unit instead of dropping it, which is why it keeps one more packet.
+  Delivering it would mean delivering every unit whose terminator was lost as
+  if complete, which the reader refuses; the cell is within the matrix's
+  one-unit allowance and the rule test passes.
+- **FLV, delete at 31237** — the extra ffprobe packet is the tag the damage
+  cut into: the audio tag at 31 080 (timestamp 1 381 ms, 261-byte payload)
+  loses 16 bytes from the middle of its AAC frame. It is not a valid unit, and
+  we report the loss instead of delivering a broken frame.
+- **FLV, random at 15618** — the extra ffprobe packet is the tag at 15 614
+  (timestamp 684 ms): the run overwrites three of its timestamp bytes and nine
+  payload bytes, so ffprobe emits it at dts 1 704 891 802 ms (19 720 days).
+  We drop it: it is neither valid nor playable at a known time.
 
 ### Measurement note
 

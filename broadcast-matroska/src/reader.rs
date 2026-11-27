@@ -1604,6 +1604,13 @@ impl Reader {
                     let entry_offset = offset.saturating_add(
                         u64::try_from(header_len.saturating_add(pos)).unwrap_or(u64::MAX),
                     );
+                    if let Some((entry, used)) =
+                        self.recover_track_entry(&payload[pos..], entry_offset)
+                    {
+                        entries.push(Element::TrackEntry(entry));
+                        pos = pos.saturating_add(used);
+                        continue;
+                    }
                     self.warned(Warning::UnparsedElement {
                         id: ids::TRACK_ENTRY,
                         offset: entry_offset,
@@ -1623,6 +1630,57 @@ impl Reader {
             }
         }
         Ok(Tracks::from_parts(header, entries))
+    }
+
+    /// Re-type one `TrackEntry` child by child, for an entry the strict parse
+    /// refused: the corrupt run is reported and dropped, and the entry
+    /// survives with the children around it, so damaged metadata costs a field
+    /// rather than the track.
+    fn recover_track_entry<'a>(
+        &mut self,
+        bytes: &'a [u8],
+        offset: u64,
+    ) -> Option<(crate::matroska::TrackEntry<'a>, usize)> {
+        let (header, header_len) = ElementHeader::parse(bytes).ok()?;
+        if header.id().value() != ids::TRACK_ENTRY {
+            return None;
+        }
+        let len = usize::try_from(header.payload_len()?).ok()?;
+        let body = bytes.get(header_len..header_len.checked_add(len)?)?;
+        let mut children: Vec<Element<'a>> = Vec::new();
+        let mut pos = 0usize;
+        let mut damaged: Option<usize> = None;
+        while pos < body.len() {
+            if let Ok((element, used)) = Element::parse_at(&body[pos..], &self.limits)
+                && used > 0
+                && is_track_entry_child(element.header().id().value())
+            {
+                if let Some(start) = damaged.take() {
+                    let child = offset.saturating_add(
+                        u64::try_from(header_len.saturating_add(start)).unwrap_or(u64::MAX),
+                    );
+                    self.warned(Warning::MalformedElement { offset: child });
+                }
+                children.push(element);
+                pos = pos.saturating_add(used);
+                continue;
+            }
+            damaged.get_or_insert(pos);
+            pos = pos.saturating_add(1);
+        }
+        if let Some(start) = damaged {
+            let child = offset.saturating_add(
+                u64::try_from(header_len.saturating_add(start)).unwrap_or(u64::MAX),
+            );
+            self.warned(Warning::MalformedElement { offset: child });
+        }
+        if children.is_empty() {
+            return None;
+        }
+        Some((
+            crate::matroska::TrackEntry::from_parts(header, children),
+            header_len.saturating_add(len),
+        ))
     }
 
     fn master_failed(&mut self, kind: MasterKind, offset: u64, error: Error) -> Result<()> {
@@ -2193,6 +2251,15 @@ fn is_cluster_child(id: u32) -> bool {
             | ids::ENCRYPTED_BLOCK
             | ids::SILENT_TRACKS
     ) || id == crate::ebml::global::VOID_ID
+        || id == crate::ebml::global::CRC32_ID
+}
+
+/// Whether `id` may appear directly inside a `TrackEntry`, plus the global
+/// elements every level may carry.
+fn is_track_entry_child(id: u32) -> bool {
+    const TRACK_ENTRY_PATH: &str = r"Segment\Tracks\TrackEntry";
+    ids::lookup(id).is_some_and(|def| def.parent == TRACK_ENTRY_PATH)
+        || id == crate::ebml::global::VOID_ID
         || id == crate::ebml::global::CRC32_ID
 }
 

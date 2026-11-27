@@ -29,7 +29,10 @@ All notable changes to this crate are documented here. The format follows
 
 - In `Mode::Permissive` the reader types each `TrackEntry` on its own: a
   corrupt entry is reported and skipped while the other tracks are still
-  announced (a strict reader still fails the whole `Tracks` master).
+  announced (a strict reader still fails the whole `Tracks` master). An entry
+  whose *own* children contain a corrupt run (a damaged numeric scalar such as
+  a `CodecDelay` or `SeekPreRoll`) is re-typed child by child: the run is
+  reported and dropped, and the track is announced with the fields around it.
 - A malformed or out-of-range `Info.TimestampScale` is reported and the
   default scale is kept instead of failing the file in permissive mode.
 - An element whose id is not a known Segment/Cluster child, or whose declared

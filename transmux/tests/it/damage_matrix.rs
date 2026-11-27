@@ -213,6 +213,35 @@ fn vint_max_payload(width: usize) -> u64 {
     (1u64 << (7 * width)) - 1
 }
 
+/// The VINT at `at`: its width in bytes and its value bits.
+fn vint(bytes: &[u8], at: usize) -> Option<(usize, u64)> {
+    let first = *bytes.get(at)?;
+    let width = first.leading_zeros() as usize + 1;
+    if width > 8 || at + width > bytes.len() {
+        return None;
+    }
+    let mut value = u64::from(first) & u64::from(0xFFu8 >> width);
+    for index in 1..width {
+        value = (value << 8) | u64::from(*bytes.get(at + index)?);
+    }
+    Some((width, value))
+}
+
+/// The (offset, width) of a two-octet Matroska element's size VINT, for a
+/// gapless element whose payload is one numeric scalar: the first occurrence
+/// whose declared payload is 1..=8 bytes.
+fn mkv_scalar_size_field(bytes: &[u8], id: [u8; 2]) -> Option<(usize, usize)> {
+    const MAX_SCALAR: u64 = 8;
+    bytes
+        .windows(id.len())
+        .position(|window| window == id)
+        .and_then(|seen| {
+            let at = seen + id.len();
+            let (width, payload) = vint(bytes, at)?;
+            (1..=MAX_SCALAR).contains(&payload).then_some((at, width))
+        })
+}
+
 /// One measured matrix cell.
 struct Row {
     format: Format,
@@ -594,6 +623,29 @@ fn metadata_damage_does_not_stop_the_media() {
     let got = Format::Mkv.demux(&damaged);
     assert!(got.error.is_none(), "mkv: {:?}", got.error);
     assert_eq!(got.delivered(), clean.delivered(), "mkv: samples");
+
+    // Matroska: the gapless elements are metadata too. A broken `CodecDelay`
+    // (RFC 9559 §5.1.4.1.6), `SeekPreRoll` (§5.1.4.1.26) or `DiscardPadding`
+    // (§5.1.3.5.7) is skipped with a finding, and every coded sample stays.
+    let bytes = test_fixtures::read("mkv/vp9-opus.webm");
+    let clean = Format::Mkv.demux(&bytes);
+    for (label, id) in [
+        ("CodecDelay", [0x56, 0xAA]),
+        ("SeekPreRoll", [0x56, 0xBB]),
+        ("DiscardPadding", [0x75, 0xA2]),
+    ] {
+        let (at, width) = mkv_scalar_size_field(&bytes, id)
+            .unwrap_or_else(|| panic!("mkv: no {label} element in the fixture"));
+        let damaged = damage::apply(&bytes, at, Damage::VintSize { width, payload: 0 }, 0x5454);
+        let got = Format::Mkv.demux(&damaged);
+        assert!(got.error.is_none(), "mkv {label}: {:?}", got.error);
+        assert_eq!(got.tracks.len(), clean.tracks.len(), "mkv {label}: tracks");
+        assert_eq!(got.delivered(), clean.delivered(), "mkv {label}: samples");
+        assert!(
+            got.findings >= 1,
+            "mkv {label}: the broken element was not reported"
+        );
+    }
 }
 
 /// An independent, mainstream demuxer must not deliver more than we do: this

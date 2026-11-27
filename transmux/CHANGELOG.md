@@ -28,7 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Block outside a Cluster, an oversized element, a bad `Cluster/Timestamp`
   and a Block whose NAL lengths do not fit. A `MatroskaDemux` track whose
   known codec config is corrupt is `TrackAbandoned` when another track
-  survives. See `docs/demux-damage-matrix.md`.
+  survives, and a damaged gapless element (`CodecDelay`, `SeekPreRoll`,
+  `DiscardPadding`) costs that field, reported, rather than the track. See
+  `docs/demux-damage-matrix.md`.
 ### Added
 - `StreamingFlvDemux::strict()`, which keeps the pre-best-effort contract
   (a damaged header, backwards timestamp or too-large span is an error).
