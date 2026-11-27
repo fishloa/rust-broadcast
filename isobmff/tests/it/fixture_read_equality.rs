@@ -220,14 +220,14 @@ fn totals() -> Totals {
 
 /// The totals `origin/main` reads from the committed fixtures.
 const EXPECTED: Totals = Totals {
-    files: 267,
-    movie_reads: 267,
+    files: 271,
+    movie_reads: 271,
     item_reads: 20,
-    tracks: 200,
-    samples: 256_863,
+    tracks: 211,
+    samples: 257_469,
     items: 50,
     properties: 188,
-    digest: 1_362_326_194_991_541_661,
+    digest: 295_504_044_081_368_128,
 };
 
 #[test]

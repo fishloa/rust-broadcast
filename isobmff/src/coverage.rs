@@ -38,6 +38,11 @@ pub fn is_typed(fourcc: &[u8; BOX_TYPE_SIZE]) -> bool {
     TYPED_BOXES.iter().any(|row| row.fourcc == *fourcc)
 }
 
+/// The width of a `u32` field, for the fixed-layout boxes that declare one.
+const U32_LEN: usize = core::mem::size_of::<u32>();
+/// The body a `btrt` declares: its three rates.
+const BTRT_BODY_LEN: usize = 3 * U32_LEN;
+
 /// A zero body long enough for any fixed-layout box; trailing bytes are not
 /// read by a whole-box parser.
 const MINIMAL_BODY_LEN: usize = 256;
@@ -183,7 +188,7 @@ leaf! {
     p_ipro: b"ipro", crate::item::ItemProtectionBox, &MINIMAL_BODY;
     p_iref: b"iref", crate::item::ItemReferenceBox, &MINIMAL_BODY;
     p_pitm: b"pitm", crate::item::PrimaryItemBox, &MINIMAL_BODY;
-    p_btrt: b"btrt", crate::sample_entries::BitRateBox, &MINIMAL_BODY;
+    p_btrt: b"btrt", crate::sample_entries::BitRateBox, &MINIMAL_BODY[..BTRT_BODY_LEN];
     p_stsh: b"stsh", crate::sample_tables_extra::ShadowSyncSampleBox, &MINIMAL_BODY;
     p_rsot: b"rsot", crate::movie_fragment::RedundantSampleOriginalTimingBox, &MINIMAL_BODY;
     p_trpy: b"trpy", crate::hint::TrpyBox, &MINIMAL_BODY;
@@ -201,9 +206,9 @@ leaf! {
     p_pmax: b"pmax", crate::hint::PmaxBox, &MINIMAL_BODY;
     p_dmax: b"dmax", crate::hint::DmaxBox, &MINIMAL_BODY;
     p_payt: b"payt", crate::hint::PaytBox, &MINIMAL_BODY;
-    p_tims: b"tims", crate::hint::TimescaleEntryBox, &MINIMAL_BODY;
-    p_tsro: b"tsro", crate::hint::TimeOffsetBox, &MINIMAL_BODY;
-    p_snro: b"snro", crate::hint::SequenceOffsetBox, &MINIMAL_BODY;
+    p_tims: b"tims", crate::hint::TimescaleEntryBox, &MINIMAL_BODY[..U32_LEN];
+    p_tsro: b"tsro", crate::hint::TimeOffsetBox, &MINIMAL_BODY[..U32_LEN];
+    p_snro: b"snro", crate::hint::SequenceOffsetBox, &MINIMAL_BODY[..U32_LEN];
     p_tssy: b"tssy", crate::hint::TimestampSynchronyBox, &MINIMAL_BODY;
     p_rssr: b"rssr", crate::hint::ReceivedSsrcBox, &MINIMAL_BODY;
     p_srpp: b"srpp", crate::hint::SrtpProcessBox, &MINIMAL_BODY;

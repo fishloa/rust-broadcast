@@ -324,7 +324,6 @@ fn last_child_offset(entry: &[u8], fourcc: &[u8; 4]) -> usize {
         at += size;
     }
     found.expect("the child is present")
-
 }
 
 #[test]

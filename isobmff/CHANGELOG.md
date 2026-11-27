@@ -127,6 +127,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `isobmff_item_reader` fuzz target makes found the original rewrite; the
   345-byte input stays as a regression test.
 
+- **A fixed-layout box refuses bytes its declared fields do not account
+  for.** `btrt`, `tims`, `tsro` and `snro` wrote back only the fields their
+  clause lists, so bytes past them were dropped on the way out. Each is now a
+  typed error, and the reader that meets one keeps it opaque. The box audit's
+  new trailing-byte pass appends four bytes past every occurrence's last
+  declared field and requires a carry or a refusal; the boxes that still do
+  neither are pinned in `tests/it/box_audit.rs`.
+
 - **A box whose declared table leaves bytes over keeps them.** `dref`, `stsd`,
   `stsz`, `saiz`, `sidx`, `tfra`, `ipma`, `tfhd`, `trun` and `chnl` used to
   drop those bytes on the way out (and a sample-info table a non-zero default

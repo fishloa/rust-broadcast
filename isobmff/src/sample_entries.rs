@@ -1381,6 +1381,7 @@ impl BitRateBox {
 
     /// Parse the payload after the 8-byte box header.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
+        crate::box_support::reject_past_fields(body, BTRT_BODY_LEN, "btrt extra bytes")?;
         Ok(Self {
             buffer_size_db: be_u32(body, 0, "btrt bufferSizeDB")?,
             max_bitrate: be_u32(body, core::mem::size_of::<u32>(), "btrt maxBitrate")?,

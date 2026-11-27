@@ -482,6 +482,16 @@ impl<'a> Notes<'a> {
     }
 }
 
+/// Refuse bytes a fixed-layout box's declared fields do not account for. The
+/// type writes only what it models, so keeping them would make the rewrite
+/// differ from the input.
+pub(crate) fn reject_past_fields(body: &[u8], declared: usize, what: &'static str) -> Result<()> {
+    if body.len() > declared {
+        return Err(Error::InvalidInput(what));
+    }
+    Ok(())
+}
+
 /// A sibling the crate does not type, kept opaque with its header form.
 pub(crate) fn opaque_child(item: &crate::box_types::BoxItem<'_>) -> OpaqueBox {
     OpaqueBox {

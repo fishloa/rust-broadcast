@@ -11,6 +11,9 @@
 //! Only the body is flipped, and only its first [`AUDIT_PREFIX`] bytes: the
 //! 8-byte `size`/`type` header is structure rather than content
 //! (ISO/IEC 14496-12:2026 §4.2), and a box's fixed syntax is at its start. The
+//! same walk appends four bytes past each occurrence's last declared field: a
+//! box either carries them or refuses them, and the boxes that as yet do
+//! neither are pinned, so that list cannot grow (or shrink) silently. The
 //! report states boxes x occurrences x bytes so the coverage is auditable, and
 //! every typed box with no occurrence in a committed file is pinned below, so
 //! that list cannot grow (or shrink) silently.
@@ -117,6 +120,7 @@ rows! {
     b"ardi" => isobmff::audio_elements::AudioRenderingIndicationBox,
     b"assp" => isobmff::index_boxes::AlternativeStartupSequencePropertiesBox,
     b"brnd" => isobmff::item::BrandProperty,
+    b"btrt" => isobmff::sample_entries::BitRateBox,
     b"bxml" => isobmff::meta_track::BinaryXmlBox,
     b"chnl" => isobmff::audio_boxes::ChannelLayoutBox,
     b"cinf" => isobmff::scheme::CompleteTrackInfoBox,
@@ -127,17 +131,31 @@ rows! {
     b"csgp" => isobmff::sample_groups::CompactSampleToGroupBox,
     b"cslg" => isobmff::timing::CompositionToDecodeBox,
     b"ctts" => isobmff::timing::CompositionOffsetBox,
+    b"dimm" => isobmff::hint::DimmBox,
     b"dinf" => isobmff::init_segment::DataInformationBox,
+    b"dmax" => isobmff::hint::DmaxBox,
+    b"dmed" => isobmff::hint::DmedBox,
     b"dmix" => isobmff::audio_boxes::DownMixInstructionsBox,
     b"dref" => isobmff::init_segment::DataReferenceBox,
+    b"drep" => isobmff::hint::DrepBox,
     b"edts" => isobmff::init_segment::EditBox,
     b"elng" => isobmff::track_desc::ExtendedLanguageBox,
     b"elst" => isobmff::timing::EditListBox,
     b"etyp" => isobmff::segments::ExtendedTypeBox,
+    b"extr" => isobmff::file_delivery::ExtraDataBox,
+    b"fdpa" => isobmff::file_delivery::FdPacketBox,
+    b"feci" => isobmff::file_delivery::FecInformationBox,
+    b"fecr" => isobmff::file_delivery::FecReservoirBox,
+    b"fiin" => isobmff::file_delivery::FdItemInformationBox,
+    b"fire" => isobmff::file_delivery::FileReservoirBox,
+    b"fpar" => isobmff::file_delivery::FilePartitionBox,
     b"frma" => isobmff::cenc::OriginalFormatBox,
+    b"gitn" => isobmff::file_delivery::GroupIdToNameBox,
     b"grpl" => isobmff::item::GroupsListBox,
     b"hdlr" => isobmff::init_segment::HandlerBox,
+    b"hinf" => isobmff::hint::HintStatisticsBox,
     b"hmhd" => isobmff::init_segment::HintMediaHeaderBox,
+    b"hnti" => isobmff::hint::HintInformationBox,
     b"idat" => isobmff::item::ItemDataBox,
     b"iinf" => isobmff::item::ItemInfoBox,
     b"iloc" => isobmff::item::ItemLocationBox,
@@ -147,6 +165,7 @@ rows! {
     b"ipro" => isobmff::item::ItemProtectionBox,
     b"iprp" => isobmff::item::ItemPropertiesBox,
     b"iref" => isobmff::item::ItemReferenceBox,
+    b"istm" => isobmff::hint::InitialSampleTimeBox,
     b"keyd" => isobmff::meta_track::MetadataKeyDeclarationBox,
     b"keys" => isobmff::metadata::Keys,
     b"kind" => isobmff::track_desc::KindBox,
@@ -154,6 +173,7 @@ rows! {
     b"leva" => isobmff::index_boxes::LevelAssignmentBox,
     b"loca" => isobmff::meta_track::MetadataLocaleBox,
     b"ludt" => isobmff::audio_boxes::LoudnessBox,
+    b"maxr" => isobmff::hint::MaxrBox,
     b"mdhd" => isobmff::init_segment::MediaHeaderBox,
     b"mdia" => isobmff::init_segment::MediaBox,
     b"mehd" => isobmff::init_segment::MovieExtendsHeaderBox,
@@ -164,23 +184,37 @@ rows! {
     b"moov" => isobmff::init_segment::MovieBox,
     b"mvhd" => isobmff::init_segment::MovieHeaderBox,
     b"nmhd" => isobmff::init_segment::NullMediaHeaderBox,
+    b"npck" => isobmff::hint::NpckBox,
+    b"nump" => isobmff::hint::NumpBox,
     b"otyp" => isobmff::segments::OriginalFileTypeBox,
     b"padb" => isobmff::sample_tables_extra::PaddingBitsBox,
+    b"paen" => isobmff::file_delivery::PartitionEntryBox,
+    b"payt" => isobmff::hint::PaytBox,
     b"pdin" => isobmff::index_boxes::ProgressiveDownloadInfoBox,
     b"pitm" => isobmff::item::PrimaryItemBox,
+    b"pmax" => isobmff::hint::PmaxBox,
     b"prft" => isobmff::sample_groups::ProducerReferenceTimeBox,
+    b"rcsr" => isobmff::hint::ReceivedCsrcBox,
     b"rinf" => isobmff::scheme::RestrictedSchemeInfoBox,
+    b"rsot" => isobmff::movie_fragment::RedundantSampleOriginalTimingBox,
+    b"rssr" => isobmff::hint::ReceivedSsrcBox,
+    b"rtp " => isobmff::hint::RtpHintInformation,
+    b"rtpx" => isobmff::hint::RtpHdrExtBox,
     b"sbgp" => isobmff::sample_groups::SampleToGroupBox,
     b"schi" => isobmff::cenc::SchemeInformationBox,
     b"scrb" => isobmff::scheme::ScrambleSchemeInfoBox,
+    b"sdp " => isobmff::hint::SdpHintInformation,
     b"sdtp" => isobmff::init_segment::SampleDependencyTypeBox,
+    b"segr" => isobmff::file_delivery::FdSessionGroupBox,
     b"setu" => isobmff::meta_track::MetadataSetupBox,
     b"sgpd" => isobmff::sample_groups::SampleGroupDescriptionBox,
     b"sidx" => isobmff::timing::SegmentIndexBox,
     b"sinf" => isobmff::cenc::ProtectionSchemeInfoBox,
     b"smhd" => isobmff::init_segment::SoundMediaHeaderBox,
+    b"snro" => isobmff::hint::SequenceOffsetBox,
     b"spki" => isobmff::scheme::SamplePackingInformationBox,
     b"srat" => isobmff::init_segment::SamplingRateBox,
+    b"srpp" => isobmff::hint::SrtpProcessBox,
     b"ssix" => isobmff::index_boxes::SubsegmentIndexBox,
     b"ssrt" => isobmff::sample_groups::SubSampleReferenceTableBox,
     b"stbl" => isobmff::init_segment::SampleTableBox,
@@ -192,20 +226,33 @@ rows! {
     b"stsc" => isobmff::init_segment::SampleToChunkBox,
     b"stsd" => isobmff::init_segment::SampleDescriptionBox,
     b"stsg" => isobmff::sample_tables_extra::SubTrackSampleGroupBox,
+    b"stsh" => isobmff::sample_tables_extra::ShadowSyncSampleBox,
     b"stss" => isobmff::init_segment::SyncSampleBox,
     b"stsz" => isobmff::init_segment::SampleSizeBox,
     b"stts" => isobmff::timing::TimeToSampleBox,
     b"stvi" => isobmff::track_desc::StereoVideoBox,
     b"stz2" => isobmff::init_segment::CompactSampleSizeBox,
     b"subs" => isobmff::sample_groups::SubSampleInformationBox,
+    b"tPAT" => isobmff::hint::PatBox,
+    b"tPMT" => isobmff::hint::PmtBox,
     b"tfra" => isobmff::timing::TrackFragmentRandomAccessBox,
+    b"tims" => isobmff::hint::TimescaleEntryBox,
     b"tkhd" => isobmff::init_segment::TrackHeaderBox,
+    b"tmax" => isobmff::hint::TmaxBox,
+    b"tmin" => isobmff::hint::TminBox,
+    b"totl" => isobmff::hint::TotlBox,
+    b"tpay" => isobmff::hint::TpayBox,
+    b"tpyl" => isobmff::hint::TpylBox,
     b"trak" => isobmff::init_segment::TrackBox,
     b"tref" => isobmff::track_reference::TrackReferenceBox,
     b"trep" => isobmff::index_boxes::TrackExtensionPropertiesBox,
     b"trex" => isobmff::init_segment::TrackExtendsBox,
     b"trgr" => isobmff::track_desc::TrackGroupBox,
+    b"trpy" => isobmff::hint::TrpyBox,
     b"tsel" => isobmff::track_desc::TrackSelectionBox,
+    b"tsro" => isobmff::hint::TimeOffsetBox,
+    b"tssy" => isobmff::hint::TimestampSynchronyBox,
+    b"tsti" => isobmff::hint::TsTimingBox,
     b"tyco" => isobmff::segments::TypeCombinationBox,
     b"udta" => isobmff::metadata::Udta,
     b"uri " => isobmff::meta_track::UriBox,
@@ -235,6 +282,11 @@ fn parse_saio(bytes: &[u8]) -> Result<Vec<u8>, Error> {
 
 fn parse_saiz(bytes: &[u8]) -> Result<Vec<u8>, Error> {
     isobmff::cenc::SampleAuxInfoSizesBox::parse_box(bytes)?.try_to_bytes()
+}
+
+fn parse_fdsa(bytes: &[u8]) -> Result<Vec<u8>, Error> {
+    let item = isobmff::box_types::parse_box(bytes)?.0;
+    isobmff::file_delivery::FdSample::parse(item.body)?.try_to_bytes()
 }
 
 fn parse_ipco(bytes: &[u8]) -> Result<Vec<u8>, Error> {
@@ -320,6 +372,10 @@ fn custom_parser(fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<Typed> {
         })
     };
     match fourcc {
+        b"fdsa" => Some(Typed {
+            parser: parse_fdsa as Parser,
+            shape: Shape::Body,
+        }),
         b"ipco" => whole(parse_ipco),
         b"mdat" => whole(parse_mdat),
         b"mfhd" => whole(parse_mfhd),
@@ -413,15 +469,18 @@ fn is_child_region(body: &[u8]) -> bool {
     count > 0 && at == body.len()
 }
 
-/// A four-CC is printable ASCII, or a QuickTime `©` atom.
+/// A four-CC is printable ASCII with space padding (`uri `, `rtp `), or a
+/// QuickTime `©` atom.
 fn plausible(fourcc: &[u8; BOX_TYPE_SIZE]) -> bool {
-    fourcc
-        .iter()
-        .all(|byte| byte.is_ascii_graphic() || *byte == QUICKTIME_COPYRIGHT)
+    fourcc.iter().all(|byte| {
+        byte.is_ascii_graphic() || *byte == FOURCC_PADDING || *byte == QUICKTIME_COPYRIGHT
+    })
 }
 
 /// The `©` byte a QuickTime metadata atom starts with.
 const QUICKTIME_COPYRIGHT: u8 = 0xA9;
+/// The space a four-CC pads a short code with (`uri `, `xml `).
+const FOURCC_PADDING: u8 = b' ';
 
 fn collect(bytes: &[u8], base: u64, fixture: &str, depth: u32, out: &mut Vec<Occurrence>) {
     if depth > MAX_DEPTH {
@@ -592,6 +651,66 @@ fn committed_boxes_round_trip_or_error_under_every_body_byte() {
     );
 }
 
+/// Bytes appended past a box's last declared field.
+const TRAILER: [u8; 4] = [0xD1, 0x2C, 0x9B, 0x5E];
+
+/// `occurrence` with four bytes appended to its body and its size field grown
+/// to match, or `None` for a header form this rewrite would change.
+fn with_trailer(occurrence: &Occurrence) -> Option<Vec<u8>> {
+    let size = u32::from_be_bytes(occurrence.bytes.get(..4)?.try_into().ok()?);
+    if size == 0 || size == 1 {
+        return None;
+    }
+    let mut out = occurrence.bytes.clone();
+    out.extend_from_slice(&TRAILER);
+    let len = u32::try_from(out.len()).ok()?;
+    out[..4].copy_from_slice(&len.to_be_bytes());
+    Some(out)
+}
+
+#[test]
+fn bytes_past_a_boxs_declared_fields_are_carried_or_refused() {
+    let mut occurrences = Vec::new();
+    for (rel, path) in media_fixtures() {
+        let Ok(data) = std::fs::read(&path) else {
+            continue;
+        };
+        collect(&data, 0, &rel, 0, &mut occurrences);
+    }
+    let mut checked = 0usize;
+    let mut rewrites = BTreeSet::new();
+    for occurrence in &occurrences {
+        let Some(mutated) = with_trailer(occurrence) else {
+            continue;
+        };
+        checked += 1;
+        match (occurrence.typed.parser)(&mutated) {
+            Err(_) => {}
+            Ok(out) if out == expected(occurrence, &mutated) => {}
+            Ok(_) => {
+                rewrites.insert(fourcc_text(&occurrence.fourcc));
+            }
+        }
+    }
+    println!("trailing-byte audit: {checked} occurrences");
+    let rewrites: Vec<&str> = rewrites.iter().map(String::as_str).collect();
+    assert_eq!(
+        rewrites, PINNED_REWRITES_PAST_FIELDS,
+        "a typed box keeps bytes past its declared fields (or stopped keeping them)"
+    );
+}
+
+/// Typed boxes that write back only the fields they declare, so four bytes
+/// appended past them are dropped. The boxes a reader parses strictly owe the
+/// carry instead; the rest are kept opaque by the reader that meets them, so a
+/// rewrite of the file stays byte-exact. A box leaves this list when it carries
+/// or refuses.
+const PINNED_REWRITES_PAST_FIELDS: &[&str] = &[
+    "clap", "ctts", "elng", "elst", "frma", "hmhd", "iinf", "iloc", "kind", "mdhd", "mehd", "mfhd",
+    "mfro", "mvhd", "nmhd", "pasp", "pitm", "prft", "saio", "sbgp", "schi", "schm", "sgpd", "sinf",
+    "smhd", "srat", "ssix", "stco", "stsc", "stss", "stts", "tfdt", "tkhd", "trex", "vmhd",
+];
+
 #[test]
 fn every_typed_box_has_an_audit_parser() {
     let missing: Vec<&str> = TYPED_BOXES
@@ -631,5 +750,8 @@ const PINNED_NO_OCCURRENCE: &[&str] = &[
     "pdin", "trep", "csgp", "stdp", "padb", "stsg", "brnd", "ipro", "uri ", "uriI", "xml ", "bxml",
     "keyd", "loca", "setu", "tyco", "imda", "stri", "strd", "vvhd", "etyp", "otyp", "strk", "csch",
     "spki", "rinf", "cinf", "scrb", "ardi", "aelm", "aedb", "aepp", "aepr", "aesb", "aesd", "assp",
-    "amve", "cclv",
+    "amve", "cclv", "stsh", "rsot", "trpy", "nump", "tpyl", "totl", "npck", "tpay", "maxr", "dmed",
+    "dimm", "drep", "tmin", "tmax", "pmax", "dmax", "payt", "tssy", "rssr", "srpp", "rtpx", "rcsr",
+    "tPAT", "tPMT", "tsti", "istm", "hinf", "fiin", "paen", "fpar", "fecr", "fire", "segr", "gitn",
+    "feci", "extr", "fdpa", "fdsa",
 ];

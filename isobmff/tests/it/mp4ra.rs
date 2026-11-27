@@ -820,6 +820,8 @@ fn config_bytes(code: &str) -> std::result::Result<Vec<u8>, String> {
         "dvcC" | "dvvC" => boxed(code, &[0u8; 24]),
         "clli" => boxed("clli", &[0u8; 4]),
         "mdcv" => boxed("mdcv", &[0u8; 24]),
+        // `btrt` declares exactly its three rates.
+        "btrt" => boxed("btrt", &[0u8; 12]),
         _ => boxed(code, &[0u8; 256]),
     };
     Ok(bytes)
@@ -933,8 +935,14 @@ fn prove_atom(code: &str) -> std::result::Result<(), String> {
             ),
         ),
         "strk" => boxed("strk", &boxed("stri", &full(0, 0, &[0u8; 8]))),
-        "albm" | "auth" | "cprt" | "titl" | "dscp" | "perf" | "gnre" | "yrrc" | "name" | "hinf"
-        | "hnti" | "tsel" | "kind" => boxed(code, &[0u8; 64]),
+        // A plain text atom's body is one NUL-terminated string, so a
+        // one-byte body is the whole well-formed atom.
+        "albm" | "auth" | "titl" | "dscp" | "perf" | "gnre" | "yrrc" | "name" => boxed(code, &[0]),
+        // A copyright atom is a FullBox of length-prefixed notices, and
+        // `kind` one whose schemeURI is NUL-terminated.
+        "cprt" => boxed(code, &full(0, 0, &[0, 0, 0, 0])),
+        "kind" => boxed(code, &full(0, 0, &[0])),
+        "hinf" | "hnti" | "tsel" => boxed(code, &[0u8; 64]),
         other => return Err(format!("no atom proof for {other:?}")),
     };
     let parsed = isobmff::metadata::Udta::parse(&boxed("udta", &child))

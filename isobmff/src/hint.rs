@@ -1044,6 +1044,7 @@ impl TimescaleEntryBox {
 
     /// Parse the payload after the 8-byte box header.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
+        crate::box_support::reject_past_fields(body, U32_LEN, "tims extra bytes")?;
         Ok(Self {
             timescale: be_u32(body, 0, "tims timescale")?,
         })
@@ -1102,6 +1103,11 @@ macro_rules! signed_offset_box {
 
                 /// Parse the payload after the 8-byte box header.
                 pub fn parse_body(body: &[u8]) -> Result<Self> {
+                    crate::box_support::reject_past_fields(
+                        body,
+                        U32_LEN,
+                        concat!(stringify!($ty), " extra bytes"),
+                    )?;
                     Ok(Self {
                         offset: be_u32(body, 0, stringify!($ty))? as i32,
                     })

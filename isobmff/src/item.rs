@@ -1562,7 +1562,6 @@ impl ItemInfoEntry {
         value.map_or(0, Vec::len) + usize::from(self.string_terminated(which))
     }
 
-
     /// The file-delivery extension (`fdel`, §8.11.6.1) this version-1 entry
     /// carries, when its `extension_type` names one.
     pub fn fd_extension(&self) -> Result<Option<FdItemInfoExtension>> {
