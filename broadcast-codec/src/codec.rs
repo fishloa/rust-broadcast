@@ -230,14 +230,72 @@ impl VideoParameters {
     }
 }
 
+/// Where the configuration record that describes a stream lives.
+///
+/// A bijective codec needs one before its first coded access unit: an
+/// `avcC`/`hvcC`/`vvcC` decoder configuration record, an AAC
+/// `AudioSpecificConfig`, a `dOps`, a `dac3` and so on. The seam carries it
+/// either as [`CodecParameters::extradata`] or as an explicit statement that
+/// the encoder emits it in-band, which is what lets a caller tell an encoder
+/// that wrote the record into its first access unit from one that merely had
+/// none to report.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ConfigurationRecord {
+    /// Nothing states a record: the stream describes itself, or the container
+    /// carries none for this codec.
+    #[default]
+    Absent,
+    /// [`CodecParameters::extradata`] carries it.
+    OutOfBand,
+    /// The encoder writes it in-band, in its first access unit.
+    InBand,
+}
+
+impl ConfigurationRecord {
+    /// Label of this form.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::OutOfBand => "out-of-band",
+            Self::InBand => "in-band",
+        }
+    }
+}
+
+broadcast_core::impl_spec_display!(ConfigurationRecord);
+
 /// What a decoder needs before the first packet, or what an encoder reports
 /// once it knows its output.
 ///
-/// `extradata` is the out-of-band configuration in the form the codec's own
-/// container record carries it (for example an `avcC` or `AudioSpecificConfig`
-/// payload); the seam treats it as opaque bytes. `profile` is the codec variant
-/// the stream is in, when the caller knows it; the registry never offers the
-/// stream to an implementation that states it cannot handle that profile.
+/// [`extradata`](Self::extradata) is the out-of-band configuration in the form
+/// the codec's own container record carries it; the seam treats it as opaque
+/// bytes and [`configuration_record`](Self::configuration_record) says where
+/// it comes from. Per [`CodecId`]:
+///
+/// | codec | record |
+/// |---|---|
+/// | [`CodecId::H264`] | an `avcC` `AVCDecoderConfigurationRecord` body, the record `avcC` carries (ISO/IEC 14496-15:2017 §5.3.3.1) |
+/// | [`CodecId::Hevc`] | an `hvcC` `HEVCDecoderConfigurationRecord` body (ISO/IEC 14496-15:2017 §8.3.3.1) |
+/// | [`CodecId::Vvc`] | a `vvcC` `VvcDecoderConfigurationRecord` body (ISO/IEC 14496-15:2017 §10.3) |
+/// | [`CodecId::Av1`] / [`CodecId::Vp9`] | an `av1C` / `vpcC` box body |
+/// | [`CodecId::Aac`] | the `AudioSpecificConfig` payload, not including an `esds` header (ISO/IEC 14496-3 §1.6.2.1) |
+/// | [`CodecId::Ac3`]/[`CodecId::Eac3`]/[`CodecId::Ac4`] | a `dac3`/`dec3`/`dac4` box body |
+/// | [`CodecId::Opus`] | a `dOps` box body (RFC 7845 §5.1) |
+/// | [`CodecId::Flac`] | an `fLaC`/`dfLa` body |
+/// | [`CodecId::Dts`] | a `ddts` box body |
+/// | [`CodecId::MpegH3dAudio`] | an `mhaC` box body |
+/// | [`CodecId::Mpeg2Video`] / [`CodecId::MpegAudio`] | an `esds` body, FullBox header and `ES_Descriptor` included |
+/// | [`CodecId::Pcm`] / [`CodecId::Other`] | none stated; the seam defines no record |
+///
+/// An encoder that writes the record in-band says
+/// [`ConfigurationRecord::InBand`] instead of reporting empty bytes, so a caller
+/// can derive it from the first access unit.
+///
+/// `profile` is the codec variant the stream is in, when the caller knows it;
+/// the registry never offers the stream to an implementation that states it
+/// cannot handle that profile.
 ///
 /// `initial_padding` and `trailing_padding` are the container's gapless trim:
 /// samples per channel a lossy encoder added before the first real sample and
@@ -250,6 +308,7 @@ pub struct CodecParameters {
     codec: CodecId,
     profile: Option<CodecProfile>,
     extradata: Vec<u8>,
+    configuration: ConfigurationRecord,
     time_base: Timescale,
     audio: Option<AudioParameters>,
     video: Option<VideoParameters>,
@@ -266,6 +325,7 @@ impl CodecParameters {
             codec,
             profile: None,
             extradata: Vec::new(),
+            configuration: ConfigurationRecord::Absent,
             time_base,
             audio: None,
             video: None,
@@ -286,10 +346,21 @@ impl CodecParameters {
         Ok(self)
     }
 
-    /// Replace the opaque out-of-band configuration.
+    /// Replace the opaque out-of-band configuration and state that it is
+    /// carried out of band.
     #[must_use]
     pub fn with_extradata(mut self, extradata: Vec<u8>) -> Self {
         self.extradata = extradata;
+        self.configuration = ConfigurationRecord::OutOfBand;
+        self
+    }
+
+    /// State that the encoder writes the configuration record in-band, in its
+    /// first access unit, so [`extradata`](Self::extradata) is empty and the
+    /// caller derives it from that access unit.
+    #[must_use]
+    pub const fn with_in_band_configuration(mut self) -> Self {
+        self.configuration = ConfigurationRecord::InBand;
         self
     }
 
@@ -343,10 +414,18 @@ impl CodecParameters {
         self.profile
     }
 
-    /// Opaque out-of-band configuration.
+    /// Opaque out-of-band configuration, empty unless
+    /// [`configuration_record`](Self::configuration_record) is
+    /// [`ConfigurationRecord::OutOfBand`].
     #[must_use]
     pub fn extradata(&self) -> &[u8] {
         &self.extradata
+    }
+
+    /// Where the configuration record comes from.
+    #[must_use]
+    pub const fn configuration_record(&self) -> ConfigurationRecord {
+        self.configuration
     }
 
     /// Tick rate of every `pts`/`dts` the seam carries for this stream.

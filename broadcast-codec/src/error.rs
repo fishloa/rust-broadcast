@@ -28,6 +28,11 @@ pub enum CodecError {
         /// What is unsupported.
         what: Cow<'static, str>,
     },
+    /// The decoder cannot adopt new parameters; build a fresh one.
+    CannotReconfigure {
+        /// What it cannot reconfigure.
+        what: Cow<'static, str>,
+    },
 }
 
 impl CodecError {
@@ -48,6 +53,12 @@ impl CodecError {
     pub fn unsupported(what: impl Into<Cow<'static, str>>) -> Self {
         Self::Unsupported { what: what.into() }
     }
+
+    /// A [`Self::CannotReconfigure`] for `what`.
+    #[must_use]
+    pub fn cannot_reconfigure(what: impl Into<Cow<'static, str>>) -> Self {
+        Self::CannotReconfigure { what: what.into() }
+    }
 }
 
 impl fmt::Display for CodecError {
@@ -57,6 +68,7 @@ impl fmt::Display for CodecError {
             Self::Refused { what } => write!(f, "codec refused {what}"),
             Self::Failed { what } => write!(f, "codec failed on {what}"),
             Self::Unsupported { what } => write!(f, "codec does not support {what}"),
+            Self::CannotReconfigure { what } => write!(f, "codec cannot reconfigure {what}"),
         }
     }
 }

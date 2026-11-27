@@ -25,6 +25,15 @@ adapter exchanges with the rest of the workspace:
   and trailing padding, [`Packet`] carries per-packet trim, and [`TrimStage`]
   applies it all once; [`Registry::trimmed_decoder`] wraps any decoder that does
   not apply the trim itself.
+- A live source can change its parameters mid-stream. [`Decoder::reconfigure`]
+  takes a new [`CodecParameters`] after the caller has drained, and a decoder
+  that cannot adopt them says so with `CodecError::CannotReconfigure` so the
+  caller can build a fresh one.
+- A codec's configuration record is either out of band in
+  [`CodecParameters::extradata`] or said to be in-band with
+  [`CodecParameters::with_in_band_configuration`];
+  [`CodecParameters::configuration_record`] distinguishes the two from "none
+  stated".
 
 ## Contract
 
@@ -38,7 +47,19 @@ The caller drives both traits the same way:
 
 `receive` returning `Ok(None)` is never an error, and a decoder or encoder may
 hold input for as long as it needs before producing output. `reset` drops all
-held state so the next input starts a new stream.
+held state so the next input starts a new stream. `reconfigure` swaps a
+decoder's parameters mid-stream: the caller drains first, a decoder that still
+holds a frame refuses with `CodecError::Full`, and one that cannot adopt new
+parameters refuses with `CodecError::CannotReconfigure`.
+
+## Configuration records
+
+Every bijective codec needs a record before its first access unit: an `avcC`
+body for H.264, an `AudioSpecificConfig` for AAC, a `dOps` for Opus, an `esds`
+body for MPEG-2 video and MPEG audio, and so on. [`CodecParameters::extradata`]
+carries it in the form the codec's own container record uses, and
+[`CodecParameters::configuration_record`] says whether it is out of band, in
+band (the encoder wrote it into its first access unit), or absent.
 
 Every public struct has private fields, a constructor or builder, and
 accessor methods. Every public struct and enum is `#[non_exhaustive]`.
