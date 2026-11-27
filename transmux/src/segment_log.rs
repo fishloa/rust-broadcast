@@ -217,11 +217,30 @@ impl<'a> TrackSummary<'a> {
     }
 }
 
+/// One track's opening segment of a presentation period: the media time the
+/// segment that follows a discontinuity starts at, in that track's timescale.
+///
+/// DASH renders each group of these as a new `Period`
+/// (ISO/IEC 23009-1 §5.3.2); a Manifest that has no concept of a period, such
+/// as HLS, ignores them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeriodBoundary {
+    /// The segment sequence number that opens the period.
+    pub sequence: u64,
+    /// The track this start belongs to.
+    pub track: TrackId,
+    /// Media decode time of that track's first segment in the period.
+    pub start: u64,
+    /// Ticks per second of [`Self::start`] and the track's segment times.
+    pub timescale: u32,
+}
+
 /// Every track's segment summaries, as a manifest reads them.
 #[derive(Debug, Clone, Default)]
 pub struct SegmentSummaryLog {
     capacity: LogCapacity,
     tracks: Vec<TrackRunLog>,
+    boundaries: Vec<PeriodBoundary>,
 }
 
 impl SegmentSummaryLog {
@@ -235,6 +254,7 @@ impl SegmentSummaryLog {
         Self {
             capacity,
             tracks: Vec::new(),
+            boundaries: Vec::new(),
         }
     }
 
@@ -253,8 +273,28 @@ impl SegmentSummaryLog {
     pub fn push(&mut self, segment: &SegmentOut) -> Result<()> {
         for part in &segment.tracks {
             self.push_part(part, segment.summary.independent)?;
+            if segment.summary.discontinuous {
+                self.push_boundary(PeriodBoundary {
+                    sequence: segment.summary.sequence,
+                    track: part.track,
+                    start: part.start,
+                    timescale: part.timescale,
+                });
+            }
         }
         Ok(())
+    }
+
+    /// Record a presentation-period opening. [`Self::push`] does this itself
+    /// for a discontinuous segment; a caller that feeds parts one at a time
+    /// (`push_part`) records it here.
+    pub fn push_boundary(&mut self, boundary: PeriodBoundary) {
+        self.boundaries.push(boundary);
+    }
+
+    /// The presentation-period openings recorded so far, in the order fed.
+    pub fn period_boundaries(&self) -> &[PeriodBoundary] {
+        &self.boundaries
     }
 
     /// Record one track's share of a finished segment, with the segment's

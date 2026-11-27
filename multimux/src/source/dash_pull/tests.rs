@@ -841,12 +841,19 @@ async fn the_highest_bandwidth_representation_plays_not_the_first_listed() {
 // ---------------------------------------------------------------------------
 
 /// A missing MPD must fail the run, not hang or silently proceed.
+///
+/// The attempt's own retry budget is the default `read_idle` (30 s), which this
+/// test would otherwise sit through: it bounds that budget as its stalling
+/// sibling does, because the property under test is the failure, not the wait.
 #[tokio::test]
 async fn a_missing_mpd_fails_the_attempt() {
     let origin = serve_files(fixture(""), None, None, false).await;
-    let (_, result) = Pull::start(route(origin.url("does-not-exist.mpd")), SkewedClock::new(0))
-        .finish()
-        .await;
+    let route = route(origin.url("does-not-exist.mpd")).with_timeouts(
+        broadcast_common::timeouts::Timeouts::default()
+            .with_connect(Duration::from_secs(5))
+            .with_read_idle(Duration::from_millis(150)),
+    );
+    let (_, result) = Pull::start(route, SkewedClock::new(0)).finish().await;
     assert!(
         matches!(result, Err(crate::error::MultimuxError::Connect { .. })),
         "a 404 MPD must fail the attempt"

@@ -57,6 +57,9 @@ mod degraded_at_track;
 mod demux_baseline;
 #[cfg(all(feature = "flv", feature = "rtp", feature = "ps", feature = "matroska"))]
 mod demux_timing_invariant;
+#[cfg(feature = "std")]
+#[path = "support/discontinuity.rs"]
+mod discontinuity;
 mod display_afd;
 mod display_change;
 mod display_colour;
@@ -151,6 +154,7 @@ mod mpegh_ts;
 #[cfg(feature = "std")]
 #[path = "support/mux_bytes.rs"]
 mod mux_bytes;
+mod mux_output_arms;
 mod nal_keyframe;
 mod opengop_anchor;
 #[cfg(feature = "std")]

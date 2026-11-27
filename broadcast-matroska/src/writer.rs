@@ -465,6 +465,28 @@ impl Writer {
         Ok(writes)
     }
 
+    /// End the open Cluster at this point: every held Block is placed first,
+    /// then the Cluster is emitted, so the next [`push_block`](Self::push_block)
+    /// opens a new one. A caller uses this for a caller-known boundary (a
+    /// container-level timeline discontinuity) that the writer's own span and
+    /// keyframe rules cannot see.
+    pub fn cut_cluster(&mut self) -> Result<Vec<Write>> {
+        let mut writes = Vec::new();
+        while let Some(index) = self.earliest() {
+            let Some(block) = self.pending[index].take() else {
+                break;
+            };
+            if let Some(bytes) = self.place(block)? {
+                writes.push(Write::Append(bytes));
+            }
+        }
+        if !self.cluster.is_empty() {
+            let bytes = self.emit_cluster()?;
+            writes.push(Write::Append(bytes));
+        }
+        Ok(writes)
+    }
+
     /// Flush every pending Block, the open Cluster, `Cues` and the
     /// `Info.Duration` patch.
     pub fn finish(&mut self) -> Result<Vec<Write>> {

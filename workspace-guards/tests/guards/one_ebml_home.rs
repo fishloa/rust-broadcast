@@ -60,6 +60,31 @@ fn array_needle(id: &[u8; 4]) -> String {
     format!("[{}]", parts.join(","))
 }
 
+/// Every banned ID's two spellings, built once per scan: the per-line loop must
+/// not spell them again for each line.
+struct Needles {
+    spellings: Vec<(String, usize)>,
+}
+
+impl Needles {
+    fn new() -> Self {
+        let mut spellings = Vec::new();
+        for (index, id) in EBML_IDS.iter().enumerate() {
+            spellings.push((int_needle(id), index));
+            spellings.push((array_needle(id), index));
+        }
+        Self { spellings }
+    }
+
+    /// The index in [`EBML_IDS`] of the first ID `compact` spells, if any.
+    fn find(&self, compact: &str) -> Option<usize> {
+        self.spellings
+            .iter()
+            .find(|(needle, _)| compact.contains(needle))
+            .map(|(_, index)| *index)
+    }
+}
+
 fn compact_lower(line: &str) -> String {
     line.chars()
         .filter(|c| !c.is_whitespace() && *c != '_')
@@ -68,16 +93,17 @@ fn compact_lower(line: &str) -> String {
 }
 
 fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
+    let needles = Needles::new();
     let mut violations = Vec::new();
     let mut used = vec![false; c.allow.len()];
     for (rel, text) in files {
         let source = workspace_guards::scan::non_test_source_blanked(text);
         let masked = workspace_guards::scan::blank_comments_and_strings(&source);
         for (index, line) in masked.lines().enumerate() {
-            let compact = compact_lower(line);
-            let Some(needle) = EBML_IDS.iter().find(|id| {
-                compact.contains(&int_needle(id)) || compact.contains(&array_needle(id))
-            }) else {
+            if !line.contains("0x") && !line.contains("0X") {
+                continue;
+            }
+            let Some(id) = needles.find(&compact_lower(line)) else {
                 continue;
             };
             let original = text.lines().nth(index).unwrap_or("");
@@ -93,7 +119,7 @@ fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
                     "{}: {rel}:{}: EBML element ID {:02X?} spelled outside broadcast-matroska: {trimmed}",
                     c.name,
                     index + 1,
-                    needle
+                    EBML_IDS[id]
                 ));
             }
         }

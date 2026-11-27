@@ -21,7 +21,7 @@ use broadcast_client::ErrorKind;
 use broadcast_common::Timestamp;
 use futures_util::StreamExt;
 use media_plane::ingress::HandshakePolicy;
-use media_plane::trunk::{SampleCursorItem, TrunkConfig};
+use media_plane::trunk::TrunkConfig;
 use multimux::MultimuxError;
 use multimux::RouteHandle;
 use multimux::source::hls_pull::{HlsPullRoute, run_hls_pull};
@@ -393,16 +393,15 @@ async fn ingest(
         .expect("a finished ingest must have published a trunk");
     let mut cursor = trunk.subscribe_from_backlog();
     let mut samples: Fingerprint = Vec::new();
-    while let Some(item) = cursor.poll() {
-        if let SampleCursorItem::Timed { track_id, sample } = item {
-            samples.push((
-                format!("{track_id:?}"),
-                sample.data.to_vec(),
-                sample.timing.and_then(|t| t.pts()),
-                sample.timing.and_then(|t| t.dts()),
-            ));
-        }
-    }
+    let drained = crate::support::trunk_drain::drain_now(&mut cursor, |track_id, sample| {
+        samples.push((
+            format!("{track_id:?}"),
+            sample.data.to_vec(),
+            sample.timing.and_then(|t| t.pts()),
+            sample.timing.and_then(|t| t.dts()),
+        ));
+    });
+    drained.assert_lossless("the key-rotation fingerprint");
     samples.sort();
     (result, samples)
 }

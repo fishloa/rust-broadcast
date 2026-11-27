@@ -483,6 +483,58 @@ impl Stage for GapStage {
     }
 }
 
+/// Continue a track's timeline across a [`MuxInput::Discontinuity`] in an
+/// output that has no discontinuity marker.
+///
+/// The first value after the break is placed where the output's own timeline
+/// already ended — the last value it wrote plus that value's duration — and
+/// every later value keeps its spacing from the input's own timeline. This is
+/// the mapping FLV/RTMP use (FLV has one non-decreasing millisecond clock and
+/// no break marker), and the one Smooth and Matroska use for a break that moves
+/// **backwards**, where a jump cannot be stated because the format's timeline
+/// cannot go back.
+///
+/// A forward break needs no offset: its values already lie after `last_end`, so
+/// the jump is stated as given. [`backwards`](Self::backwards) applies that
+/// rule; [`continue_from`](Self::continue_from) is the unconditional
+/// continuation FLV writes even for a forward jump.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct BreakRebase {
+    offset: i64,
+}
+
+impl BreakRebase {
+    /// No break has been applied.
+    pub(crate) const NONE: Self = Self { offset: 0 };
+
+    /// `last_end` minus `natural`: the one arithmetic of continuing a timeline.
+    fn between(last_end: i64, natural: i64) -> i64 {
+        last_end.saturating_sub(natural)
+    }
+
+    /// Continue `natural` from `last_end`, whatever direction the break moved.
+    pub(crate) fn continue_from(last_end: i64, natural: i64) -> Self {
+        Self {
+            offset: Self::between(last_end, natural),
+        }
+    }
+
+    /// Continue `natural` from `last_end` only when the break moved backwards;
+    /// a forward break is left alone so its jump stays stated.
+    pub(crate) fn backwards(last_end: i64, natural: i64) -> Self {
+        if natural < last_end {
+            Self::continue_from(last_end, natural)
+        } else {
+            Self::NONE
+        }
+    }
+
+    /// Map a value on the input's own timeline onto the continuing one.
+    pub(crate) fn apply(self, natural: i64) -> i64 {
+        natural.saturating_add(self.offset)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -796,5 +848,38 @@ mod tests {
             .feed(timed(track, 0, 100), Timestamp::ZERO)
             .expect_err("four bytes exceed a two-byte cap");
         assert_eq!(err, Error::RebaseWindowOverflow { cap: 2 });
+    }
+
+    #[test]
+    fn a_backwards_break_continues_from_the_output_end() {
+        let rebase = BreakRebase::backwards(4_000, 1_000);
+        assert_eq!(rebase.apply(1_000), 4_000, "the seam lands at the end");
+        assert_eq!(
+            rebase.apply(1_040),
+            4_040,
+            "later values keep their own spacing"
+        );
+    }
+
+    #[test]
+    fn a_forward_break_is_stated_not_rebased() {
+        let rebase = BreakRebase::backwards(4_000, 7_000);
+        assert_eq!(rebase, BreakRebase::NONE);
+        assert_eq!(
+            rebase.apply(7_000),
+            7_000,
+            "the forward jump is written as given"
+        );
+    }
+
+    #[test]
+    fn the_unconditional_mapping_also_continues_a_forward_break() {
+        let rebase = BreakRebase::continue_from(4_000, 7_000);
+        assert_eq!(
+            rebase.apply(0),
+            -3_000,
+            "FLV states every break by continuation"
+        );
+        assert_eq!(rebase.apply(7_000), 4_000);
     }
 }

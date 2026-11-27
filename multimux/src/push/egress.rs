@@ -320,6 +320,13 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
                 );
                 return Ok(());
             }
+            SampleCursorItem::Discontinuity => {
+                let Some(muxer) = self.transport.media_muxer() else {
+                    return Err(SendMediaError::Mux(MuxError::NoMuxer));
+                };
+                self.outbound.extend(muxer.discontinuity()?);
+                return Ok(());
+            }
             // `#[non_exhaustive]`: a future cursor item this adapter has no
             // reaction to yet is treated as nothing to encode this call,
             // exactly like `crate::push::drive_push`'s own `_ => {}` arm.
@@ -397,6 +404,10 @@ mod tests {
 
         fn flush(&mut self) -> Result<Vec<Bytes>, SendMediaError> {
             Ok(Vec::new())
+        }
+
+        fn discontinuity(&mut self) -> Result<Vec<Bytes>, SendMediaError> {
+            Ok(vec![Bytes::from_static(b"d")])
         }
     }
 
@@ -609,6 +620,23 @@ mod tests {
         }
         // Still carrying only the originally-accepted selection.
         assert_eq!(egress.selected_tracks().len(), 1);
+    }
+
+    /// A cursor discontinuity is the source timeline breaking before the next
+    /// sample: it must reach the connection's own muxer, which frames the
+    /// transport's in-stream marker, and its messages must be sent.
+    #[test]
+    fn a_cursor_discontinuity_reaches_the_muxer() {
+        let mut egress = PushTransportEgress::new(FakeTransport::default());
+        egress.negotiate(&[avc_spec(TrackId::new(1))]);
+        egress
+            .send(&SampleCursorItem::Discontinuity)
+            .expect("the muxer accepts a break");
+        assert_eq!(
+            PushEgress::poll_transmit(&mut egress).as_deref(),
+            Some(&b"d"[..]),
+            "the muxer's discontinuity marker must be sent to the peer"
+        );
     }
 
     /// `send` for a track outside the negotiated selection is a no-op (not

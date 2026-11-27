@@ -38,7 +38,8 @@ pub enum MuxInput {
     /// `#EXT-X-DISCONTINUITY` on the next cut, the next fragment's
     /// `SegmentSummary`, or the MPEG-2 TS adaptation-field
     /// `discontinuity_indicator` on the next packet of each affected
-    /// elementary PID. One that cannot refuses it with
+    /// elementary PID, or an emitted [`MuxOutput::Discontinuity`] when only the
+    /// manifest (an LL-DASH `Period`) can state it. One that cannot refuses it with
     /// [`Error::UnsupportedFeature`](crate::Error::UnsupportedFeature) rather
     /// than returning `Ok(())` and dropping the mark.
     Discontinuity {
@@ -111,6 +112,15 @@ pub enum MuxOutput {
     Init(Bytes),
     /// One finished media segment and its summary.
     Segment(Box<SegmentOut>),
+    /// The media timeline breaks before the next output unit.
+    ///
+    /// A muxer whose format has no in-stream marker (LL-DASH chunks: the break
+    /// is a new `Period` in the manifest) emits this so its caller renders the
+    /// break instead of the stage silently dropping [`MuxInput::Discontinuity`].
+    Discontinuity {
+        /// The track the break applies to; `None` for all tracks.
+        track: Option<TrackId>,
+    },
     /// A rendered playlist or manifest.
     Text(String),
 }

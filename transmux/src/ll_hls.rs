@@ -34,6 +34,18 @@
 //! [`broadcast_hls::MediaPlaylist`] when its
 //! [`low_latency`](broadcast_hls::MediaPlaylist::low_latency) config is set;
 //! see the `broadcast-hls` crate for the exact RFC 8216bis syntax and sections.
+//!
+//! # Timeline discontinuity
+//!
+//! [`MuxInput::Discontinuity`] closes the open segment and its parts at the
+//! break. The segment that follows carries [`SegmentInfo::discontinuous`], so
+//! the caller renders `#EXT-X-DISCONTINUITY` before it and advances
+//! `#EXT-X-DISCONTINUITY-SEQUENCE` when a marked segment leaves the window
+//! (RFC 8216 §4.3.2.3 / §4.3.3.3; the transcription is
+//! `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`) — the tags
+//! themselves are rendered by `broadcast-hls`, never here. A break with no segment open marks the next
+//! one, so a break as the first input is stated too; a new `#EXT-X-MAP`
+//! follows from the caller's own init-change detection.
 
 use crate::TrackId;
 use crate::units::ROUNDING_DIVISOR;
@@ -118,6 +130,9 @@ pub struct SegmentInfo {
     pub segment_seq: u32,
     /// Number of parts that made up this segment.
     pub part_count: u32,
+    /// The segment opens a new media timeline: a caller renders
+    /// `#EXT-X-DISCONTINUITY` before it (RFC 8216 §4.3.2.3).
+    pub discontinuous: bool,
 }
 
 impl SegmentInfo {
@@ -129,6 +144,7 @@ impl SegmentInfo {
             duration,
             segment_seq,
             part_count: 0,
+            discontinuous: false,
         }
     }
 
@@ -136,6 +152,13 @@ impl SegmentInfo {
     #[must_use]
     pub fn with_part_count(mut self, part_count: u32) -> Self {
         self.part_count = part_count;
+        self
+    }
+
+    /// Mark this segment as opening a new media timeline.
+    #[must_use]
+    pub fn with_discontinuous(mut self, discontinuous: bool) -> Self {
+        self.discontinuous = discontinuous;
         self
     }
 }
@@ -391,6 +414,9 @@ pub struct LlHlsSegmenter {
     inc_next_part: usize,
     /// Parts actually emitted for the open incremental segment.
     inc_part_count: u32,
+    /// A discontinuity closed the open segment; the next one it emits is
+    /// marked [`SegmentInfo::discontinuous`].
+    pending_discontinuity: bool,
 }
 
 impl LlHlsSegmenter {
@@ -504,6 +530,7 @@ impl LlHlsSegmenter {
             inc_next_part: 0,
             inc_part_count: 0,
             part_deferred: false,
+            pending_discontinuity: false,
         })
     }
 
@@ -1170,6 +1197,7 @@ impl LlHlsSegmenter {
             duration,
             segment_seq,
             part_count,
+            discontinuous: core::mem::take(&mut self.pending_discontinuity),
         }));
 
         for (t, &split) in self.tracks.iter_mut().zip(splits) {
@@ -1330,6 +1358,7 @@ impl LlHlsSegmenter {
             duration: seg_duration,
             segment_seq: self.current_segment,
             part_count: self.next_part_index,
+            discontinuous: core::mem::take(&mut self.pending_discontinuity),
         }));
         if self.record_cuts {
             let cuts = core::mem::take(&mut self.current_cuts);
@@ -1615,9 +1644,23 @@ impl Stage for LlHlsSegmenter {
     fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
         match input {
             MuxInput::Sample { track, sample } => self.push(track, sample),
-            // A part carries its own `tfdt`; a decode-time jump needs no
-            // separate signalling in the LL-HLS part stream.
-            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Discontinuity { .. } => {
+                // Close the open segment and its parts now: the break belongs
+                // between two segments, and the next one states it with the
+                // summary's discontinuous flag (rendered by `broadcast-hls`).
+                self.flush()?;
+                // Start the new segment's clock at its own first sample: on a
+                // duration-less stream the jump must not be counted as one
+                // long segment (or part), and the emitted `tfdt`s stay
+                // contiguous.
+                self.anchor_clock = MediaClock::new();
+                for track in &mut self.tracks {
+                    track.part_clock = MediaClock::new();
+                    track.seg_clock = MediaClock::new();
+                }
+                self.pending_discontinuity = true;
+                Ok(())
+            }
             MuxInput::Flush => self.flush(),
             MuxInput::Track(_) => Err(Error::InvalidInput(
                 "an LlHlsSegmenter's track set is fixed at construction; start a new \
@@ -1814,5 +1857,103 @@ mod ticks_tests {
     fn ticks_to_i64_saturates_at_the_i64_bound() {
         assert_eq!(ticks_to_i64(u64::MAX), i64::MAX);
         assert_eq!(ticks_to_i64(42), 42);
+    }
+}
+
+#[cfg(test)]
+mod discontinuity_tests {
+    use super::*;
+    use crate::TrackId;
+    use crate::pipeline::CodecConfig;
+    use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+
+    fn spec() -> TrackSpec {
+        let record = AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: 66,
+            profile_compatibility: 0,
+            level_indication: 30,
+            length_size_minus_one: 3,
+            sps: alloc::vec![AvcSps(alloc::vec![0x67, 0x42, 0xc0, 0x1e])],
+            pps: alloc::vec![AvcPps(alloc::vec![0x68, 0xce, 0x3c, 0x80])],
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: alloc::vec![],
+        };
+        TrackSpec::new(
+            TrackId::new(1),
+            Timescale::try_new(1000).expect("non-zero timescale"),
+            CodecConfig::Avc {
+                config: AVCConfigurationBox::new(record),
+                width: 16,
+                height: 16,
+            },
+        )
+    }
+
+    fn sample(dts: i64, sync: bool) -> Sample {
+        Sample::new(alloc::vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
+            .expect("valid timing")
+    }
+
+    fn segmenter() -> LlHlsSegmenter {
+        LlHlsSegmenter::with_part_target(
+            alloc::vec![spec()],
+            Timescale::try_new(1000).expect("non-zero timescale"),
+            Duration::from_secs(1),
+            Duration::from_millis(500),
+        )
+        .expect("segmenter")
+    }
+
+    fn segments(seg: &mut LlHlsSegmenter) -> Vec<SegmentInfo> {
+        let mut out = Vec::new();
+        while let Some(item) = seg.poll() {
+            if let LlHlsStageOutput::Segment(segment) = item {
+                out.push(segment);
+            }
+        }
+        out
+    }
+
+    /// Two breaks inside one target duration mark two consecutive segments:
+    /// the first close takes the flag set before it, the second marks the next.
+    #[test]
+    fn two_breaks_in_one_target_duration_mark_consecutive_segments() {
+        let mut seg = segmenter();
+        let id = TrackId::new(1);
+        seg.push(id, sample(0, true)).expect("s0");
+        seg.push(id, sample(1000, true)).expect("s1 cuts segment 0");
+        assert!(!segments(&mut seg)[0].discontinuous);
+        seg.feed(MuxInput::Discontinuity { track: None }, Timestamp::ZERO)
+            .expect("break 1");
+        seg.push(id, sample(10_000, true)).expect("s2");
+        seg.feed(MuxInput::Discontinuity { track: None }, Timestamp::ZERO)
+            .expect("break 2, inside the same target span");
+        seg.push(id, sample(10_500, false)).expect("s3");
+        seg.push(id, sample(11_000, true))
+            .expect("s4 cuts segment 2");
+        let cut = segments(&mut seg);
+        assert_eq!(cut.len(), 3, "three segments closed so far");
+        assert!(
+            !cut[0].discontinuous,
+            "the segment before either break is continuous"
+        );
+        assert!(
+            cut[1].discontinuous,
+            "the segment opened after break 1 carries its mark"
+        );
+        assert!(
+            cut[2].discontinuous,
+            "the segment opened after break 2 carries the second mark,              though both breaks fall inside one target duration"
+        );
+        seg.finish().expect("flush the trailing segment");
+        let trailing = segments(&mut seg);
+        assert_eq!(trailing.len(), 1);
+        assert!(
+            !trailing[0].discontinuous,
+            "the break marks the segment after it, not every later one"
+        );
     }
 }

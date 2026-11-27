@@ -23,6 +23,14 @@
 //! chunk stream in `rtmp-runtime` and feeds the emitted FLV tags to
 //! [`StreamingFlvDemux`](crate::flv_stream::StreamingFlvDemux).
 //!
+//! # Timeline discontinuity
+//!
+//! RTMP inherits FLV's one monotonic millisecond message timestamp and has no
+//! discontinuity marker, so [`MuxInput::Discontinuity`] takes the FLV
+//! pipeline's rebase: the first message after the break continues from the
+//! last written timestamp plus the triggering track's last duration, and later
+//! messages keep their spacing. See [`crate::flv`]'s module docs.
+//!
 //! `no_std` + `alloc`.
 
 use alloc::collections::VecDeque;
@@ -305,7 +313,10 @@ impl Stage for RtmpMuxStage {
                 let tags = self.stream.push(track, sample).map_err(RtmpFlvError::Flv)?;
                 self.push_tags(&tags)
             }
-            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Discontinuity { .. } => {
+                let tags = self.stream.discontinuity().map_err(RtmpFlvError::Flv)?;
+                self.push_tags(&tags)
+            }
             MuxInput::Flush => {
                 let tags = self.stream.flush().map_err(RtmpFlvError::Flv)?;
                 self.push_tags(&tags)
