@@ -429,8 +429,9 @@ fn a_nine_byte_header_alone_is_a_tag_short_read() {
 fn a_bad_signature_is_reported_with_its_bytes() {
     let mut bytes = flv_prefix();
     bytes[..3].copy_from_slice(b"XYZ");
+    let mut demux = transmux::StreamingFlvDemux::strict();
     assert_eq!(
-        test_harness::collect::media_from_flv(&bytes).unwrap_err(),
+        demux.feed(&bytes).unwrap_err(),
         FlvError::BadSignature(*b"XYZ")
     );
 }
@@ -453,8 +454,9 @@ fn a_header_data_offset_past_the_buffer_is_a_short_read() {
 fn a_header_data_offset_below_the_header_is_named() {
     let mut bytes = flv_prefix();
     bytes[5..9].copy_from_slice(&4u32.to_be_bytes());
+    let mut demux = transmux::StreamingFlvDemux::strict();
     assert_eq!(
-        test_harness::collect::media_from_flv(&bytes).unwrap_err(),
+        demux.feed(&bytes).unwrap_err(),
         FlvError::Header(rtmp_runtime::RtmpError::Malformed {
             what: "FLV header DataOffset"
         })

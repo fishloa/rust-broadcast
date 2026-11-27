@@ -129,6 +129,9 @@ pub struct Collected {
     /// Gapless-signal disagreements the demuxer reported:
     /// `(track, used signal, ignored signal)`.
     pub gapless_conflicts: Vec<(TrackId, GaplessSignal, GaplessSignal)>,
+    /// The damage reports the demuxer published, in order
+    /// (`broadcast_core::damage::Damage`).
+    pub damages: Vec<broadcast_core::damage::Damage>,
 }
 
 impl Collected {
@@ -142,6 +145,7 @@ impl Collected {
             degraded: Vec::new(),
             degraded_at: Vec::new(),
             gapless_conflicts: Vec::new(),
+            damages: Vec::new(),
         }
     }
 
@@ -329,6 +333,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
     let mut skipped = Vec::new();
     let mut degraded = Vec::new();
     let mut gapless_conflicts = Vec::new();
+    let mut damages = Vec::new();
     for event in events {
         match event {
             DemuxEvent::TrackAdded(spec) => {
@@ -365,6 +370,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
             DemuxEvent::DamagedSpan { offset, .. } => {
                 degraded.push(InputDegradation::MalformedUnit { position: offset })
             }
+            DemuxEvent::Damage(damage) => damages.push(damage),
             _ => {}
         }
     }
@@ -375,6 +381,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
     media.skipped = skipped;
     media.degraded = degraded;
     media.gapless_conflicts = gapless_conflicts;
+    media.damages = damages;
     media
 }
 
@@ -507,8 +514,18 @@ fn media_from_stage(
 /// A whole small fixture in memory is fine **here only**: this crate is a test
 /// harness. The stage itself never holds the input.
 pub fn media_from_ps(bytes: &[u8], chunk: usize) -> Result<Collected, transmux::Error> {
+    media_from_ps_with_policy(bytes, chunk, broadcast_core::damage::DamagePolicy::new())
+}
+
+/// [`media_from_ps`] with the caller's damage policy, so a test can drive the
+/// fail-on-damage path.
+pub fn media_from_ps_with_policy(
+    bytes: &[u8],
+    chunk: usize,
+    policy: broadcast_core::damage::DamagePolicy,
+) -> Result<Collected, transmux::Error> {
     let chunk = chunk.max(1);
-    let mut demux = transmux::StreamingPsDemux::new();
+    let mut demux = transmux::StreamingPsDemux::new().with_damage_policy(policy);
     for piece in bytes.chunks(chunk) {
         demux.feed(piece, broadcast_common::stage::Timestamp::ZERO)?;
     }
@@ -545,9 +562,26 @@ pub fn media_from_ts_with_afd(
     chunk: usize,
     afd: AfdPersistence,
 ) -> Result<Collected, transmux::Error> {
+    media_from_ts_with_policy(
+        bytes,
+        chunk,
+        afd,
+        broadcast_core::damage::DamagePolicy::new(),
+    )
+}
+
+/// [`media_from_ts_with_afd`] with the caller's damage policy, so a test can
+/// drive the fail-on-damage path.
+pub fn media_from_ts_with_policy(
+    bytes: &[u8],
+    chunk: usize,
+    afd: AfdPersistence,
+    policy: broadcast_core::damage::DamagePolicy,
+) -> Result<Collected, transmux::Error> {
     let mut demux = StreamingTsDemux::new()
         .with_afd_persistence(afd)
-        .with_strict_pmt_order();
+        .with_strict_pmt_order()
+        .with_damage_policy(policy);
     for piece in bytes.chunks(chunk.max(1)) {
         demux.feed(piece)?;
     }
@@ -558,6 +592,7 @@ pub fn media_from_ts_with_afd(
     let mut pcr: Vec<PcrSample> = Vec::new();
     let mut degraded: Vec<InputDegradation> = Vec::new();
     let mut degraded_at: Vec<DegradationRecord> = Vec::new();
+    let mut damages = Vec::new();
     while let Some(event) = demux.poll_event() {
         match event {
             DemuxEvent::TrackAdded(spec) => {
@@ -603,6 +638,7 @@ pub fn media_from_ts_with_afd(
                 degraded.push(kind);
                 degraded_at.push(DegradationRecord::new(kind, track, provenance));
             }
+            DemuxEvent::Damage(damage) => damages.push(damage),
             DemuxEvent::TrackRemoved { .. }
             | DemuxEvent::TrackAbandoned { .. }
             | DemuxEvent::Discontinuity { .. }
@@ -622,6 +658,7 @@ pub fn media_from_ts_with_afd(
     let mut media = Collected::new(tracks, transmux::rtp::VIDEO_CLOCK_TIMESCALE).with_pcr(pcr);
     media.degraded = degraded;
     media.degraded_at = degraded_at;
+    media.damages = damages;
     Ok(media)
 }
 
@@ -648,7 +685,17 @@ pub fn media_from_flv_chunked(
     bytes: &[u8],
     chunk: usize,
 ) -> Result<Collected, transmux::flv::FlvError> {
-    let mut demux = StreamingFlvDemux::new();
+    media_from_flv_with_policy(bytes, chunk, broadcast_core::damage::DamagePolicy::new())
+}
+
+/// [`media_from_flv_chunked`] with the caller's damage policy, so a test can
+/// drive the fail-on-damage path.
+pub fn media_from_flv_with_policy(
+    bytes: &[u8],
+    chunk: usize,
+    policy: broadcast_core::damage::DamagePolicy,
+) -> Result<Collected, transmux::flv::FlvError> {
+    let mut demux = StreamingFlvDemux::new().with_damage_policy(policy);
     for piece in bytes.chunks(chunk.max(1)) {
         demux.feed(piece)?;
     }
@@ -1205,13 +1252,24 @@ pub fn plan_from_media(media: &Collected) -> Result<isobmff::plan::OwnedPlan, tr
 /// A whole small fixture in memory is fine **here only**: this crate is a test
 /// harness. The stage itself never holds the input.
 pub fn media_from_matroska(bytes: &[u8], mode: CollectMode) -> Result<Collected, transmux::Error> {
+    media_from_matroska_with_policy(bytes, mode, broadcast_core::damage::DamagePolicy::new())
+}
+
+/// [`media_from_matroska`] with the caller's damage policy, so a test can drive
+/// the fail-on-damage path.
+pub fn media_from_matroska_with_policy(
+    bytes: &[u8],
+    mode: CollectMode,
+    policy: broadcast_core::damage::DamagePolicy,
+) -> Result<Collected, transmux::Error> {
     use transmux::matroska_demux::{MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
     let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     let config = MatroskaDemuxConfig::default().with_total_len(Some(total_len));
     let mut demux = match mode {
         CollectMode::Seekable => MatroskaDemux::seekable(config),
         CollectMode::Sequential { .. } => MatroskaDemux::sequential(config),
-    };
+    }
+    .with_damage_policy(policy);
     match mode {
         CollectMode::Seekable => loop {
             let demand = demux.demand();
@@ -1750,6 +1808,7 @@ mod equality_tests {
             degraded: a_degraded,
             degraded_at: a_degraded_at,
             gapless_conflicts: a_conflicts,
+            damages: a_damages,
         } = a;
         let Collected {
             tracks: b_tracks,
@@ -1759,6 +1818,7 @@ mod equality_tests {
             degraded: b_degraded,
             degraded_at: b_degraded_at,
             gapless_conflicts: b_conflicts,
+            damages: b_damages,
         } = b;
         a_tracks.len() == b_tracks.len()
             && a_tracks.iter().zip(b_tracks).all(|(x, y)| same_track(x, y))
@@ -1768,6 +1828,7 @@ mod equality_tests {
             && a_degraded == b_degraded
             && a_degraded_at == b_degraded_at
             && a_conflicts == b_conflicts
+            && a_damages == b_damages
     }
 
     #[test]
@@ -1806,6 +1867,14 @@ mod equality_tests {
         let mut m = base.clone();
         m.degraded_at[0].track = None;
         assert!(!same(&base, &m), "degraded_at");
+
+        let mut m = base.clone();
+        m.damages.push(broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::TrackDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "track",
+        ));
+        assert!(!same(&base, &m), "damages");
     }
 
     #[test]

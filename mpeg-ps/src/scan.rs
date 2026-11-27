@@ -463,6 +463,13 @@ fn pes_step<'a>(avail: &'a [u8], limits: &PsLimits, finished: bool) -> Result<Pe
             });
         }
         if avail.len() < total {
+            // A declared length that runs past the bytes present *and* past a
+            // pack boundary in them is a broken length field: the rest of the
+            // pack would be swallowed. Resynchronise from this unit's own
+            // first byte instead of waiting for bytes that will never come.
+            if find_pack_start(&avail[PREFIX_LEN..]).is_some() {
+                return Ok(PesStep::Truncated);
+            }
             return Ok(PesStep::Wait);
         }
         // A complete PES packet is always followed by another start code
@@ -610,6 +617,38 @@ mod tests {
                 EventKind::Pack,
                 EventKind::End
             ]
+        );
+    }
+
+    /// A `PES_packet_length` declaring the 16-bit maximum with only its own
+    /// header present must not make the scanner wait for (or reserve) the
+    /// declared body: a pack boundary already in the supplied bytes is the
+    /// evidence that the length is broken, so the unit resyncs immediately
+    /// and the buffer stays the size of what was fed.
+    #[test]
+    fn a_maximum_pes_length_resyncs_at_the_pack_already_present() {
+        let mut stream = PACK.to_vec();
+        let mut pes_header = vec![0x00, 0x00, 0x01, 0xE0, 0xFF, 0xFF];
+        pes_header.extend_from_slice(&[0x80, 0x80, 0x05, 0x21, 0x00, 0x01, 0x00, 0x01]);
+        stream.extend_from_slice(&pes_header);
+        stream.extend_from_slice(&PACK);
+        let fed = stream.len();
+
+        let mut scanner = PsScanner::new(PsLimits::new());
+        scanner.feed(&stream);
+        let events = drain(&mut scanner).unwrap();
+        assert_eq!(
+            events,
+            vec![
+                EventKind::Pack,
+                EventKind::Resync(pes_header.len() as u64),
+                EventKind::Pack,
+            ],
+            "the declared body is not waited for"
+        );
+        assert!(
+            scanner.buffered_len() <= fed,
+            "the buffer is bounded by the bytes supplied, not the declared length"
         );
     }
 

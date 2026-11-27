@@ -46,9 +46,12 @@ pub const READERS: &[Reader] = &[
         status: Status::Pending(4191),
         reports: &["Warning", "ImageFinding", "BrandFinding"],
     },
+    // Lane rz1 converted the Matroska/WebM reader: `Warning` converts to a
+    // `Damage` (`impl From<Warning>`), and `MatroskaDemux` republishes every
+    // one as `DemuxEvent::Damage` beside its own finding channel.
     Reader {
         name: "broadcast-matroska",
-        status: Status::Pending(4191),
+        status: Status::Converted,
         reports: &["Warning"],
     },
 ];

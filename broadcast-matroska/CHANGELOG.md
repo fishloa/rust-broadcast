@@ -27,10 +27,24 @@ All notable changes to this crate are documented here. The format follows
   `BlockStep` literal must set it.
 
 ### Changed
+- In `Mode::Permissive` a damaged file keeps playing: an oversized element
+  size and an unknown-size element where the format does not allow it are
+  reported and skipped instead of failing the file; a Block or Timestamp
+  directly under the Segment (a Cluster whose size field was zero or short)
+  continues the Cluster in force; a corrupt `TrackEntry` whose own header
+  will not parse ends the `Tracks` parse but keeps the entries before it; a
+  failed Cues side read (including one past the end of a truncated input)
+  resumes the main walk; and a bad `Cluster/Timestamp` payload is reported and
+  skipped. `finish` on a truncated side read no longer loses the tracks.
+
+### Changed
 
 - In `Mode::Permissive` the reader types each `TrackEntry` on its own: a
   corrupt entry is reported and skipped while the other tracks are still
-  announced (a strict reader still fails the whole `Tracks` master).
+  announced (a strict reader still fails the whole `Tracks` master). An entry
+  whose *own* children contain a corrupt run (a damaged numeric scalar such as
+  a `CodecDelay` or `SeekPreRoll`) is re-typed child by child: the run is
+  reported and dropped, and the track is announced with the fields around it.
 - A malformed or out-of-range `Info.TimestampScale` is reported and the
   default scale is kept instead of failing the file in permissive mode.
 - An element whose id is not a known Segment/Cluster child, or whose declared
@@ -39,6 +53,10 @@ All notable changes to this crate are documented here. The format follows
   second report for the same damage.
 
 ### Added
+
+- `Warning` converts into `broadcast_core::damage::Damage` (`impl From`), so a
+  consumer above this crate speaks the workspace's one damage vocabulary
+  instead of translating the reader's own report enum.
 
 - `writer::Writer::cut_cluster`: ends the open `Cluster` at a caller-known
   boundary (a container-level timeline discontinuity), flushing held Blocks

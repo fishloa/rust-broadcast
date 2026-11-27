@@ -1981,6 +1981,25 @@ mod tests {
         assert_eq!(out.as_ref(), &section[..]);
     }
 
+    /// A 12-bit `section_length` declaring the maximum may not make the
+    /// reassembler hold or reserve more than the bytes actually fed: the
+    /// buffer grows one fed payload at a time, capped by `MAX_SECTION_SIZE`.
+    #[test]
+    fn a_maximum_section_length_holds_only_the_bytes_supplied() {
+        // table_id, section_syntax_indicator=1, section_length=0xFFF.
+        let head = [0x00u8, 0xB0, 0xFF, 0x00, 0x00];
+        let payload = build_pusi_payload(0, &[], &head);
+        let mut reasm = SectionReassembler::default();
+        reasm.feed(&payload, true);
+        assert_eq!(reasm.buf.len(), head.len(), "only the bytes fed");
+        assert!(reasm.pop_section().is_none(), "the section is incomplete");
+
+        let continuation = [0xAAu8; 16];
+        reasm.feed(&continuation, false);
+        assert_eq!(reasm.buf.len(), head.len() + continuation.len());
+        assert!(reasm.buf.len() <= MAX_SECTION_SIZE);
+    }
+
     #[test]
     fn reassembler_extracts_all_concatenated_sections_in_one_payload() {
         // Issue #29: a single PUSI payload packing three complete short
