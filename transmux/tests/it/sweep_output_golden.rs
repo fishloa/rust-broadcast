@@ -210,13 +210,15 @@ fn drop_debug_field(s: &str, field: &str) -> String {
     out
 }
 
-/// `Sample::trim` and `TrackSpec::padding` are the IR's gapless trim. The
-/// goldens were captured before either field existed, and every hash must keep
-/// proving that the demuxed bytes and timing are unchanged; the trim itself is
-/// pinned value by value in `gapless.rs`.
+/// `Sample::trim` and `TrackSpec::padding` are the IR's gapless trim, and
+/// `TrackSpec::pre_roll` its decoder pre-roll requirement. The goldens were
+/// captured before those fields existed, and every hash must keep proving that
+/// the demuxed bytes and timing are unchanged; the values themselves are
+/// pinned field by field in `gapless.rs`.
 fn no_trim_debug(s: &str) -> String {
     let s = drop_debug_field(s, ", trim: ");
-    drop_debug_field(&s, ", padding: ")
+    let s = drop_debug_field(&s, ", padding: ");
+    drop_debug_field(&s, ", pre_roll: ")
 }
 
 /// `CodecConfig::Data` used to render its TS fields directly (`Data {

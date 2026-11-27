@@ -6,7 +6,7 @@
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
-use super::{CodecConfig, DisplayGeometry, GaplessTrim, ProgramNumber, TrackId};
+use super::{CodecConfig, DecoderPreRoll, DisplayGeometry, GaplessTrim, ProgramNumber, TrackId};
 use broadcast_bitstream::HdrStaticMetadata;
 use isobmff::dovi::DoviDecoderConfigurationRecord;
 
@@ -63,6 +63,10 @@ pub struct TrackSpec {
     /// when the container states it, the end padding. Defaults to
     /// [`GaplessTrim::NONE`] ("none stated"); see [`TrackSpec::with_padding`].
     pub padding: GaplessTrim,
+    /// The samples a decoder must decode after a seek before its output is
+    /// correct, when the container states a pre-roll requirement. This is not
+    /// a trim; see [`TrackSpec::with_pre_roll`].
+    pub pre_roll: Option<DecoderPreRoll>,
 }
 
 impl core::fmt::Debug for TrackSpec {
@@ -77,6 +81,9 @@ impl core::fmt::Debug for TrackSpec {
             .field("display", &self.display);
         if !self.padding.is_none() {
             d.field("padding", &self.padding);
+        }
+        if let Some(pre_roll) = &self.pre_roll {
+            d.field("pre_roll", pre_roll);
         }
         if let Some(hdr) = &self.hdr {
             d.field("hdr", hdr);
@@ -120,6 +127,7 @@ impl TrackSpec {
             hdr10plus: false,
             protection: None,
             padding: GaplessTrim::NONE,
+            pre_roll: None,
         }
     }
 
@@ -177,6 +185,12 @@ impl TrackSpec {
     /// pass [`GaplessTrim::NONE`] for a track that states none.
     pub fn with_padding(mut self, padding: GaplessTrim) -> Self {
         self.padding = padding;
+        self
+    }
+
+    /// State the track's decoder pre-roll requirement, returning `self`.
+    pub fn with_pre_roll(mut self, pre_roll: Option<DecoderPreRoll>) -> Self {
+        self.pre_roll = pre_roll;
         self
     }
 }

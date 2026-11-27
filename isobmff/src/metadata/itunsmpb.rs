@@ -33,6 +33,8 @@ pub const ITUNSMPB_MIN_FIELDS: usize = 4;
 const FIELD_HEX_DIGITS: usize = 8;
 /// The number of hexadecimal digits in the original sample count.
 const COUNT_HEX_DIGITS: usize = 16;
+/// The radix of an `iTunSMPB` hexadecimal field.
+const HEX_RADIX: u32 = 16;
 
 /// The iTunes gapless playback facts of one `iTunSMPB` value.
 ///
@@ -62,9 +64,9 @@ impl Itunsmpb {
         let padding = fields
             .next()
             .ok_or(Error::InvalidInput("iTunSMPB value has no padding field"))?;
-        let count = fields
-            .next()
-            .ok_or(Error::InvalidInput("iTunSMPB value has no original sample count"))?;
+        let count = fields.next().ok_or(Error::InvalidInput(
+            "iTunSMPB value has no original sample count",
+        ))?;
         let _reserved = parse_u32_hex(reserved, FIELD_HEX_DIGITS, "iTunSMPB reserved field")?;
         Ok(Self {
             text: text.into(),
@@ -107,14 +109,14 @@ fn parse_u32_hex(field: &str, digits: usize, what: &'static str) -> Result<u32> 
     if field.len() != digits {
         return Err(Error::InvalidInput(what));
     }
-    u32::from_str_radix(field, 16).map_err(|_| Error::InvalidInput(what))
+    u32::from_str_radix(field, HEX_RADIX).map_err(|_| Error::InvalidInput(what))
 }
 
 fn parse_u64_hex(field: &str, digits: usize, what: &'static str) -> Result<u64> {
     if field.len() != digits {
         return Err(Error::InvalidInput(what));
     }
-    u64::from_str_radix(field, 16).map_err(|_| Error::InvalidInput(what))
+    u64::from_str_radix(field, HEX_RADIX).map_err(|_| Error::InvalidInput(what))
 }
 
 impl Metadata {
@@ -203,10 +205,7 @@ mod tests {
         let mut buf = vec![0xAAu8; ilst.serialized_len()];
         let len = ilst.serialize_into(&mut buf).expect("serializes");
         buf.truncate(len);
-        let parsed = Ilst::parse(
-            &buf,
-        )
-        .expect("parses");
+        let parsed = Ilst::parse(&buf).expect("parses");
         let mut out = vec![0xBBu8; parsed.serialized_len()];
         let n = parsed.serialize_into(&mut out).expect("serializes");
         assert_eq!(&out[..n], &buf[..]);

@@ -341,16 +341,14 @@ pub fn parse_lame_tag(frame: &[u8]) -> Result<Option<LameTag>> {
     if magic != XING_MAGIC && magic != INFO_MAGIC {
         return Ok(None);
     }
-    let Some(flags_bytes) = frame.get(xing + XING_MAGIC_LEN..xing + XING_MAGIC_LEN + XING_FLAGS_LEN)
+    let Some(flags_bytes) =
+        frame.get(xing + XING_MAGIC_LEN..xing + XING_MAGIC_LEN + XING_FLAGS_LEN)
     else {
         return Ok(None);
     };
-    let flags = u32::from_be_bytes([
-        flags_bytes[0],
-        flags_bytes[1],
-        flags_bytes[2],
-        flags_bytes[3],
-    ]);
+    let flags = flags_bytes.iter().fold(0u32, |value, byte| {
+        (value << WIRE_BYTE_SHIFT) | u32::from(*byte)
+    });
     let mut cursor = xing + XING_MAGIC_LEN + XING_FLAGS_LEN;
     for (flag, len) in [
         (XING_FLAG_FRAMES, XING_FRAMES_LEN),
@@ -371,9 +369,9 @@ pub fn parse_lame_tag(frame: &[u8]) -> Result<Option<LameTag>> {
     let Some(delay_bytes) = frame.get(cursor..cursor.saturating_add(DELAY_PADDING_LEN)) else {
         return Ok(None);
     };
-    let raw = (u32::from(delay_bytes[0]) << WIRE_BYTE_SHIFT_DOUBLED)
-        | (u32::from(delay_bytes[1]) << WIRE_BYTE_SHIFT)
-        | u32::from(delay_bytes[2]);
+    let raw = delay_bytes.iter().fold(0u32, |value, byte| {
+        (value << WIRE_BYTE_SHIFT) | u32::from(*byte)
+    });
     let delay = raw >> DELAY_SHIFT;
     let padding = raw & DELAY_PADDING_MASK;
     let (encoder_delay, encoder_padding) = if is_lame_family(&encoder) {
@@ -521,8 +519,6 @@ const DELAY_PADDING_LEN: usize = 3;
 const DELAY_SHIFT: u32 = 12;
 /// Bits in one wire byte, for assembling the 24-bit field.
 const WIRE_BYTE_SHIFT: u32 = 8;
-/// Bits in two wire bytes.
-const WIRE_BYTE_SHIFT_DOUBLED: u32 = 2 * WIRE_BYTE_SHIFT;
 /// Mask of the 12-bit encoder padding.
 const DELAY_PADDING_MASK: u32 = 0xFFF;
 

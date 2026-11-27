@@ -906,7 +906,12 @@ impl Reader {
         if let Some(group) = self.group.take()
             && let Some(block) = group.block
         {
-            self.emit_frames(block, !group.reference, group.duration, group.discard_padding)?;
+            self.emit_frames(
+                block,
+                !group.reference,
+                group.duration,
+                group.discard_padding,
+            )?;
         }
         Ok(())
     }
