@@ -4,7 +4,10 @@
 
 use broadcast_core::{Parse, Serialize};
 use isobmff::ReferenceType;
-use isobmff::image::{DerivedImage, ItemProperty};
+use isobmff::image::{
+    DerivedImage, GainMapChannel, GainMapField, GainMapMetadata, ItemProperty, SignedRational,
+    UnsignedRational,
+};
 use isobmff::image_brands::{BrandFinding, ImageFinding};
 use isobmff::image_derived::{ColourFormatEnhancement, ColourFormatInput, ToneMapImage};
 use isobmff::image_groups::{
@@ -277,10 +280,11 @@ fn tone_map_item_reads_base_then_gain_map_and_reemits() {
         }
         other => panic!("expected tmap, got {other:?}"),
     }
-    let (base, gain) = image.tone_map_inputs(ItemId::new(3)).expect("pair");
-    assert_eq!(base.id(), ItemId::new(1));
-    assert_eq!(gain.id(), ItemId::new(2));
-    assert!(gain.is_hidden());
+    let inputs = image.tone_map_inputs(ItemId::new(3)).expect("pair");
+    assert_eq!(inputs.base().id(), ItemId::new(1));
+    assert_eq!(inputs.gain_map().id(), ItemId::new(2));
+    assert!(inputs.gain_map().is_hidden());
+    assert!(inputs.gain_map_metadata().is_none());
     assert_eq!(image.group_entities(GroupId::new(1)).len(), 2);
     assert!(image.brand_findings().is_empty());
     assert!(image.structure_findings().is_empty());
@@ -917,6 +921,30 @@ fn payload_hashes_match_the_committed_files() {
                 (17, 12_243_743_699_928_945_842),
             ],
         ),
+        (
+            "avif/gainmap-multichannel.avif",
+            &[
+                (1, 9_583_158_648_172_166_789),
+                (2, 15_199_326_944_231_806_815),
+                (3, 14_129_626_318_572_203_412),
+            ],
+        ),
+        (
+            "avif/gainmap-single.avif",
+            &[
+                (1, 9_583_158_648_172_166_789),
+                (2, 1_763_295_244_312_343_592),
+                (3, 13_805_453_431_400_229_313),
+            ],
+        ),
+        (
+            "avif/gainmap-swapped.avif",
+            &[
+                (1, 14_399_554_598_986_032_146),
+                (2, 6_886_417_231_187_156_639),
+                (3, 12_196_124_787_203_775_267),
+            ],
+        ),
     ];
     for (name, items) in expected {
         let (bytes, image) = load(name);
@@ -931,4 +959,291 @@ fn payload_hashes_match_the_committed_files() {
             assert_eq!(actual, *hash, "{name} item {id}");
         }
     }
+}
+
+fn gain_map(name: &str) -> (Vec<u8>, StillImage, ItemId) {
+    let (bytes, image) = load(name);
+    let tmap = image
+        .items()
+        .iter()
+        .find(|item| item.item_type() == ItemType::Tmap)
+        .expect("tmap item")
+        .id();
+    (bytes, image, tmap)
+}
+
+fn item_hash(image: &StillImage, id: ItemId, source: &[u8]) -> u64 {
+    let mut hash = 14_695_981_039_346_656_037u64;
+    for byte in image.data_bytes(id, source).expect("item bytes") {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(1_099_511_628_211);
+    }
+    hash
+}
+
+#[test]
+fn gainmap_multichannel_fixture_reads_every_channel() {
+    let (bytes, image, tmap) = gain_map("avif/gainmap-multichannel.avif");
+    assert_eq!(image.items().len(), 3);
+    assert!(image.has_brand(*b"tmap"));
+    let inputs = image.tone_map_inputs(tmap).expect("tone map inputs");
+    assert_eq!(inputs.base().item_type(), ItemType::Av01);
+    assert_eq!(inputs.gain_map().item_type(), ItemType::Av01);
+    let metadata = inputs.gain_map_metadata().expect("typed metadata");
+    assert_eq!(metadata.minimum_version(), 0);
+    assert_eq!(metadata.writer_version(), 0);
+    assert!(metadata.is_multichannel());
+    assert!(!metadata.uses_base_colour_space());
+    assert_eq!(metadata.reserved_flags(), 0);
+    assert_eq!(
+        metadata.base_headroom(),
+        UnsignedRational::new(0, 1),
+        "Base headroom:      0 (as fraction: 0/1)"
+    );
+    assert_eq!(
+        metadata.alternate_headroom(),
+        UnsignedRational::new(4, 1),
+        "Alternate headroom: 4 (as fraction: 4/1)"
+    );
+    let channels = metadata.channels();
+    assert_eq!(channels.len(), 3);
+    assert_eq!(
+        channels[0].min(),
+        SignedRational::new(-4_523_049, 1_048_576),
+        "R -4.31352 (as fraction: -4523049/1048576)"
+    );
+    assert_eq!(
+        channels[0].max(),
+        SignedRational::new(3_686_517, 524_288),
+        "R 7.03147 (as fraction: 3686517/524288)"
+    );
+    assert_eq!(
+        channels[1].min(),
+        SignedRational::new(-8_657_321, 4_194_304)
+    );
+    assert_eq!(
+        channels[1].max(),
+        SignedRational::new(13_606_797, 2_097_152)
+    );
+    assert_eq!(
+        channels[2].min(),
+        SignedRational::new(-4_761_391, 2_097_152)
+    );
+    assert_eq!(channels[2].max(), SignedRational::new(889_281, 131_072));
+    for channel in channels {
+        assert_eq!(channel.gamma(), UnsignedRational::new(1, 1));
+        assert_eq!(channel.base_offset(), SignedRational::new(1, 64));
+        assert_eq!(channel.alternate_offset(), SignedRational::new(1, 64));
+    }
+    assert!(metadata.zero_denominators().is_empty());
+    assert_eq!(
+        item_hash(&image, ItemId::new(2), &bytes),
+        15_199_326_944_231_806_815
+    );
+    assert!(image.structure_findings().is_empty());
+    reemit_is_byte_exact("avif/gainmap-multichannel.avif");
+    rebuild_matches("avif/gainmap-multichannel.avif");
+}
+
+#[test]
+fn gainmap_single_channel_fixture_reads_one_channel() {
+    let (bytes, image, tmap) = gain_map("avif/gainmap-single.avif");
+    let metadata = image
+        .tone_map_inputs(tmap)
+        .expect("tone map inputs")
+        .gain_map_metadata()
+        .expect("typed metadata");
+    assert!(!metadata.is_multichannel());
+    let channels = metadata.channels();
+    assert_eq!(channels.len(), 1);
+    assert_eq!(
+        channels[0].min(),
+        SignedRational::new(-1_161_593, 2_097_152),
+        "-0.553891 (as fraction: -1161593/2097152)"
+    );
+    assert_eq!(
+        channels[0].max(),
+        SignedRational::new(14_152_539, 2_097_152),
+        "6.74846 (as fraction: 14152539/2097152)"
+    );
+    assert_eq!(
+        item_hash(&image, ItemId::new(2), &bytes),
+        1_763_295_244_312_343_592
+    );
+    reemit_is_byte_exact("avif/gainmap-single.avif");
+    rebuild_matches("avif/gainmap-single.avif");
+}
+
+#[test]
+fn gainmap_swapped_fixture_swaps_headrooms_and_base_colour_space() {
+    let (bytes, image, tmap) = gain_map("avif/gainmap-swapped.avif");
+    let metadata = image
+        .tone_map_inputs(tmap)
+        .expect("tone map inputs")
+        .gain_map_metadata()
+        .expect("typed metadata");
+    assert!(metadata.is_multichannel());
+    assert!(metadata.uses_base_colour_space());
+    assert_eq!(
+        metadata.base_headroom(),
+        UnsignedRational::new(4, 1),
+        "Base headroom:      4 (as fraction: 4/1)"
+    );
+    assert_eq!(
+        metadata.alternate_headroom(),
+        UnsignedRational::new(0, 1),
+        "Alternate headroom: 0 (as fraction: 0/1)"
+    );
+    assert_eq!(metadata.channels().len(), 3);
+    assert_eq!(
+        item_hash(&image, ItemId::new(2), &bytes),
+        6_886_417_231_187_156_639
+    );
+    reemit_is_byte_exact("avif/gainmap-swapped.avif");
+    rebuild_matches("avif/gainmap-swapped.avif");
+}
+
+#[test]
+fn gainmap_metadata_round_trips_the_fixture_body() {
+    let (bytes, image, tmap) = gain_map("avif/gainmap-multichannel.avif");
+    let body = image.data_bytes(tmap, &bytes).expect("tmap body");
+    assert_eq!(body.len(), 142);
+    let parsed = GainMapMetadata::parse(&body[1..]).expect("metadata");
+    assert_eq!(parsed.try_to_bytes().expect("serialize"), &body[1..]);
+    let tone_map = ToneMapImage::with_metadata(parsed).expect("tone map");
+    assert_eq!(tone_map.try_to_bytes().expect("body"), body);
+}
+
+fn assembled_gain_map_body(reserved: u8, minimum_version: u16, trailing: usize) -> Vec<u8> {
+    let channel = GainMapChannel::new(
+        SignedRational::new(1, 2),
+        SignedRational::new(3, 4),
+        UnsignedRational::new(1, 1),
+        SignedRational::new(0, 1),
+        SignedRational::new(0, 1),
+    );
+    let metadata = GainMapMetadata::new(
+        false,
+        UnsignedRational::new(0, 1),
+        UnsignedRational::new(1, 1),
+        vec![channel],
+    )
+    .expect("metadata");
+    let mut bytes = metadata.try_to_bytes().expect("serialize");
+    bytes[0..2].copy_from_slice(&minimum_version.to_be_bytes());
+    bytes[4] |= reserved;
+    bytes.resize(bytes.len() + trailing, 0);
+    let mut body = vec![0u8];
+    body.extend_from_slice(&bytes);
+    body
+}
+
+#[test]
+fn gainmap_reserved_bits_keep_the_body_opaque() {
+    let body = assembled_gain_map_body(1, 0, 0);
+    let tone_map = ToneMapImage::parse(&body).expect("tmap body");
+    assert!(tone_map.gain_map_metadata_typed().is_none());
+    assert_eq!(tone_map.gain_map_metadata(), &body[1..]);
+    assert_eq!(tone_map.try_to_bytes().expect("re-emit"), body);
+}
+
+#[test]
+fn gainmap_minimum_version_above_zero_keeps_the_body_opaque() {
+    let body = assembled_gain_map_body(0, 1, 0);
+    let tone_map = ToneMapImage::parse(&body).expect("tmap body");
+    assert!(tone_map.gain_map_metadata_typed().is_none());
+    assert_eq!(tone_map.try_to_bytes().expect("re-emit"), body);
+}
+
+#[test]
+fn gainmap_trailing_bytes_keep_the_body_opaque() {
+    let body = assembled_gain_map_body(0, 0, 1);
+    let tone_map = ToneMapImage::parse(&body).expect("tmap body");
+    assert!(tone_map.gain_map_metadata_typed().is_none());
+    assert_eq!(tone_map.try_to_bytes().expect("re-emit"), body);
+}
+
+#[test]
+fn gainmap_zero_denominator_is_a_typed_finding() {
+    let channel = GainMapChannel::new(
+        SignedRational::new(0, 1),
+        SignedRational::new(1, 1),
+        UnsignedRational::new(1, 0),
+        SignedRational::new(0, 1),
+        SignedRational::new(0, 1),
+    );
+    let metadata = GainMapMetadata::new(
+        false,
+        UnsignedRational::new(0, 1),
+        UnsignedRational::new(1, 1),
+        vec![channel],
+    )
+    .expect("metadata");
+    assert_eq!(
+        metadata.zero_denominators(),
+        [(Some(0), GainMapField::Gamma)]
+    );
+    let mut writer = ItemWriter::new(*b"mif1").with_compatible_brands(vec![*b"mif1"]);
+    writer.add_item(
+        ItemInfoEntry::new(ItemId::new(1), ItemType::Av01, b"base"),
+        vec![0u8; 4],
+    );
+    writer.add_item(
+        ItemInfoEntry::new(ItemId::new(2), ItemType::Av01, b"gain"),
+        vec![1u8; 4],
+    );
+    writer
+        .add_derived_item(
+            ItemInfoEntry::new(ItemId::new(3), ItemType::Tmap, b"gain-map"),
+            &DerivedImage::ToneMap(ToneMapImage::with_metadata(metadata).expect("tone map")),
+        )
+        .expect("tmap item");
+    for input in [1, 2] {
+        writer
+            .add_reference(ReferenceType::Dimg, ItemId::new(3), ItemId::new(input))
+            .expect("dimg");
+    }
+    writer.set_primary(ItemId::new(1)).expect("primary");
+    let bytes = writer.to_bytes().expect("writer");
+    let image = load_bytes(&bytes, ItemReaderConfig::default());
+    assert_eq!(
+        image.structure_findings(),
+        [ImageFinding::GainMapZeroDenominator {
+            item: ItemId::new(3),
+            channel: Some(0),
+            field: GainMapField::Gamma,
+        }]
+    );
+    let metadata = image
+        .tone_map_inputs(ItemId::new(3))
+        .expect("tone map inputs")
+        .gain_map_metadata()
+        .expect("typed metadata");
+    assert_eq!(metadata.channels()[0].gamma(), UnsignedRational::new(1, 0));
+    assert_eq!(metadata.zero_denominators().len(), 1);
+}
+
+#[test]
+fn gainmap_gamma_numerator_is_unsigned() {
+    let channel = GainMapChannel::new(
+        SignedRational::new(0, 1),
+        SignedRational::new(1, 1),
+        UnsignedRational::new(u32::MAX, 1),
+        SignedRational::new(0, 1),
+        SignedRational::new(0, 1),
+    );
+    let metadata = GainMapMetadata::new(
+        false,
+        UnsignedRational::new(0, 1),
+        UnsignedRational::new(1, 1),
+        vec![channel],
+    )
+    .expect("metadata");
+    let bytes = metadata.try_to_bytes().expect("serialize");
+    let parsed = GainMapMetadata::parse(&bytes).expect("parse");
+    assert_eq!(
+        parsed.channels()[0].gamma(),
+        UnsignedRational::new(u32::MAX, 1)
+    );
+    assert_eq!(parsed.try_to_bytes().expect("serialize"), bytes);
 }

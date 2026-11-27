@@ -39,12 +39,12 @@ fn main() {
         println!("brand finding: {}", finding.name());
     }
     for item in image.items() {
-        if let Some((base, gain_map)) = image.tone_map_inputs(item.id()) {
+        if let Some(inputs) = image.tone_map_inputs(item.id()) {
             println!(
                 "tone map {}: base item {}, gain map item {}",
                 item.id().get(),
-                base.id().get(),
-                gain_map.id().get()
+                inputs.base().id().get(),
+                inputs.gain_map().id().get()
             );
         }
         let capture = image.capture_info(item.id());

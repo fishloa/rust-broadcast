@@ -240,10 +240,11 @@ pub use hdr_boxes::{
 };
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use image::{
-    AuxiliaryTypeProperty, Av1LayeredImageIndexingProperty, DerivedImage, IdentityDerivation,
-    ImageGrid, ImageMirror, ImageMirrorAxis, ImageOverlay, ImageRotation,
-    ImageSpatialExtentsProperty, ItemProperty, LayerSelectorProperty,
+    AuxiliaryTypeProperty, Av1LayeredImageIndexingProperty, DerivedImage, GainMapChannel,
+    GainMapField, GainMapMetadata, IdentityDerivation, ImageGrid, ImageMirror, ImageMirrorAxis,
+    ImageOverlay, ImageRotation, ImageSpatialExtentsProperty, ItemProperty, LayerSelectorProperty,
     OperatingPointSelectorProperty, PixelInformationProperty, RelativeLocationProperty,
+    SignedRational, UnsignedRational,
 };
 pub use index_boxes::{
     ASSP, AlternativeStartupEntry, AlternativeStartupSequencePropertiesBox, LEVA,
@@ -274,7 +275,7 @@ pub use item::{
 };
 pub use item_reader::{
     AssociatedProperty, Item, ItemReader, ItemReaderConfig, ItemReferenceIn, ItemReferenceOut,
-    ItemStep, MetaChild, MetaRecord, ReemitOp, StillImage, TopLevelBox,
+    ItemStep, MetaChild, MetaRecord, ReemitOp, StillImage, ToneMapInputs, TopLevelBox,
 };
 pub use item_writer::ItemWriter;
 pub use limits::Limits;

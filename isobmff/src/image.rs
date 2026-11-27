@@ -24,6 +24,12 @@
 //! | [`ContentLightLevel`] | `clli` | ISO/IEC 14496-12:2026 §12.1.6 (reused) |
 //! | [`BrandProperty`] | `brnd` | ISO/IEC 14496-12:2026 §8.11.15 |
 //! | [`HandlerProperty`] | `hdlp` | ISO/IEC 14496-12:2026 §8.11.16 |
+//! | [`GainMapMetadata`] | `tmap` body | Amd 1 6.6.2.4.2 |
+//!
+//! The gain map metadata layout comes from the open implementations that agree
+//! on it because ISO 21496-1 is not held; the private note
+//! `private/specs-verified/misc/gain-map/SOURCES.md` records the four sources,
+//! where they agree and the one view adopted here.
 //!
 //! The derived image item bodies are [`IdentityDerivation`] (`iden`),
 //! [`ImageOverlay`] (`iovl`) and [`ImageGrid`] (`grid`)
@@ -41,7 +47,7 @@
 use alloc::vec::Vec;
 
 use broadcast_core::len::{fit_u8, need_in, need_out};
-use broadcast_core::wire::{be_u16, be_u32, u24_at};
+use broadcast_core::wire::{be_u16, be_u32, i32_at, u24_at, u32_at};
 use broadcast_core::{Parse, Serialize};
 
 use crate::av1::Av1ConfigurationBox;
@@ -163,6 +169,37 @@ const RLOC_OFFSET_LEN: usize = core::mem::size_of::<u32>();
 const A1OP_LEN: usize = 1;
 /// Width of an `lsel` `layer_id`.
 const LSEL_LEN: usize = core::mem::size_of::<u16>();
+/// Width of one rational component of the gain map metadata.
+const GAIN_MAP_COMPONENT_LEN: usize = core::mem::size_of::<u32>();
+/// Bytes of `minimum_version` and `writer_version`.
+const GAIN_MAP_VERSION_LEN: usize = 2 * core::mem::size_of::<u16>();
+/// Offset of `minimum_version`.
+const GAIN_MAP_MINIMUM_OFFSET: usize = 0;
+/// Offset of `writer_version`.
+const GAIN_MAP_WRITER_OFFSET: usize = GAIN_MAP_MINIMUM_OFFSET + core::mem::size_of::<u16>();
+/// Offset of the gain map flags byte, after both versions.
+const GAIN_MAP_FLAGS_OFFSET: usize = GAIN_MAP_VERSION_LEN;
+/// Offset of `base_hdr_headroom_numerator`.
+const GAIN_MAP_BASE_HEADROOM_OFFSET: usize = GAIN_MAP_FLAGS_OFFSET + 1;
+/// Offset of `alternate_hdr_headroom_numerator`.
+const GAIN_MAP_ALTERNATE_HEADROOM_OFFSET: usize =
+    GAIN_MAP_BASE_HEADROOM_OFFSET + 2 * GAIN_MAP_COMPONENT_LEN;
+/// Bytes the gain map metadata spends before its per-channel values.
+const GAIN_MAP_FIXED_LEN: usize = GAIN_MAP_ALTERNATE_HEADROOM_OFFSET + 2 * GAIN_MAP_COMPONENT_LEN;
+/// Bytes one channel of gain map metadata spends (five rationals).
+const GAIN_MAP_CHANNEL_LEN: usize = 5 * 2 * GAIN_MAP_COMPONENT_LEN;
+/// The `minimum_version` this view implements.
+const GAIN_MAP_MINIMUM_VERSION: u16 = 0;
+/// The flag bit selecting three channels rather than one.
+const GAIN_MAP_MULTICHANNEL_FLAG: u8 = 0x80;
+/// The flag bit saying the gain map is applied in the base colour space.
+const GAIN_MAP_BASE_COLOUR_SPACE_FLAG: u8 = 0x40;
+/// The flag bits this view treats as reserved.
+const GAIN_MAP_RESERVED_FLAGS_MASK: u8 = 0x3f;
+/// Channels a multichannel gain map carries.
+const GAIN_MAP_MULTICHANNEL_COUNT: usize = 3;
+/// Channels a single-channel gain map carries.
+const GAIN_MAP_SINGLE_CHANNEL_COUNT: usize = 1;
 
 /// The `aux_type` URN of an alpha auxiliary image (AVIF 4.1).
 pub const AUX_TYPE_ALPHA: &str = "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha";
@@ -1385,6 +1422,443 @@ fn write_derived_signed(
     }
     *cursor += width;
     Ok(())
+}
+
+/// A rational number with a signed numerator, as the gain map metadata states
+/// a per-channel minimum, maximum or offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SignedRational {
+    numerator: i32,
+    denominator: u32,
+}
+
+impl SignedRational {
+    /// A rational `numerator / denominator`.
+    #[must_use]
+    pub const fn new(numerator: i32, denominator: u32) -> Self {
+        Self {
+            numerator,
+            denominator,
+        }
+    }
+
+    /// `numerator`.
+    #[must_use]
+    pub const fn numerator(&self) -> i32 {
+        self.numerator
+    }
+
+    /// `denominator`.
+    #[must_use]
+    pub const fn denominator(&self) -> u32 {
+        self.denominator
+    }
+
+    /// Whether `denominator` is zero, which no value can be divided by.
+    #[must_use]
+    pub const fn is_zero_denominator(&self) -> bool {
+        self.denominator == 0
+    }
+}
+
+/// A rational number with an unsigned numerator, as the gain map metadata
+/// states a gamma or an HDR headroom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct UnsignedRational {
+    numerator: u32,
+    denominator: u32,
+}
+
+impl UnsignedRational {
+    /// A rational `numerator / denominator`.
+    #[must_use]
+    pub const fn new(numerator: u32, denominator: u32) -> Self {
+        Self {
+            numerator,
+            denominator,
+        }
+    }
+
+    /// `numerator`.
+    #[must_use]
+    pub const fn numerator(&self) -> u32 {
+        self.numerator
+    }
+
+    /// `denominator`.
+    #[must_use]
+    pub const fn denominator(&self) -> u32 {
+        self.denominator
+    }
+
+    /// Whether `denominator` is zero, which no value can be divided by.
+    #[must_use]
+    pub const fn is_zero_denominator(&self) -> bool {
+        self.denominator == 0
+    }
+}
+
+/// The five per-channel values of the gain map metadata, in wire order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct GainMapChannel {
+    min: SignedRational,
+    max: SignedRational,
+    gamma: UnsignedRational,
+    base_offset: SignedRational,
+    alternate_offset: SignedRational,
+}
+
+impl GainMapChannel {
+    /// A channel with its five values.
+    #[must_use]
+    pub const fn new(
+        min: SignedRational,
+        max: SignedRational,
+        gamma: UnsignedRational,
+        base_offset: SignedRational,
+        alternate_offset: SignedRational,
+    ) -> Self {
+        Self {
+            min,
+            max,
+            gamma,
+            base_offset,
+            alternate_offset,
+        }
+    }
+
+    /// The minimum gain map value.
+    #[must_use]
+    pub const fn min(&self) -> SignedRational {
+        self.min
+    }
+
+    /// The maximum gain map value.
+    #[must_use]
+    pub const fn max(&self) -> SignedRational {
+        self.max
+    }
+
+    /// The encoding gamma of the gain map image.
+    #[must_use]
+    pub const fn gamma(&self) -> UnsignedRational {
+        self.gamma
+    }
+
+    /// The offset applied to the base image samples.
+    #[must_use]
+    pub const fn base_offset(&self) -> SignedRational {
+        self.base_offset
+    }
+
+    /// The offset applied to the alternate image samples.
+    #[must_use]
+    pub const fn alternate_offset(&self) -> SignedRational {
+        self.alternate_offset
+    }
+
+    fn parse(body: &[u8]) -> Self {
+        Self {
+            min: signed_at(body, 0),
+            max: signed_at(body, 2 * GAIN_MAP_COMPONENT_LEN),
+            gamma: unsigned_at(body, 4 * GAIN_MAP_COMPONENT_LEN),
+            base_offset: signed_at(body, 6 * GAIN_MAP_COMPONENT_LEN),
+            alternate_offset: signed_at(body, 8 * GAIN_MAP_COMPONENT_LEN),
+        }
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) {
+        let mut cursor = 0;
+        write_signed(buf, &mut cursor, self.min);
+        write_signed(buf, &mut cursor, self.max);
+        write_unsigned(buf, &mut cursor, self.gamma);
+        write_signed(buf, &mut cursor, self.base_offset);
+        write_signed(buf, &mut cursor, self.alternate_offset);
+    }
+}
+
+/// One value of the gain map metadata that carries a rational.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum GainMapField {
+    /// A base image HDR headroom.
+    BaseHeadroom,
+    /// An alternate image HDR headroom.
+    AlternateHeadroom,
+    /// A channel's minimum gain map value.
+    Min,
+    /// A channel's maximum gain map value.
+    Max,
+    /// A channel's gain map gamma.
+    Gamma,
+    /// A channel's base image offset.
+    BaseOffset,
+    /// A channel's alternate image offset.
+    AlternateOffset,
+}
+
+impl GainMapField {
+    /// The field's stable token.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::BaseHeadroom => "base-headroom",
+            Self::AlternateHeadroom => "alternate-headroom",
+            Self::Min => "min",
+            Self::Max => "max",
+            Self::Gamma => "gamma",
+            Self::BaseOffset => "base-offset",
+            Self::AlternateOffset => "alternate-offset",
+        }
+    }
+}
+
+broadcast_core::impl_spec_display!(GainMapField);
+
+/// The `GainMapMetadata` structure carried by a tone-map (`tmap`) item.
+///
+/// The layout comes from the open implementations that agree on it because
+/// ISO 21496-1 is not held; `private/specs-verified/misc/gain-map/SOURCES.md`
+/// records the four sources, where they agree and the one view adopted. The
+/// wrapper (one body version byte, then this structure) is ISO/IEC
+/// 23008-12:2025 Amd 1 6.6.2.4.2.
+///
+/// This type only represents the view those sources agree on: `minimum_version`
+/// 0, no reserved flag bit set, and exactly the bytes the channel count
+/// implies. Any other body stays an opaque payload in [`ToneMapImage`] and
+/// round-trips; asking for the typed view of such a body returns `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct GainMapMetadata {
+    minimum_version: u16,
+    writer_version: u16,
+    multichannel: bool,
+    base_colour_space: bool,
+    reserved_flags: u8,
+    base_headroom: UnsignedRational,
+    alternate_headroom: UnsignedRational,
+    channels: Vec<GainMapChannel>,
+}
+
+impl GainMapMetadata {
+    /// Metadata with the minimum and writer versions this view implements and
+    /// no reserved flag bit set, from one or three channels.
+    pub fn new(
+        base_colour_space: bool,
+        base_headroom: UnsignedRational,
+        alternate_headroom: UnsignedRational,
+        channels: Vec<GainMapChannel>,
+    ) -> Result<Self> {
+        if channels.len() != GAIN_MAP_SINGLE_CHANNEL_COUNT
+            && channels.len() != GAIN_MAP_MULTICHANNEL_COUNT
+        {
+            return Err(Error::InvalidInput(
+                "gain map metadata needs one or three channels",
+            ));
+        }
+        Ok(Self {
+            minimum_version: GAIN_MAP_MINIMUM_VERSION,
+            writer_version: GAIN_MAP_MINIMUM_VERSION,
+            multichannel: channels.len() == GAIN_MAP_MULTICHANNEL_COUNT,
+            base_colour_space,
+            reserved_flags: 0,
+            base_headroom,
+            alternate_headroom,
+            channels,
+        })
+    }
+
+    /// `minimum_version`.
+    #[must_use]
+    pub const fn minimum_version(&self) -> u16 {
+        self.minimum_version
+    }
+
+    /// `writer_version`.
+    #[must_use]
+    pub const fn writer_version(&self) -> u16 {
+        self.writer_version
+    }
+
+    /// Whether the gain map carries three channels rather than one.
+    #[must_use]
+    pub const fn is_multichannel(&self) -> bool {
+        self.multichannel
+    }
+
+    /// Whether the gain map is applied in the base image's colour space.
+    #[must_use]
+    pub const fn uses_base_colour_space(&self) -> bool {
+        self.base_colour_space
+    }
+
+    /// The reserved flag bits, carried as read.
+    #[must_use]
+    pub const fn reserved_flags(&self) -> u8 {
+        self.reserved_flags
+    }
+
+    /// The base image HDR headroom.
+    #[must_use]
+    pub const fn base_headroom(&self) -> UnsignedRational {
+        self.base_headroom
+    }
+
+    /// The alternate image HDR headroom.
+    #[must_use]
+    pub const fn alternate_headroom(&self) -> UnsignedRational {
+        self.alternate_headroom
+    }
+
+    /// The per-channel values, one or three entries.
+    #[must_use]
+    pub fn channels(&self) -> &[GainMapChannel] {
+        &self.channels
+    }
+
+    /// Every rational whose denominator is zero, in wire order, with the
+    /// channel index (`None` for a headroom).
+    #[must_use]
+    pub fn zero_denominators(&self) -> Vec<(Option<usize>, GainMapField)> {
+        let mut zero = Vec::new();
+        if self.base_headroom.is_zero_denominator() {
+            zero.push((None, GainMapField::BaseHeadroom));
+        }
+        if self.alternate_headroom.is_zero_denominator() {
+            zero.push((None, GainMapField::AlternateHeadroom));
+        }
+        for (index, channel) in self.channels.iter().enumerate() {
+            let fields = [
+                (GainMapField::Min, channel.min.is_zero_denominator()),
+                (GainMapField::Max, channel.max.is_zero_denominator()),
+                (GainMapField::Gamma, channel.gamma.is_zero_denominator()),
+                (
+                    GainMapField::BaseOffset,
+                    channel.base_offset.is_zero_denominator(),
+                ),
+                (
+                    GainMapField::AlternateOffset,
+                    channel.alternate_offset.is_zero_denominator(),
+                ),
+            ];
+            for (field, is_zero) in fields {
+                if is_zero {
+                    zero.push((Some(index), field));
+                }
+            }
+        }
+        zero
+    }
+}
+
+impl<'a> Parse<'a> for GainMapMetadata {
+    type Error = Error;
+
+    fn parse(body: &'a [u8]) -> Result<Self> {
+        need_in(body, GAIN_MAP_FIXED_LEN, "gain map metadata")?;
+        let minimum_version = be_u16(body, GAIN_MAP_MINIMUM_OFFSET, "gain map metadata")?;
+        if minimum_version != GAIN_MAP_MINIMUM_VERSION {
+            return Err(Error::UnsupportedFeature("gain map minimum version"));
+        }
+        let writer_version = be_u16(body, GAIN_MAP_WRITER_OFFSET, "gain map metadata")?;
+        let flags = body[GAIN_MAP_FLAGS_OFFSET];
+        let reserved_flags = flags & GAIN_MAP_RESERVED_FLAGS_MASK;
+        if reserved_flags != 0 {
+            return Err(Error::UnsupportedFeature("gain map reserved flags"));
+        }
+        let multichannel = flags & GAIN_MAP_MULTICHANNEL_FLAG != 0;
+        let channel_count = if multichannel {
+            GAIN_MAP_MULTICHANNEL_COUNT
+        } else {
+            GAIN_MAP_SINGLE_CHANNEL_COUNT
+        };
+        if body.len() != GAIN_MAP_FIXED_LEN + channel_count * GAIN_MAP_CHANNEL_LEN {
+            return Err(Error::InvalidInput("gain map metadata length"));
+        }
+        let channels = body[GAIN_MAP_FIXED_LEN..]
+            .chunks_exact(GAIN_MAP_CHANNEL_LEN)
+            .map(GainMapChannel::parse)
+            .collect();
+        Ok(Self {
+            minimum_version,
+            writer_version,
+            multichannel,
+            base_colour_space: flags & GAIN_MAP_BASE_COLOUR_SPACE_FLAG != 0,
+            reserved_flags,
+            base_headroom: unsigned_at(body, GAIN_MAP_BASE_HEADROOM_OFFSET),
+            alternate_headroom: unsigned_at(body, GAIN_MAP_ALTERNATE_HEADROOM_OFFSET),
+            channels,
+        })
+    }
+}
+
+impl Serialize for GainMapMetadata {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        GAIN_MAP_FIXED_LEN + self.channels.len() * GAIN_MAP_CHANNEL_LEN
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        buf[GAIN_MAP_MINIMUM_OFFSET..GAIN_MAP_MINIMUM_OFFSET + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.minimum_version.to_be_bytes());
+        buf[GAIN_MAP_WRITER_OFFSET..GAIN_MAP_WRITER_OFFSET + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.writer_version.to_be_bytes());
+        let mut flags = self.reserved_flags;
+        if self.multichannel {
+            flags |= GAIN_MAP_MULTICHANNEL_FLAG;
+        }
+        if self.base_colour_space {
+            flags |= GAIN_MAP_BASE_COLOUR_SPACE_FLAG;
+        }
+        buf[GAIN_MAP_FLAGS_OFFSET] = flags;
+        let mut cursor = GAIN_MAP_BASE_HEADROOM_OFFSET;
+        write_unsigned(buf, &mut cursor, self.base_headroom);
+        write_unsigned(buf, &mut cursor, self.alternate_headroom);
+        for channel in &self.channels {
+            channel.serialize_into(&mut buf[cursor..cursor + GAIN_MAP_CHANNEL_LEN]);
+            cursor += GAIN_MAP_CHANNEL_LEN;
+        }
+        Ok(need)
+    }
+}
+
+fn signed_at(body: &[u8], offset: usize) -> SignedRational {
+    SignedRational::new(
+        i32_at(body, offset),
+        u32_at(body, offset + GAIN_MAP_COMPONENT_LEN),
+    )
+}
+
+fn unsigned_at(body: &[u8], offset: usize) -> UnsignedRational {
+    UnsignedRational::new(
+        u32_at(body, offset),
+        u32_at(body, offset + GAIN_MAP_COMPONENT_LEN),
+    )
+}
+
+fn write_signed(buf: &mut [u8], cursor: &mut usize, value: SignedRational) {
+    buf[*cursor..*cursor + GAIN_MAP_COMPONENT_LEN].copy_from_slice(&value.numerator.to_be_bytes());
+    *cursor += GAIN_MAP_COMPONENT_LEN;
+    buf[*cursor..*cursor + GAIN_MAP_COMPONENT_LEN]
+        .copy_from_slice(&value.denominator.to_be_bytes());
+    *cursor += GAIN_MAP_COMPONENT_LEN;
+}
+
+fn write_unsigned(buf: &mut [u8], cursor: &mut usize, value: UnsignedRational) {
+    buf[*cursor..*cursor + GAIN_MAP_COMPONENT_LEN].copy_from_slice(&value.numerator.to_be_bytes());
+    *cursor += GAIN_MAP_COMPONENT_LEN;
+    buf[*cursor..*cursor + GAIN_MAP_COMPONENT_LEN]
+        .copy_from_slice(&value.denominator.to_be_bytes());
+    *cursor += GAIN_MAP_COMPONENT_LEN;
 }
 
 /// A property of an item — one box of the `ItemPropertyContainerBox`

@@ -353,6 +353,16 @@ pub enum ImageFinding {
         /// The `mask` item references.
         references: usize,
     },
+    /// A gain map metadata rational has a zero denominator, which no value can
+    /// be divided by.
+    GainMapZeroDenominator {
+        /// The `tmap` item.
+        item: crate::item::ItemId,
+        /// The channel index, absent for an HDR headroom.
+        channel: Option<usize>,
+        /// The field.
+        field: crate::image::GainMapField,
+    },
 }
 
 impl ImageFinding {
@@ -367,6 +377,7 @@ impl ImageFinding {
             Self::AudioImageGroupWrongEntityCount { .. } => "iaug-wrong-entity-count",
             Self::RegionNamesMissingImage { .. } => "region-names-missing-image",
             Self::RegionMaskReferenceCount { .. } => "region-mask-reference-count",
+            Self::GainMapZeroDenominator { .. } => "tmap-zero-denominator",
         }
     }
 }

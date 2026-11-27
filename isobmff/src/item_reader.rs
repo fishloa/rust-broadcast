@@ -380,6 +380,37 @@ impl ItemReferenceIn {
     }
 }
 
+/// The two inputs of a tone-map (`tmap`) item and its gain map metadata
+/// (Amd 1 6.6.2.4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ToneMapInputs<'a> {
+    base: &'a Item,
+    gain_map: &'a Item,
+    metadata: Option<&'a crate::image::GainMapMetadata>,
+}
+
+impl<'a> ToneMapInputs<'a> {
+    /// The base image, the first `dimg` input.
+    #[must_use]
+    pub const fn base(&self) -> &'a Item {
+        self.base
+    }
+
+    /// The gain map image, the second `dimg` input.
+    #[must_use]
+    pub const fn gain_map(&self) -> &'a Item {
+        self.gain_map
+    }
+
+    /// The typed gain map metadata, when the item's body is the layout this
+    /// crate models; any other body stays opaque.
+    #[must_use]
+    pub const fn gain_map_metadata(&self) -> Option<&'a crate::image::GainMapMetadata> {
+        self.metadata
+    }
+}
+
 /// One item of a [`StillImage`]: its declared facts and its resolved data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -833,6 +864,17 @@ impl StillImage {
                         count,
                     });
                 }
+                if let Some(DerivedImage::ToneMap(tone_map)) = item.derived()
+                    && let Some(metadata) = tone_map.gain_map_metadata_typed()
+                {
+                    for (channel, field) in metadata.zero_denominators() {
+                        findings.push(ImageFinding::GainMapZeroDenominator {
+                            item: item.id,
+                            channel,
+                            field,
+                        });
+                    }
+                }
             }
             if item.item_type == ItemType::Rgan {
                 for reference in &item.references_out {
@@ -878,9 +920,11 @@ impl StillImage {
             .is_some_and(|item| item.item_type() != ItemType::Other([0; BOX_TYPE_SIZE]))
     }
 
-    /// The base and gain-map inputs of a `tmap` item, in `dimg` order.
+    /// The base and gain-map inputs of a `tmap` item, in `dimg` order, with
+    /// the typed gain map metadata when the item's body carries the layout
+    /// this crate models.
     #[must_use]
-    pub fn tone_map_inputs(&self, tmap: ItemId) -> Option<(&Item, &Item)> {
+    pub fn tone_map_inputs(&self, tmap: ItemId) -> Option<ToneMapInputs<'_>> {
         let item = self.item(tmap)?;
         if item.item_type() != ItemType::Tmap {
             return None;
@@ -895,7 +939,15 @@ impl StillImage {
         if inputs.next().is_some() {
             return None;
         }
-        Some((base, gain_map))
+        let metadata = match item.derived() {
+            Some(DerivedImage::ToneMap(tone_map)) => tone_map.gain_map_metadata_typed(),
+            _ => None,
+        };
+        Some(ToneMapInputs {
+            base,
+            gain_map,
+            metadata,
+        })
     }
 
     /// The two image items of an entity group, when it names exactly two that

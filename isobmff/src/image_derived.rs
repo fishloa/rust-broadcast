@@ -15,8 +15,10 @@ use alloc::vec::Vec;
 
 use broadcast_core::bits::{BitBuf, BitReader};
 use broadcast_core::len::{fit_mask, need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
+use crate::image::GainMapMetadata;
 
 /// Version every body this module types requires (Amd 1 6.6.2.4.3,
 /// 6.6.2.5.3).
@@ -47,22 +49,42 @@ const PACKED_HOR_BAND_MASK: u64 = 0x1f;
 const PACKED_VER_BAND_MASK: u64 = 0x1f;
 
 /// ToneMapImage body (`tmap`) — ISO/IEC 23008-12:2025 Amd 1 6.6.2.4.2.
+///
+/// The bytes after the body version byte are the `GainMapMetadata` structure of
+/// ISO 21496-1, which is not held. They are carried verbatim, and the typed
+/// view [`GainMapMetadata`] is present only when the body is the one layout the
+/// open implementations agree on (see the module doc of [`crate::image`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct ToneMapImage {
     version: u8,
     gain_map_metadata: Vec<u8>,
+    typed_metadata: Option<GainMapMetadata>,
 }
 
 impl ToneMapImage {
     /// A version-0 body with the opaque ISO 21496-1 gain-map metadata.
     #[must_use]
     pub fn new(gain_map_metadata: Vec<u8>) -> Self {
+        let typed_metadata = GainMapMetadata::parse(&gain_map_metadata).ok();
         Self {
             version: DERIVED_VERSION,
             gain_map_metadata,
+            typed_metadata,
         }
+    }
+
+    /// A version-0 body holding `metadata`, with its bytes written from it.
+    pub fn with_metadata(metadata: GainMapMetadata) -> Result<Self> {
+        let mut bytes = alloc::vec![0u8; metadata.serialized_len()];
+        let written = metadata.serialize_into(&mut bytes)?;
+        bytes.truncate(written);
+        Ok(Self {
+            version: DERIVED_VERSION,
+            gain_map_metadata: bytes,
+            typed_metadata: Some(metadata),
+        })
     }
 
     /// `version`.
@@ -76,6 +98,14 @@ impl ToneMapImage {
     pub fn gain_map_metadata(&self) -> &[u8] {
         &self.gain_map_metadata
     }
+
+    /// The typed gain map metadata, when the body is the layout this crate
+    /// models; a body with a `minimum_version` above 0, a reserved flag bit set
+    /// or trailing bytes stays opaque and yields `None`.
+    #[must_use]
+    pub fn gain_map_metadata_typed(&self) -> Option<&GainMapMetadata> {
+        self.typed_metadata.as_ref()
+    }
 }
 
 impl<'a> broadcast_core::Parse<'a> for ToneMapImage {
@@ -84,9 +114,12 @@ impl<'a> broadcast_core::Parse<'a> for ToneMapImage {
     fn parse(body: &'a [u8]) -> Result<Self> {
         need_in(body, 1, "tmap body")?;
         let version = body[0];
+        let gain_map_metadata = body[1..].to_vec();
+        let typed_metadata = GainMapMetadata::parse(&gain_map_metadata).ok();
         Ok(Self {
             version,
-            gain_map_metadata: body[1..].to_vec(),
+            gain_map_metadata,
+            typed_metadata,
         })
     }
 }

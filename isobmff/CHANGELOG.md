@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Gain map metadata typed (Amd 1 6.6.2.4.2).** `image` gains
+  `GainMapMetadata` with its `GainMapChannel`, `SignedRational` and
+  `UnsignedRational` values and the `GainMapField` names, read and written
+  byte-exactly. The layout is the one libavif, CrabbyAvif, Skia and libultrahdr
+  agree on; a body with a `minimum_version` above 0, a reserved flag bit set or
+  trailing bytes stays the opaque payload it was and round-trips.
+  `ToneMapImage::with_metadata` builds a `tmap` body from the typed value, and
+  a zero denominator is reported as `ImageFinding::GainMapZeroDenominator`
+  rather than refusing the read. Three real fixtures written by
+  `avifgainmaputil` 1.4.2 (multichannel, single-channel and swapped base)
+  cover it.
+
 - **Still images brought to the current HEIF edition (issue #4167).** The item
   layer now reads and writes ISO/IEC 23008-12:2025 (third edition) with
   Amendment 1 applied, not only the 2017 subset. New modules `image_props`
@@ -17,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dobr`/`pano`, `tols`, `wipe`/`zoom`/`fade`/`splt`, `stpe`, `ssld`, `prdi`,
   `sstr`, `cmex`, `cmin`, and Amendment 1's `cexg`, `dadj`, `stag`, `reve`,
   `ndwt` and the `mskC` mask configuration), `image_derived` (`tmap` tone-map
-  derivation with opaque ISO 21496-1 metadata, and `cfen` colour format
+  derivation with its ISO 21496-1 metadata typed, and `cfen` colour format
   enhancement), `image_groups` (typed `pymd` tile data and `rgpa` areas),
   `image_brands` (clause 10 typed brands, reader-property union and
   structurally checkable findings), `image_sequence` (`ccst`, `auxi`, the
@@ -29,9 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `Rgan`; `ReferenceType` gains `pred`, `prem`, `dpnd`, `mask`, `eroi`,
   `drgn`, `rpds` and `anot`; `EntityGroupType` gains the clause 6.8 set and
   `ImageGroupBody` types the `pymd`/`rgpa` bodies. `StillImage` reports typed
-  brand and structure findings and exposes a tone map's base/gain-map pair, a
-  stereo pair, a group's entities, an image's region items and an item's
-  capture information; `Item` carries typed region and integrity bodies;
+  brand and structure findings and exposes a tone map's base/gain-map pair and
+  metadata, a stereo pair, a group's entities, an image's region items and an
+  item's capture information; `Item` carries typed region and integrity bodies;
   `ItemWriter` can add derived, region and integrity items whole;
   `TrackInfo::is_image_sequence`, `coding_constraints` and
   `auxiliary_type_info` surface clause 7. The per-clause coverage table, the
@@ -41,6 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Four new still-image fixtures (`heif/props.heic`, `heif/tiled.heic`,
   `heif/premult.heic`, `heif/groups.mp4`) written by `heif-enc`/`MP4Box` and a
   twelfth example, `heif_2025`.
+
+### Breaking
+
+- **`StillImage::tone_map_inputs` returns `ToneMapInputs`**: the base and gain
+  map items plus the typed gain map metadata when the body carries the modelled
+  layout. Callers that destructured the old pair use `ToneMapInputs::base` and
+  `ToneMapInputs::gain_map`.
 
 ### Fixed
 

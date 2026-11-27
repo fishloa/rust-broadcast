@@ -77,7 +77,7 @@ types themselves are the one table in `src/coverage.rs`.
 | `item` | ISO/IEC 14496-12:2026 §8.11/§8.15 item boxes: `iloc`, `iinf`/`infe`, `pitm`, `iref` and its typed reference boxes, `iprp`/`ipco`/`ipma`, `idat`, `ipro`, `grpl` with `EntityToGroupBox`, and the `brnd`/`hdlp` properties |
 | `image` | ISO/IEC 23008-12:2025 clause 6 image properties (`ispe`, `pixi`, `rloc`, `auxC`, `irot`, `lsel`, `imir`), the derived bodies `grid`/`iovl`/`iden`, the AVIF `a1op`/`a1lx` properties and brands; `pasp`/`colr`/`clap`/`hvcC`/`avcC`/`av1C`/`mdcv`/`clli` are the crate's existing types |
 | `image_props` | the clause 6.5 properties the 2025 edition and Amendment 1 add (`iscl`, `rref`, `crtt`, `mdft`, `udes`, `altt`, the capture-information set, `tols`, the transitions and their timings, `prdi`, `sstr`, `cmex`, `cmin`, `cexg`, `dadj`, `stag`, `reve`, `ndwt`, `mskC`) |
-| `image_derived` | the `tmap` (tone map, opaque ISO 21496-1 metadata) and `cfen` (colour format enhancement) derived bodies |
+| `image_derived` | the `tmap` (tone map, ISO 21496-1 metadata typed on the open-implementation layout) and `cfen` (colour format enhancement) derived bodies |
 | `image_groups` | typed entity-group bodies: `pymd` tile sizes and `rgpa` area rectangles |
 | `image_brands` | clause 10 brands, reader-property tables and structurally checkable findings |
 | `image_sequence` | clause 7 boxes: `ccst`, `auxi`, the `refs` sample group |
@@ -246,7 +246,8 @@ typed error.
 | `tols`, transitions, `stpe`, `ssld`, `prdi`, `sstr` | 6.5.29-6.5.38 | clause-assembled | — |
 | `cmex`, `cmin` | 6.5.39, 6.5.40 | clause-assembled (v1 orientation opaque) | — |
 | `cexg`, `dadj`, `stag`, `reve`, `ndwt`, `mskC` | Amd 1 6.5.41-45, 11.2.2 | clause-assembled | — |
-| `tmap`, `cfen` | Amd 1 6.6.2.4-5 | clause-assembled (metadata opaque) | — |
+| `tmap` | Amd 1 6.6.2.4 | real: `avifgainmaputil` 1.4.2 | `avif/gainmap-*.avif` |
+| `cfen` | Amd 1 6.6.2.5 | clause-assembled | — |
 | `rgan`, `mski`, region geometry | 11.2-11.3 | clause-assembled | — |
 | `pymd` body, `rgpa` body | Amd 1 6.8.12-13 | clause-assembled | — |
 | `ccst`, `auxi`, `refs`, `md5i` | 7.2.3, 7.5.3, 7.4.1, 8.4 | clause-assembled | — |
