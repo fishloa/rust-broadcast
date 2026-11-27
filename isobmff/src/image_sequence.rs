@@ -9,7 +9,8 @@
 //!
 //! The track-header `matrix` constraints of 7.2.1 and the hidden-sample rule of
 //! 7.3 are stated in prose over fields ISO/IEC 14496-12:2026 already types; they are
-//! not a new structure and are reported as OPEN in the crate's coverage table.
+//! not a new structure and are reported as OPEN in the coverage table at
+//! `private/specs-verified/mpeg/heif/isobmff-coverage-2025.md`.
 //!
 //! Sources: `private/specs-verified/mpeg/heif/iso-iec-23008-12-2025.md` clause 7.
 

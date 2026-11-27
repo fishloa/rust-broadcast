@@ -200,17 +200,17 @@ properties and the AVIF brands. Every property whose syntax another clause
 already defines reuses that type; there is no second parser.
 
 What it does not do: decode pixels. Coded item data is opaque and is reported
-as ordered byte ranges the caller fetches. Two structures defined only in a
-document this repo does not hold are carried opaque in a typed wrapper and
-never interpreted from memory: the ISO 21496-1 gain-map metadata of a `tmap`
-item, and the ISO/IEC 23090-7 rotation struct of a version-1 camera extrinsic
-matrix. The masked regions' pixel data and the constrained-extents grid's
-codec-specific per-extent configuration are likewise opaque. Clause 10's
-mandatory-box checks, the clause 7.2.1 matrix constraints, the clause 7.3
-hidden-sample rule and the region/bracketing sample-group entries not yet
-dispatched from `sgpd` are listed as OPEN in
-[`docs/isobmff-HEIF-2025-COVERAGE.md`](../docs/isobmff-HEIF-2025-COVERAGE.md),
-which also carries the full clause table and the 2017-vs-2025 re-check.
+as ordered byte ranges the caller fetches. The ISO 21496-1 gain-map metadata of
+a `tmap` item is typed on the layout open implementations agree on; a body
+outside that view stays opaque and round-trips. The ISO/IEC 23090-7 rotation
+struct of a version-1 camera extrinsic matrix is carried opaque in a typed
+wrapper and never interpreted from memory. The masked regions' pixel data and
+the constrained-extents grid's codec-specific per-extent configuration are
+likewise opaque. Clause 10's mandatory-box checks, the clause 7.2.1 matrix
+constraints and the clause 7.3 hidden-sample rule are listed as OPEN in the
+clause-by-clause coverage table kept in the private repo at
+`private/specs-verified/mpeg/heif/isobmff-coverage-2025.md`, which also carries
+the 2017-vs-2025 re-check.
 
 The item model carries only facts read from the file: brands, the primary
 item, each item's type/name/hidden flag/protection index, its properties in

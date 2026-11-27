@@ -34,9 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   capture information; `Item` carries typed region and integrity bodies;
   `ItemWriter` can add derived, region and integrity items whole;
   `TrackInfo::is_image_sequence`, `coding_constraints` and
-  `auxiliary_type_info` surface clause 7. See
-  [`docs/isobmff-HEIF-2025-COVERAGE.md`](../docs/isobmff-HEIF-2025-COVERAGE.md)
-  for the per-clause table, the 2017-vs-2025 re-check and the OPEN list.
+  `auxiliary_type_info` surface clause 7. The per-clause coverage table, the
+  2017-vs-2025 re-check and the OPEN list live in the private repo at
+  `private/specs-verified/mpeg/heif/isobmff-coverage-2025.md`.
 
 - Four new still-image fixtures (`heif/props.heic`, `heif/tiled.heic`,
   `heif/premult.heic`, `heif/groups.mp4`) written by `heif-enc`/`MP4Box` and a
