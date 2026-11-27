@@ -3403,6 +3403,8 @@ impl Serialize for ItemPropertiesBox {
     }
 }
 
+const FD_EXTENSION_LENGTH_FIELDS_LEN: usize = 2 * core::mem::size_of::<u64>();
+
 /// The FD item information extension (`fdel`) of a version-1
 /// [`ItemInfoEntry`] — ISO/IEC 14496-12:2026 §8.11.6.1.
 ///
@@ -3520,7 +3522,7 @@ impl Serialize for FdItemInfoExtension {
             + 1
             + self.content_md5.len()
             + 1
-            + 2 * core::mem::size_of::<u64>()
+            + FD_EXTENSION_LENGTH_FIELDS_LEN
             + 1
             + self.group_ids.len() * core::mem::size_of::<u32>()
     }

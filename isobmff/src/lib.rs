@@ -106,6 +106,14 @@
 //!   `csch`, `spki`, `scrb`, `cinf`.
 //! - [`audio_elements`] — audio rendering and element signalling: `ardi`,
 //!   `aelm`, `aedb`, `aepp`, `aepr`, `aesb`, `aesd`.
+//! - [`hint`] — the hint-track layer: `hnti`/`rtp `/`sdp `, the `hinf`
+//!   counters, `tims`/`tsro`/`snro`/`tssy`/`rssr`/`srpp`/`rtpx`/`rcsr`,
+//!   `tPAT`/`tPMT`/`tsti`/`istm`, the RTP/MPEG-2 TS hint sample entries and
+//!   the RTP sample format.
+//! - [`file_delivery`] — FLUTE file delivery: `fiin`/`paen`/`fpar`/`fecr`/
+//!   `fire`/`segr`/`gitn`, `fdsa`/`fdpa`/`extr`/`feci`, the FD hint sample
+//!   entry and the FD sample format; the `fdel` item information extension is
+//!   in [`item`].
 //!
 //! # Spec citations
 //!

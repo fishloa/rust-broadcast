@@ -78,6 +78,24 @@ const LCT_HEADER_TEMPLATE_LEN: usize = U8_LEN + U16_LEN;
 const FDPA_FIXED_LEN: usize = LCT_HEADER_TEMPLATE_LEN + U16_LEN;
 const FEC_HEADER_LEN: usize = U8_LEN + U16_LEN + U16_LEN + U16_LEN;
 const LCT_SHORT_FORM_LIMIT: u8 = 128;
+const LCT_FLAG_SENDER_TIME: u8 = 0x80;
+const LCT_FLAG_RESIDUAL_TIME: u8 = 0x40;
+const LCT_FLAG_SESSION_CLOSE: u8 = 0x20;
+const LCT_FLAG_OBJECT_CLOSE: u8 = 0x10;
+const LCT_RESERVED_MASK: u8 = 0x0F;
+const LCT_VARIABLE_CONTENT_BIAS: usize = 2;
+const FIIN_OPTIONAL_CHILDREN: usize = 2;
+const FD_TRACK_REF_OFFSET: usize = 1;
+const FD_LENGTH_OFFSET: usize = 2;
+const FD_SAMPLE_NUMBER_OFFSET: usize = 4;
+const FD_SAMPLE_OFFSET: usize = 8;
+const FD_BYTES_PER_BLOCK_OFFSET: usize = 12;
+const FD_SAMPLES_PER_BLOCK_OFFSET: usize = 14;
+const FD_ITEM_EXTENT_OFFSET: usize = 3;
+const FD_ITEM_DATA_OFFSET_OFFSET: usize = 5;
+const FD_ITEM_DATA_LENGTH_OFFSET: usize = 13;
+const FD_XML_DATA_LENGTH_OFFSET: usize = 9;
+const FD_XML_RESERVED_OFFSET: usize = 12;
 const LCT_LONG_CONTENT_LEN: usize = 3;
 
 const FD_ITEM_CONSTRUCTOR_TYPE: u8 = 3;
@@ -413,7 +431,7 @@ impl FdItemInformationBox {
         if !self.order.is_empty() {
             return self.order.clone();
         }
-        let mut out = Vec::with_capacity(self.partition_entries.len() + 2);
+        let mut out = Vec::with_capacity(self.partition_entries.len() + FIIN_OPTIONAL_CHILDREN);
         for index in 0..self.partition_entries.len() {
             out.push(FiinChild::Partition(index));
         }
@@ -632,6 +650,13 @@ impl FilePartitionBox {
     #[must_use]
     pub fn entries(&self) -> &[BlockPartition] {
         &self.entries
+    }
+
+    /// Set the FullBox version (0 or 1).
+    #[must_use]
+    pub const fn with_version(mut self, version: u8) -> Self {
+        self.version = version;
+        self
     }
 
     /// Set the FEC ids.
@@ -1203,7 +1228,7 @@ impl GroupName {
 
     /// The group name bytes, terminator excluded.
     #[must_use]
-    pub fn name(&self) -> &[u8] {
+    pub fn name_bytes(&self) -> &[u8] {
         &self.name
     }
 
@@ -1590,11 +1615,11 @@ impl LctHeaderTemplate {
         let toi = be_u16(bytes, *cursor, "LCT TOI")?;
         *cursor += U16_LEN;
         Ok(Self {
-            sender_current_time_present: (flags & 0x80) != 0,
-            expected_residual_time_present: (flags & 0x40) != 0,
-            session_close_bit: (flags & 0x20) != 0,
-            object_close_bit: (flags & 0x10) != 0,
-            reserved: flags & 0x0F,
+            sender_current_time_present: (flags & LCT_FLAG_SENDER_TIME) != 0,
+            expected_residual_time_present: (flags & LCT_FLAG_RESIDUAL_TIME) != 0,
+            session_close_bit: (flags & LCT_FLAG_SESSION_CLOSE) != 0,
+            object_close_bit: (flags & LCT_FLAG_OBJECT_CLOSE) != 0,
+            reserved: flags & LCT_RESERVED_MASK,
             transport_object_identifier: toi,
         })
     }
@@ -1602,16 +1627,22 @@ impl LctHeaderTemplate {
     fn serialize_into(&self, buf: &mut [u8], cursor: &mut usize) -> Result<()> {
         need_out(buf, *cursor + LCT_HEADER_TEMPLATE_LEN)?;
         let flags = if self.sender_current_time_present {
-            0x80
+            LCT_FLAG_SENDER_TIME
         } else {
             0
         } | if self.expected_residual_time_present {
-            0x40
+            LCT_FLAG_RESIDUAL_TIME
         } else {
             0
-        } | if self.session_close_bit { 0x20 } else { 0 }
-            | if self.object_close_bit { 0x10 } else { 0 }
-            | (self.reserved & 0x0F);
+        } | if self.session_close_bit {
+            LCT_FLAG_SESSION_CLOSE
+        } else {
+            0
+        } | if self.object_close_bit {
+            LCT_FLAG_OBJECT_CLOSE
+        } else {
+            0
+        } | (self.reserved & LCT_RESERVED_MASK);
         buf[*cursor] = flags;
         *cursor += U8_LEN;
         buf[*cursor..*cursor + U16_LEN]
@@ -1684,7 +1715,7 @@ impl LctHeaderExtension {
             let content_len = if length == 0 {
                 0
             } else {
-                usize::from(length) * U32_LEN - 2
+                usize::from(length) * U32_LEN - LCT_VARIABLE_CONTENT_BIAS
             };
             need_in(bytes, *cursor + content_len, "LCT header extension content")?;
             let content = bytes[*cursor..*cursor + content_len].to_vec();
@@ -1804,7 +1835,7 @@ impl FdConstructor {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, FD_CONSTRUCTOR_LEN, "FD constructor")?;
         let kind = bytes[0];
-        let data_length = u32::from_be_bytes([0, bytes[13], bytes[14], bytes[15]]);
+        let data_length = u24_at(bytes, FD_ITEM_DATA_LENGTH_OFFSET);
         Ok(match kind {
             0 => {
                 let mut pad = [0u8; FD_CONSTRUCTOR_LEN - 1];
@@ -1818,23 +1849,39 @@ impl FdConstructor {
                 Self::Immediate { count, data }
             }
             FD_SAMPLE_CONSTRUCTOR_TYPE => Self::Sample {
-                track_ref_index: bytes[1] as i8,
-                length: be_u16(bytes, 2, "FD constructor length")?,
-                sample_number: be_u32(bytes, 4, "FD constructor samplenumber")?,
-                sample_offset: be_u32(bytes, 8, "FD constructor sampleoffset")?,
-                bytes_per_block: be_u16(bytes, 12, "FD constructor bytesperblock")?,
-                samples_per_block: be_u16(bytes, 14, "FD constructor samplesperblock")?,
+                track_ref_index: bytes[FD_TRACK_REF_OFFSET] as i8,
+                length: be_u16(bytes, FD_LENGTH_OFFSET, "FD constructor length")?,
+                sample_number: be_u32(
+                    bytes,
+                    FD_SAMPLE_NUMBER_OFFSET,
+                    "FD constructor samplenumber",
+                )?,
+                sample_offset: be_u32(bytes, FD_SAMPLE_OFFSET, "FD constructor sampleoffset")?,
+                bytes_per_block: be_u16(
+                    bytes,
+                    FD_BYTES_PER_BLOCK_OFFSET,
+                    "FD constructor bytesperblock",
+                )?,
+                samples_per_block: be_u16(
+                    bytes,
+                    FD_SAMPLES_PER_BLOCK_OFFSET,
+                    "FD constructor samplesperblock",
+                )?,
             },
             FD_ITEM_CONSTRUCTOR_TYPE => Self::Item {
                 item_id: be_u16(bytes, 1, "FD constructor item_ID")?,
-                extent_index: be_u16(bytes, 3, "FD constructor extent_index")?,
-                data_offset: be_u64(bytes, 5, "FD constructor data_offset")?,
+                extent_index: be_u16(bytes, FD_ITEM_EXTENT_OFFSET, "FD constructor extent_index")?,
+                data_offset: be_u64(
+                    bytes,
+                    FD_ITEM_DATA_OFFSET_OFFSET,
+                    "FD constructor data_offset",
+                )?,
                 data_length,
             },
             FD_XML_CONSTRUCTOR_TYPE => Self::Xml {
                 data_offset: be_u64(bytes, 1, "FD constructor data_offset")?,
-                data_length: u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]),
-                reserved: u32::from_be_bytes([0, bytes[12], bytes[13], bytes[14]]),
+                data_length: u24_at(bytes, FD_XML_DATA_LENGTH_OFFSET),
+                reserved: u24_at(bytes, FD_XML_RESERVED_OFFSET),
             },
             _ => return Err(Error::InvalidInput("unknown FD constructor type")),
         })

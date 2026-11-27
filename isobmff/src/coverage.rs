@@ -7,7 +7,7 @@
 //!
 //! Each row carries a `proves` function that parses a minimal box of that type
 //! through the real parser, so a row for a type the crate does not parse fails
-//! the coverage test. The private registry has 168 rows; the integration test
+//! the coverage test. The private registry has 167 rows; the integration test
 //! `tests/it/coverage.rs` pins every type not listed here under its issue tier.
 
 use alloc::vec::Vec;

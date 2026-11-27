@@ -15,6 +15,7 @@
 //! Unknown children (GoPro `FIRM`, `GPMF`, `free`, …) are an [`OpaqueBox`] at
 //! the position they occupied, so a camera file round-trips byte for byte.
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use broadcast_core::len::{need_in, need_out};

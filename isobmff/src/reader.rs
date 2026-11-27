@@ -471,6 +471,14 @@ impl SampleEntryInfo {
         }
     }
 
+    /// The bit-rate declaration (`btrt`, §8.5.2) this sample description
+    /// carries, when present.
+    #[must_use]
+    pub fn bit_rate(&self) -> Option<crate::sample_entries::BitRateBox> {
+        self.entry_body(b"btrt")
+            .and_then(|body| crate::sample_entries::BitRateBox::parse_body(body).ok())
+    }
+
     /// The restriction scheme (`rinf`, §13.5.3) this sample description
     /// carries, when it carries one — either because the entry's four-CC is a
     /// restricted code (`resv`, `resa`, …) or because an advisory `rinf` sits

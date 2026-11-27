@@ -1177,7 +1177,7 @@ impl TimestampSynchronyBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         need_in(body, U8_LEN, "tssy")?;
         Ok(Self {
-            reserved: body[0] >> 2,
+            reserved: body[0] >> TSSY_RESERVED_SHIFT,
             timestamp_sync: body[0] & TSSY_SYNC_MASK,
         })
     }
@@ -1203,7 +1203,7 @@ impl Serialize for TimestampSynchronyBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = write_box_header(buf, &TSSY, need)?;
-        let reserved = self.reserved << 2;
+        let reserved = self.reserved << TSSY_RESERVED_SHIFT;
         buf[cursor] = reserved | (self.timestamp_sync & TSSY_SYNC_MASK);
         cursor += U8_LEN;
         Ok(cursor)
@@ -1345,19 +1345,18 @@ impl ReceivedCsrcBox {
 
     /// Parse the payload after the 8-byte box header.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        if body.len() % U32_LEN != 0 {
+        if !body.len().is_multiple_of(U32_LEN) {
             return Err(Error::BufferTooShort(BufferTooShort {
-                need: body.len().saturating_add(U32_LEN - (body.len() % U32_LEN)),
+                need: body.len().next_multiple_of(U32_LEN),
                 have: body.len(),
                 what: "rcsr CSRC list",
             }));
         }
         let mut csrc = Vec::with_capacity(body.len() / U32_LEN);
-        for (index, chunk) in body.chunks_exact(U32_LEN).enumerate() {
+        for chunk in body.chunks_exact(U32_LEN) {
             let mut word = [0u8; U32_LEN];
             word.copy_from_slice(chunk);
             csrc.push(u32::from_be_bytes(word));
-            let _ = index;
         }
         Ok(Self { csrc })
     }
@@ -1785,7 +1784,7 @@ impl Serialize for TsTimingBox {
             "timing_derivation_method",
         )?;
         let reserved = fit_u16(usize::from(self.reserved), "reserved")?;
-        let word = ((method << TSTI_METHOD_SHIFT) & 0x8000)
+        let word = ((method << TSTI_METHOD_SHIFT) & TSTI_METHOD_MASK)
             | ((reserved << TSTI_RESERVED_SHIFT) & TSTI_RESERVED_MASK)
             | (self.pid & PID_MASK);
         buf[cursor..cursor + U16_LEN].copy_from_slice(&word.to_be_bytes());
@@ -2328,9 +2327,9 @@ impl Mpeg2TsHintSampleEntry {
         )?;
         let hint_track_version = be_u16(rest, 0, "hinttrackversion")?;
         let highest_compatible_version = be_u16(rest, U16_LEN, "highestcompatibleversion")?;
-        let preceding_bytes_len = rest[2 * U16_LEN];
-        let trailing_bytes_len = rest[2 * U16_LEN + U8_LEN];
-        let flags = rest[2 * U16_LEN + 2 * U8_LEN];
+        let preceding_bytes_len = rest[MPEG2TS_FIELDS_OFFSET];
+        let trailing_bytes_len = rest[MPEG2TS_TRAILING_OFFSET];
+        let flags = rest[MPEG2TS_FLAGS_OFFSET];
         let mut children = Vec::new();
         for child in crate::box_types::BoxIter::new(&rest[MPEG2TS_SAMPLE_ENTRY_FIXED_LEN..]) {
             let child = child?;
@@ -2539,8 +2538,8 @@ impl FdHintSampleEntry {
         need_in(rest, FD_HINT_SAMPLE_ENTRY_FIXED_LEN, "fdp sample entry")?;
         let hint_track_version = be_u16(rest, 0, "hinttrackversion")?;
         let highest_compatible_version = be_u16(rest, U16_LEN, "highestcompatibleversion")?;
-        let partition_entry_id = be_u16(rest, 2 * U16_LEN, "partition_entry_ID")?;
-        let fec_overhead = be_u16(rest, 3 * U16_LEN, "FEC_overhead")?;
+        let partition_entry_id = be_u16(rest, FD_PARTITION_ID_OFFSET, "partition_entry_ID")?;
+        let fec_overhead = be_u16(rest, FD_OVERHEAD_OFFSET, "FEC_overhead")?;
         let mut children = Vec::new();
         for child in crate::box_types::BoxIter::new(&rest[FD_HINT_SAMPLE_ENTRY_FIXED_LEN..]) {
             let child = child?;
@@ -2693,6 +2692,22 @@ const RTP_REPEAT_FLAG: u16 = 0x0001;
 const RTP_RESERVED_FLAGS_MASK: u16 = 0xFFF8;
 const RTP_RESERVED_FLAGS_SHIFT: u32 = 3;
 const RTP_IMMEDIATE_DATA_LEN: usize = 14;
+const RTP_TRACK_REF_OFFSET: usize = 1;
+const RTP_LENGTH_OFFSET: usize = 2;
+const RTP_SAMPLE_NUMBER_OFFSET: usize = 4;
+const RTP_SAMPLE_OFFSET: usize = 8;
+const RTP_BYTES_PER_BLOCK_OFFSET: usize = 12;
+const RTP_SAMPLES_PER_BLOCK_OFFSET: usize = 14;
+const RTP_DESCRIPTION_INDEX_OFFSET: usize = 4;
+const RTP_DESCRIPTION_OFFSET: usize = 8;
+const RTP_DESCRIPTION_RESERVED_OFFSET: usize = 12;
+const TSSY_RESERVED_SHIFT: u32 = 2;
+const TSTI_METHOD_MASK: u16 = 0x8000;
+const MPEG2TS_FIELDS_OFFSET: usize = 2 * U16_LEN;
+const MPEG2TS_TRAILING_OFFSET: usize = MPEG2TS_FIELDS_OFFSET + U8_LEN;
+const MPEG2TS_FLAGS_OFFSET: usize = MPEG2TS_FIELDS_OFFSET + 2 * U8_LEN;
+const FD_PARTITION_ID_OFFSET: usize = 2 * U16_LEN;
+const FD_OVERHEAD_OFFSET: usize = 3 * U16_LEN;
 const RTP_SAMPLE_CONSTRUCTOR_TYPE: u8 = 2;
 const RTP_DESCRIPTION_CONSTRUCTOR_TYPE: u8 = 3;
 
@@ -2762,27 +2777,43 @@ impl RtpConstructor {
                 Self::Immediate { count, data }
             }
             RTP_SAMPLE_CONSTRUCTOR_TYPE => Self::Sample {
-                track_ref_index: bytes[1] as i8,
-                length: be_u16(bytes, 2, "RTP constructor length")?,
-                sample_number: be_u32(bytes, 4, "RTP constructor samplenumber")?,
-                sample_offset: be_u32(bytes, 8, "RTP constructor sampleoffset")?,
-                bytes_per_block: be_u16(bytes, 12, "RTP constructor bytesperblock")?,
-                samples_per_block: be_u16(bytes, 14, "RTP constructor samplesperblock")?,
+                track_ref_index: bytes[RTP_TRACK_REF_OFFSET] as i8,
+                length: be_u16(bytes, RTP_LENGTH_OFFSET, "RTP constructor length")?,
+                sample_number: be_u32(
+                    bytes,
+                    RTP_SAMPLE_NUMBER_OFFSET,
+                    "RTP constructor samplenumber",
+                )?,
+                sample_offset: be_u32(bytes, RTP_SAMPLE_OFFSET, "RTP constructor sampleoffset")?,
+                bytes_per_block: be_u16(
+                    bytes,
+                    RTP_BYTES_PER_BLOCK_OFFSET,
+                    "RTP constructor bytesperblock",
+                )?,
+                samples_per_block: be_u16(
+                    bytes,
+                    RTP_SAMPLES_PER_BLOCK_OFFSET,
+                    "RTP constructor samplesperblock",
+                )?,
             },
             RTP_DESCRIPTION_CONSTRUCTOR_TYPE => Self::SampleDescription {
-                track_ref_index: bytes[1] as i8,
-                length: be_u16(bytes, 2, "RTP constructor length")?,
+                track_ref_index: bytes[RTP_TRACK_REF_OFFSET] as i8,
+                length: be_u16(bytes, RTP_LENGTH_OFFSET, "RTP constructor length")?,
                 sample_description_index: be_u32(
                     bytes,
-                    4,
+                    RTP_DESCRIPTION_INDEX_OFFSET,
                     "RTP constructor sampledescriptionindex",
                 )?,
                 sample_description_offset: be_u32(
                     bytes,
-                    8,
+                    RTP_DESCRIPTION_OFFSET,
                     "RTP constructor sampledescriptionoffset",
                 )?,
-                reserved: be_u32(bytes, 12, "RTP constructor reserved")?,
+                reserved: be_u32(
+                    bytes,
+                    RTP_DESCRIPTION_RESERVED_OFFSET,
+                    "RTP constructor reserved",
+                )?,
             },
             _ => return Err(Error::InvalidInput("unknown RTP constructor type")),
         })
