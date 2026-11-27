@@ -156,6 +156,7 @@ cargo run -p isobmff --example build_ftyp
 cargo run -p isobmff --example parse_emsg
 cargo run -p isobmff --example build_emsg
 cargo run -p isobmff --example list_samples -- fixtures/mp4/progressive/av-prog.mp4
+cargo run -p isobmff --example print_audio_tracks -- fixtures/mp4/boxes/track-description.mp4
 cargo run -p isobmff --example read_tags -- fixtures/mp4/progressive/av-prog.mp4
 cargo run -p isobmff --example write_tags -- fixtures/mp4/progressive/av-prog.mp4 /tmp/tags.udta
 cargo run -p isobmff --example heif_info -- fixtures/heif/thumb.heic
