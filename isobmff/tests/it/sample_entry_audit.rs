@@ -203,7 +203,11 @@ fn a_committed_entry_keeps_a_trailing_region_it_does_not_describe() {
             });
             if out != grown {
                 let fourcc = String::from_utf8_lossy(&grown[FOURCC_RANGE]).into_owned();
-                dropped.push(format!("{fixture} {fourcc}: {} in, {} out", grown.len(), out.len()));
+                dropped.push(format!(
+                    "{fixture} {fourcc}: {} in, {} out",
+                    grown.len(),
+                    out.len()
+                ));
             }
             checked += 1;
         }
@@ -322,7 +326,9 @@ fn stpp_entry_keeps_an_unframeable_child_region() {
     };
     assert_eq!(
         entry.trailing,
-        [0, 0, 0, 20, b'b', b't', b'r', b't', 0, 0, 0, 0, 0xAA, 0xBB, 0xCC]
+        [
+            0, 0, 0, 20, b'b', b't', b'r', b't', 0, 0, 0, 0, 0xAA, 0xBB, 0xCC
+        ]
     );
     assert_eq!(
         entry.try_to_bytes().expect("stpp serializes"),

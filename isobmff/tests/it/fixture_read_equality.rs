@@ -226,8 +226,8 @@ fn totals() -> Totals {
 /// `qt-prores-ap*.mov` and `qt-svq1.mov`) are the whole difference from the
 /// 271-file totals this lane pinned before that merge: each file's own typed
 /// results were compared one by one against `origin/main` and every one of
-/// the 271 older files is unchanged. (`quicktime/../3gpp/h263.3gp` is not in
-/// the walked extensions.)
+/// the 271 older files is unchanged. (`mp4/3gpp/h263.3gp` is not in the
+/// walked extensions.)
 const EXPECTED: Totals = Totals {
     files: 282,
     movie_reads: 282,
