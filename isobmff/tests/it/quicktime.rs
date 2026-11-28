@@ -12,7 +12,7 @@ use isobmff::quicktime::{
     GmhdAtom, GminAtom, TcmiAtom, TimecodeEntry, TrackApertureModeDimensionsBox, WaveAtom,
     timecode_from_sample,
 };
-use isobmff::reader::{ByteRange, Reader, ReaderConfig, SampleOrder, Step, TrackInfo, Warning};
+use isobmff::reader::{ByteRange, Reader, ReaderConfig, SampleOrder, Step, TrackInfo};
 use isobmff::sample_table::SampleRef;
 use isobmff::segments::FileTypeBox;
 
@@ -21,7 +21,7 @@ struct Drive {
     samples: Vec<SampleRef>,
     metadata: Option<MovieMetadata>,
     brand: Option<FileTypeBox>,
-    warnings: Vec<Warning>,
+    warnings: Vec<broadcast_core::damage::Damage>,
 }
 
 fn drive(data: &[u8], config: ReaderConfig) -> isobmff::Result<Drive> {
@@ -44,7 +44,7 @@ fn drive(data: &[u8], config: ReaderConfig) -> isobmff::Result<Drive> {
             Step::Metadata(metadata) => drive.metadata = Some(metadata.clone()),
             Step::Sample(sample) => drive.samples.push(sample),
             Step::Fragment(_) => {}
-            Step::Warning(warning) => drive.warnings.push(warning),
+            Step::Damage(warning) => drive.warnings.push(warning),
             Step::Done => break,
             _ => {}
         }

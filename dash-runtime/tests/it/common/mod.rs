@@ -150,3 +150,19 @@ pub use test_harness::dash::capture;
 pub use test_harness::dash::loopback;
 pub use test_harness::dash::synth;
 pub use test_harness::dash::world;
+
+/// `segment` with its `moof` body overwritten: the top-level box framing (and
+/// so `container_probe`'s media-fragment check) survives, the fragment does
+/// not.
+pub fn damage_moof(segment: &[u8]) -> Vec<u8> {
+    let body = isobmff::BoxIter::new(segment)
+        .filter_map(|step| step.ok())
+        .find(|item| item.header.box_type.is(&isobmff::segments::MOOF))
+        .map(|item| item.end - item.body.len()..item.end)
+        .expect("the fixture segment carries a moof");
+    let mut damaged = segment.to_vec();
+    for byte in &mut damaged[body] {
+        *byte = u8::MAX;
+    }
+    damaged
+}

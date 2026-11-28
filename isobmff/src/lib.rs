@@ -62,9 +62,11 @@
 //!   structure byte ranges, surfaces every track and one [`SampleRef`] at a
 //!   time, and hands out a [`SamplePlan`] from the index alone. [`plan`] also
 //!   holds [`OwnedPlan`], the same tables with no borrow, and [`PlanBuilder`],
-//!   which builds one from pushed sample descriptors. [`reader::Mode`] is
-//!   strict by default; `Mode::Permissive` reports the design §4.7 faults as
-//!   [`reader::Step::Warning`] instead of failing the read.
+//!   which builds one from pushed sample descriptors. Best effort is the
+//!   default: a structural fault that still leaves media addressable is
+//!   carried and reported as a [`broadcast_core::damage::Damage`] through
+//!   [`reader::Step::Damage`]. [`reader::Mode::Strict`] is the explicit
+//!   opt-in that refuses such a file instead.
 //! - [`quicktime`] — QuickTime atoms a camera or editing `.mov` carries, read
 //!   and written: sound description versions 1 and 2, `wave`, `gmhd`, `tmcd`,
 //!   `tapt`, chapter titles, and a `qt  ` or absent `ftyp`. Every `Serialize`
@@ -153,6 +155,7 @@ pub mod box_types;
 pub mod cenc;
 pub mod compressed;
 pub mod coverage;
+pub mod damage;
 pub mod dovi;
 #[cfg(feature = "std")]
 pub mod driver;

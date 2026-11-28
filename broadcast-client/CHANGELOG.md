@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- An MP4 opened over HTTP ranges now tells the reader the representation's
+  total length as soon as the first `Content-Range` states it, so a truncated
+  representation is reported as truncated instead of quietly ending early.
+- A damaged MP4 read over ranges now reaches the caller as
+  `DriverStep::Damage` (the range driver already passed the reader's steps
+  through; the reader's channel changed shape), so a player sees what was
+  skipped and a `DamagePolicy` that fails stops the read with the report.
+
 ### Added
 
 - An SDP-described RTP source (`udp` / `rtp` with an SDP) reports each lost RTP

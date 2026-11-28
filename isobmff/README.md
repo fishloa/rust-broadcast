@@ -67,7 +67,7 @@ types themselves are the one table in `src/coverage.rs`.
 | `frag_offsets` | ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 sample-data addressing rules |
 | `frag_layout` | `FragmentLayout`: the `tfhd`/`trun` field choices, run splits and child order a fragment states, plus the `sidx`/`mfra` forms around it — `reader::FragmentInfo` reports one and `FragmentedWriter::set_fragment_layout` reproduces it byte for byte |
 | `reader` (fragmented) | the same `Reader` reads a fragmented file one `moof` at a time and seeks through `sidx` or the trailing `tfra` |
-| `reader` (permissive) | `Mode::Permissive` reports the design §4.7 faults as `Step::Warning`; strict mode keeps rejecting them |
+| `reader` (best effort) | Best effort is the default: a fault that still leaves media addressable is carried and published as a `broadcast_core::damage::Damage` through `Step::Damage`, with a caller `DamagePolicy` deciding whether that report also stops the read. `Mode::Strict` is the opt-in a validator asks for |
 | `quicktime` | QuickTime atoms, read and written: sound description versions 1/2, `wave`, `gmhd`, `tmcd`, `tapt`, chapter titles, `qt  `/brandless files |
 | `driver` | blocking drivers over the reader: `FileReader` (`Read + Seek`) and `ForwardReader` (`Read` only), with a bounded reusable buffer |
 | `timing` (random access) | `tfra`, `mfra`, `mfro` |

@@ -98,7 +98,7 @@ use crate::packet::{
     HandshakeExtensions, HandshakePacket, HandshakeType, SEQ_NUMBER_MASK, SRT_HEADER_LEN,
     SrtPacket,
 };
-use crate::tsbpd::{TickOutcome, TsbpdScheduler};
+use crate::tsbpd::{DroppedPacket, TickOutcome, TsbpdScheduler};
 
 #[cfg(feature = "crypto")]
 #[cfg(feature = "crypto")]
@@ -2149,25 +2149,15 @@ impl Driver {
     /// can no longer be delivered, the ACKs it sends let the peer free them,
     /// and the flow window it measures new arrivals against advances with the
     /// delivery cursor instead of stalling at the lost packet forever.
+    ///
+    /// The outcome does not interleave the two lists: `delivered` names every
+    /// packet released in the pass and `dropped` every packet given up on in
+    /// the same pass, so walking `delivered` first would hand the application
+    /// payloads that follow a skip before the report naming that skip. They
+    /// are therefore merged on sequence number, and a payload that comes
+    /// after a skip is published only once that skip's report is out — the
+    /// report immediately before the first payload past the gap.
     fn release(&mut self, outcome: &TickOutcome) {
-        for &seq in &outcome.delivered {
-            if let Some(datagram) = self.staged.remove(&seq) {
-                // The staged datagram is a DATA packet (it parsed as one):
-                // hand over the payload as a view into the same allocation.
-                let payload = datagram.slice(SRT_HEADER_LEN.min(datagram.len())..);
-                if self
-                    .deliver
-                    .try_send(Delivered::Event(SrtEvent::Payload(payload)))
-                    .is_err()
-                {
-                    // Full (app isn't calling `recv` fast enough) or the
-                    // handle is gone; either way, drop rather than buffer
-                    // without bound (item 4), count it and say so once.
-                    self.stats.deliver_dropped.fetch_add(1, Ordering::Relaxed);
-                    self.report_counted(CountedCause::DeliverDropped, 1);
-                }
-            }
-        }
         for &packet in &outcome.dropped {
             self.staged.remove(&packet.seq_number);
             self.stats.too_late_dropped.fetch_add(1, Ordering::Relaxed);
@@ -2176,8 +2166,57 @@ impl Driver {
         for (first, last) in contiguous_runs(&lost) {
             self.receiver.skip_range(first, last);
         }
-        for damage in crate::damage::reports(&outcome.dropped) {
+
+        let dropped = &outcome.dropped;
+        let mut next_delivered = 0usize;
+        let mut run_start = 0usize;
+        while run_start < dropped.len() {
+            let run_end = run_start
+                + contiguous_runs(&lost[run_start..])
+                    .first()
+                    .copied()
+                    .map_or(0, |(_, last)| seq_diff(last, lost[run_start]) as usize + 1);
+            while let Some(&seq) = outcome.delivered.get(next_delivered) {
+                if seq_lt(seq, dropped[run_start].seq_number) {
+                    self.deliver_payload(seq);
+                    next_delivered += 1;
+                } else {
+                    break;
+                }
+            }
+            self.report_run(&dropped[run_start..run_end]);
+            run_start = run_end;
+        }
+        for &seq in &outcome.delivered[next_delivered..] {
+            self.deliver_payload(seq);
+        }
+    }
+
+    /// Publish one stretch of dropped packets: one report per contiguous run
+    /// of sequence numbers that shares a reason.
+    fn report_run(&mut self, run: &[DroppedPacket]) {
+        for damage in crate::damage::reports(run) {
             self.report(damage);
+        }
+    }
+
+    /// Hand one released payload to the application.
+    fn deliver_payload(&mut self, seq: u32) {
+        if let Some(datagram) = self.staged.remove(&seq) {
+            // The staged datagram is a DATA packet (it parsed as one):
+            // hand over the payload as a view into the same allocation.
+            let payload = datagram.slice(SRT_HEADER_LEN.min(datagram.len())..);
+            if self
+                .deliver
+                .try_send(Delivered::Event(SrtEvent::Payload(payload)))
+                .is_err()
+            {
+                // Full (app isn't calling `recv` fast enough) or the
+                // handle is gone; either way, drop rather than buffer
+                // without bound (item 4), count it and say so once.
+                self.stats.deliver_dropped.fetch_add(1, Ordering::Relaxed);
+                self.report_counted(CountedCause::DeliverDropped, 1);
+            }
         }
     }
 

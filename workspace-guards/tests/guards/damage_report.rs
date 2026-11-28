@@ -11,9 +11,6 @@
 //!   one) nor converts to one (an `impl` block naming the enum whose body
 //!   mentions `Damage`).
 //!
-//! Crates marked `Pending` in the table are allowed to keep their own report
-//! enum until their tracking issue lands; the pending list may only shrink.
-//!
 //! The scan is lexical, not a proof: a renamed enum or a helper declared in a
 //! macro evades it, so review is the real control.
 
@@ -21,21 +18,6 @@ use crate::common::assert_names_are_members;
 use crate::damage_report_data::{READERS, REPORT_NAME_NEEDLES, Reader};
 use std::collections::BTreeSet;
 use workspace_guards::src_files;
-
-/// Whether a reader reports through `broadcast_core::damage::Damage` yet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Status {
-    /// Converts its report enums to `Damage` and publishes it.
-    Converted,
-    /// Keeps its own report enum until this tracking issue lands.
-    Pending(u32),
-}
-
-impl Status {
-    fn is_converted(self) -> bool {
-        matches!(self, Status::Converted)
-    }
-}
 
 /// The body of `pub enum <name>` (`{`..matching `}`), or `None`.
 fn enum_body(text: &str, name: &str) -> Option<String> {
@@ -145,7 +127,7 @@ fn problems(reader: &Reader, files: &[(String, String)]) -> Vec<String> {
             out.push(format!(
                 "{}: public enum `{name}` reports skipped content but is not listed in the \
                  damage_report table; carry a broadcast_core::damage::Damage in a variant (or \
-                 convert to one) and list it, or file it as Pending",
+                 convert to one) and list it",
                 reader.name
             ));
         }
@@ -158,7 +140,7 @@ fn problems(reader: &Reader, files: &[(String, String)]) -> Vec<String> {
             ));
             continue;
         }
-        if reader.status.is_converted() && !carries_or_converts(files, name) {
+        if !carries_or_converts(files, name) {
             out.push(format!(
                 "{}: `{name}` neither carries a broadcast_core::damage::Damage in a variant nor \
                  converts to one in an impl block",
@@ -184,10 +166,7 @@ fn readers_report_through_damage() {
 
 #[test]
 fn a_planted_finding_enum_in_a_converted_crate_trips_the_guard() {
-    let reader = READERS
-        .iter()
-        .find(|r| r.status.is_converted())
-        .expect("a converted reader");
+    let reader = READERS.first().expect("a converted reader");
     let planted = vec![(
         "src/planted.rs".to_string(),
         "pub enum PacketFinding { Skipped, Repaired }".to_string(),
@@ -205,10 +184,7 @@ fn a_planted_finding_enum_in_a_converted_crate_trips_the_guard() {
 
 #[test]
 fn a_listed_report_enum_without_a_damage_trips_the_guard() {
-    let reader = READERS
-        .iter()
-        .find(|r| r.status.is_converted())
-        .expect("a converted reader");
+    let reader = READERS.first().expect("a converted reader");
     let files: Vec<(String, String)> = reader
         .reports
         .iter()
@@ -231,11 +207,25 @@ fn a_listed_report_enum_without_a_damage_trips_the_guard() {
 }
 
 #[test]
-fn a_conversion_satisfies_the_guard() {
+fn a_planted_finding_enum_in_the_isobmff_reader_trips_the_guard() {
     let reader = READERS
         .iter()
-        .find(|r| r.status.is_converted())
-        .expect("a converted reader");
+        .find(|r| r.name == "isobmff")
+        .expect("the isobmff reader");
+    let planted = vec![(
+        "src/planted.rs".to_string(),
+        "pub enum BoxFinding { Skipped, Repaired }".to_string(),
+    )];
+    let found = problems(reader, &planted);
+    assert!(
+        found.iter().any(|p| p.contains("BoxFinding")),
+        "a planted private finding enum must trip the guard: {found:?}"
+    );
+}
+
+#[test]
+fn a_conversion_satisfies_the_guard() {
+    let reader = READERS.first().expect("a converted reader");
     let files: Vec<(String, String)> = reader
         .reports
         .iter()

@@ -1853,6 +1853,14 @@ mod equality_tests {
         assert!(!same(&base, &m), "skipped");
 
         let mut m = base.clone();
+        m.damages.push(broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "unit",
+        ));
+        assert!(!same(&base, &m), "damage");
+
+        let mut m = base.clone();
         m.degraded.clear();
         assert!(!same(&base, &m), "degraded");
 

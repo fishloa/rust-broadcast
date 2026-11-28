@@ -2,19 +2,14 @@
 //! whether it reports through `broadcast_core::damage::Damage` yet, and the
 //! report enums it declares.
 //!
-//! A crate is `Converted` once its reader publishes a [`Damage`] carrying
-//! variant and/or converts its own report enum into one; it is `Pending` with
-//! the tracking issue number otherwise. The pending list may only shrink:
-//! converting a crate moves it to `Converted`, it never leaves the table.
-
-use crate::damage_report::Status;
+//! Every crate listed publishes a [`Damage`]-carrying variant and/or converts
+//! its own report enum into one; a new reading crate is added here when it
+//! starts reading damaged input.
 
 /// One reading crate.
 pub struct Reader {
     /// Workspace member name.
     pub name: &'static str,
-    /// Whether it reports through `Damage` yet.
-    pub status: Status,
     /// Public enums this crate declares that report skipped content. Each must
     /// carry a `Damage` (a variant holding one) or convert to one.
     pub reports: &'static [&'static str],
@@ -27,17 +22,14 @@ pub const READERS: &[Reader] = &[
     // carry it to the player.
     Reader {
         name: "transmux",
-        status: Status::Converted,
         reports: &["DemuxEvent", "InputDegradation"],
     },
     Reader {
         name: "media-plane",
-        status: Status::Converted,
         reports: &["SessionEvent"],
     },
     Reader {
         name: "broadcast-client",
-        status: Status::Converted,
         reports: &["Event"],
     },
     // Lane dm3: the segment-pull clients forward every report their MP4/TS
@@ -45,17 +37,14 @@ pub const READERS: &[Reader] = &[
     // into the same report, coalesced by kind per resource.
     Reader {
         name: "hls-runtime",
-        status: Status::Converted,
         reports: &["Output"],
     },
     Reader {
         name: "dash-runtime",
-        status: Status::Converted,
         reports: &["Output"],
     },
     Reader {
         name: "smooth-runtime",
-        status: Status::Converted,
         reports: &["Output"],
     },
     // Lane dm3: the RTSP client resynchronises past junk between interleaved
@@ -63,7 +52,6 @@ pub const READERS: &[Reader] = &[
     // as `ClientEvent::Damage`; a dropped media section converts to a report.
     Reader {
         name: "rtsp-runtime",
-        status: Status::Converted,
         reports: &["ClientEvent"],
     },
     // Lane dm3: the SRT delivery engine reports every packet run TSBPD gave
@@ -71,7 +59,6 @@ pub const READERS: &[Reader] = &[
     // dropped before the scheduler saw it, as `SrtEvent::Damage`.
     Reader {
         name: "srt-runtime",
-        status: Status::Converted,
         reports: &["SrtEvent"],
     },
     // Lane dm3: the chunk reassembler reports every message an interrupting
@@ -82,7 +69,6 @@ pub const READERS: &[Reader] = &[
     // lost. `ServerEvent` and `ClientEvent` carry the report.
     Reader {
         name: "rtmp-runtime",
-        status: Status::Converted,
         reports: &["ServerEvent", "ClientEvent"],
     },
     // Converted with the TS/PS demuxer forwarding: every tolerant bitstream
@@ -90,13 +76,13 @@ pub const READERS: &[Reader] = &[
     // per skip, and `ParseFinding` converts into the one `Damage` report.
     Reader {
         name: "broadcast-bitstream",
-        status: Status::Converted,
         reports: &["ParseFinding"],
     },
-    // Pending: #4191 converts the remaining readers to the one report.
+    // Lane rz2 converted the ISO BMFF readers: `Warning`, `ImageFinding` and
+    // `BrandFinding` convert to a `Damage`, `Reader::step` publishes
+    // `Step::Damage` and `ItemReader::step` publishes `ItemStep::Damage`.
     Reader {
         name: "isobmff",
-        status: Status::Pending(4191),
         reports: &["Warning", "ImageFinding", "BrandFinding"],
     },
     // Lane rz1 converted the Matroska/WebM reader: `Warning` converts to a
@@ -104,7 +90,6 @@ pub const READERS: &[Reader] = &[
     // one as `DemuxEvent::Damage` beside its own finding channel.
     Reader {
         name: "broadcast-matroska",
-        status: Status::Converted,
         reports: &["Warning"],
     },
 ];

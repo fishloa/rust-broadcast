@@ -24,8 +24,17 @@ fn load(name: &str) -> (Vec<u8>, StillImage) {
 }
 
 fn load_bytes(bytes: &[u8], config: ItemReaderConfig) -> StillImage {
+    load_reported(bytes, config).0
+}
+
+/// Load a still image and the reports its walk published.
+fn load_reported(
+    bytes: &[u8],
+    config: ItemReaderConfig,
+) -> (StillImage, Vec<broadcast_core::damage::Damage>) {
     let config = config.with_total_len(Some(bytes.len() as u64));
     let mut reader = ItemReader::new(config);
+    let mut damages = Vec::new();
     loop {
         match reader.step().expect("step") {
             ItemStep::Need(range) => {
@@ -38,9 +47,10 @@ fn load_bytes(bytes: &[u8], config: ItemReaderConfig) -> StillImage {
             ItemStep::Loaded(image) => {
                 let image = image.clone();
                 assert!(matches!(reader.step().expect("step"), ItemStep::Done));
-                return image;
+                return (image, damages);
             }
             ItemStep::Done => panic!("done without a model"),
+            ItemStep::Damage(damage) => damages.push(damage),
             _ => panic!("unexpected step"),
         }
     }
@@ -58,6 +68,7 @@ fn expect_load_error(bytes: &[u8], config: ItemReaderConfig) -> isobmff::Error {
                     return err;
                 }
             }
+            Ok(ItemStep::Damage(_)) => {}
             Ok(ItemStep::Loaded(_)) => panic!("loaded an invalid file"),
             Ok(ItemStep::Done) => panic!("done without an error"),
             Ok(_) => panic!("unexpected step"),
@@ -529,12 +540,18 @@ fn iloc_offset_and_length_size_swap_is_detected() {
 }
 
 #[test]
-fn ipma_narrow_index_read_as_wide_is_detected() {
-    let mut bytes = test_fixtures::read("heif/plain.heic");
+fn ipma_narrow_index_read_as_wide_is_carried_and_reported() {
+    let original = test_fixtures::read("heif/plain.heic");
+    let mut bytes = original.clone();
     let ipma = meta_child(&bytes, *b"ipma");
     bytes[ipma + 8 + 3] |= 1;
-    let err = expect_load_error(&bytes, ItemReaderConfig::default());
-    assert!(matches!(err, isobmff::Error::BufferTooShort(_)), "{err:?}");
+    let (_, damages) = load_reported(&bytes, ItemReaderConfig::default());
+    assert!(
+        damages
+            .iter()
+            .any(|damage| damage.fourcc() == Some(*b"iprp")),
+        "the misread table is reported: {damages:?}"
+    );
 }
 
 #[test]
@@ -613,8 +630,10 @@ fn derived_item_reference_cycle_is_a_typed_error() {
 }
 
 #[test]
-fn extent_past_end_of_file_is_a_typed_error() {
-    let mut bytes = test_fixtures::read("heif/plain.heic");
+fn extent_past_end_of_file_drops_that_item_and_reports_it() {
+    let original = test_fixtures::read("heif/plain.heic");
+    let clean = load_bytes(&original, ItemReaderConfig::default());
+    let mut bytes = original.clone();
     let iloc = meta_child(&bytes, *b"iloc");
     let length_at = iloc + 8 + 22;
     assert_eq!(
@@ -622,26 +641,63 @@ fn extent_past_end_of_file_is_a_typed_error() {
         2093
     );
     bytes[length_at..length_at + 4].copy_from_slice(&0xFFFFu32.to_be_bytes());
-    let err = expect_load_error(&bytes, ItemReaderConfig::default());
+    let (image, damages) = load_reported(&bytes, ItemReaderConfig::default());
+    let dropped: Vec<&broadcast_core::damage::Damage> = damages
+        .iter()
+        .filter(|damage| damage.what() == "item-data-dropped")
+        .collect();
+    assert_eq!(dropped.len(), 1, "one item's data is dropped: {damages:?}");
+    assert_eq!(
+        dropped[0].location().ordinal(),
+        Some(u64::from(ItemId::new(1).get())),
+        "the report names the item"
+    );
+    assert_eq!(
+        dropped[0].location().byte_range().map(|range| range.len()),
+        Some(0xFFFF),
+        "the report names the dropped extent"
+    );
     assert!(
-        matches!(err, isobmff::Error::ExtentOutOfRange { item: 1, .. }),
-        "{err:?}"
+        image
+            .item(ItemId::new(1))
+            .expect("item 1")
+            .data_ranges()
+            .is_empty(),
+        "the item is kept without data"
+    );
+    assert_eq!(
+        image.items().len(),
+        clean.items().len(),
+        "every item is still described"
     );
 }
 
 #[test]
-fn ipma_index_past_the_container_is_a_typed_error() {
-    let mut bytes = test_fixtures::read("heif/plain.heic");
+fn ipma_index_past_the_container_is_carried_and_reported() {
+    let original = test_fixtures::read("heif/plain.heic");
+    let clean = load_bytes(&original, ItemReaderConfig::default());
+    let mut bytes = original.clone();
     let ipma = meta_child(&bytes, *b"ipma");
     let first_association = ipma + 8 + 4 + 4 + 2 + 1;
     bytes[first_association] = 0x7F;
-    let err = expect_load_error(&bytes, ItemReaderConfig::default());
+    let (image, damages) = load_reported(&bytes, ItemReaderConfig::default());
     assert!(
-        matches!(
-            err,
-            isobmff::Error::PropertyIndexOutOfRange { index: 127, .. }
-        ),
-        "{err:?}"
+        damages
+            .iter()
+            .any(|damage| { damage.fourcc() == Some(*b"iprp") && damage.recoverable_bytes() }),
+        "the property box is carried uninterpreted: {damages:?}"
+    );
+    assert_eq!(
+        image.items().len(),
+        clean.items().len(),
+        "the items survive without their properties"
+    );
+    assert!(
+        image
+            .items()
+            .iter()
+            .all(|item| item.properties().is_empty()),
+        "no property association is trusted from an unreadable table"
     );
 }
 

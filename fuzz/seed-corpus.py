@@ -87,6 +87,15 @@ WHOLE_FILE_GLOBS: dict[str, tuple[str, ...]] = {
     "isobmff_reader_fragmented": ("fixtures/mp4/**/*.mp4", "fixtures/dash/**/*.m4s", "fixtures/hls/cmaf-fmp4/*.m4s"),
     # The whole-file target reads, rewrites and compares: a real file image is
     # what puts it inside the plan/writer paths at all.
+    # The damage target takes a whole file and damages it itself, so the real
+    # progressive, fragmented and still-image images are its seeds.
+    "isobmff_damage": (
+        "fixtures/mp4/progressive/*.mp4",
+        "fixtures/mp4/h264-aac-frag.mp4",
+        "fixtures/mp4/cmaf/*.mp4",
+        "fixtures/avif/*.avif",
+        "fixtures/heif/*.heic",
+    ),
     "isobmff_whole_file": (
         "fixtures/mp4/progressive/*.mp4",
         "fixtures/mp4/frag/*.frag.mp4",

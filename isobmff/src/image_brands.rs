@@ -381,6 +381,25 @@ pub enum ImageFinding {
         /// The second box's absolute byte offset in the file.
         offset: u64,
     },
+    /// An item's data could not be addressed: an extent left the file, or the
+    /// data reference it named is not this file. The item is kept, without
+    /// data, and everything else plays.
+    ItemDataDropped {
+        /// The item whose data was dropped.
+        item: crate::item::ItemId,
+        /// The extent's first byte, as the file stated it.
+        offset: u64,
+        /// The extent's declared length.
+        length: u64,
+    },
+    /// A box declared more bytes than the input holds; it was read to the end
+    /// of the input and the cut is reported.
+    TruncatedBox {
+        /// The box four-CC.
+        box_type: [u8; crate::box_types::BOX_TYPE_SIZE],
+        /// The box's absolute byte offset in the file.
+        offset: u64,
+    },
     /// A gain map metadata rational has a zero denominator, which no value can
     /// be divided by.
     GainMapZeroDenominator {
@@ -405,6 +424,8 @@ impl ImageFinding {
             Self::AudioImageGroupWrongEntityCount { .. } => "iaug-wrong-entity-count",
             Self::RegionNamesMissingImage { .. } => "region-names-missing-image",
             Self::RegionMaskReferenceCount { .. } => "region-mask-reference-count",
+            Self::ItemDataDropped { .. } => "item-data-dropped",
+            Self::TruncatedBox { .. } => "truncated-box",
             Self::GainMapZeroDenominator { .. } => "tmap-zero-denominator",
             Self::UnrepresentableBox { .. } => "unrepresentable-box",
             Self::TrailingBytes { .. } => "trailing-bytes",

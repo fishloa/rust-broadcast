@@ -17,7 +17,10 @@ use crate::report::Report;
 
 /// Run the container checks over `file` (of `len` bytes), appending findings.
 pub fn check_mp4_file(file: &mut File, len: u64, report: &mut Report) -> io::Result<()> {
-    let config = Mp4DemuxConfig::default().with_total_len(Some(len));
+    // A validator refuses what a player may carry: every fault is a finding.
+    let config = Mp4DemuxConfig::default()
+        .with_total_len(Some(len))
+        .with_mode(isobmff::Mode::Strict);
     let mut demux = Mp4Demux::seekable(config);
     let mut checker = ContainerCodecChecker::new();
     let mut moov: Option<Vec<u8>> = None;

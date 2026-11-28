@@ -666,6 +666,7 @@ impl From<isobmff::Error> for Error {
             I::DataReferenceUnsupported { .. } => {
                 Error::UnsupportedFeature("item data in another file")
             }
+            I::Damage(stop) => Error::Damage(stop),
             _ => Error::UnsupportedFeature("unrecognised ISO BMFF box error"),
         }
     }

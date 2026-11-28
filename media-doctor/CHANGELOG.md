@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Every MP4 read asks for `isobmff::Mode::Strict`: a validator must see the
+  fault, not carry past it. The readers are best effort by default now, so
+  without this the checks would quietly accept a file a player would repair.
+
 ### Breaking
 
 - The NAL and Annex B helpers (`NalCodec`, `nal_unit_type`, `is_keyframe_nal`, `iter_annexb_nals`, `iter_length_prefixed_nals_with`) now come from `broadcast-bitstream`, the new codec-bitstream layer below the muxing hub; the crate gains that dependency.

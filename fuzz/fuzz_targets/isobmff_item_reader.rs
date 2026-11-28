@@ -33,11 +33,18 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
             Ok(ItemStep::Loaded(image)) => {
-                // What the reader accepts, it re-emits byte for byte.
-                let reemitted = image
-                    .reemit_into(data)
-                    .expect("a loaded image re-emits from its own source");
-                assert_eq!(reemitted, data, "re-emitted bytes differ from the source");
+                // What the reader accepts, it re-emits byte for byte. A model
+                // that dropped bytes no box describes refuses to re-emit, and
+                // only after having reported the drop.
+                match image.reemit_into(data) {
+                    Ok(reemitted) => {
+                        assert_eq!(reemitted, data, "re-emitted bytes differ from the source")
+                    }
+                    Err(_) => assert!(
+                        !image.structure_findings().is_empty(),
+                        "a model that cannot re-emit must say why"
+                    ),
+                }
             }
             Ok(ItemStep::Done) | Err(_) => break,
             Ok(_) => break,

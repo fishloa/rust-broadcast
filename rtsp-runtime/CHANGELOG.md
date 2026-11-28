@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The async adapter no longer discards the report for junk between interleaved
+  frames: a send-only pusher's `drain_inbound` kept only `MediaData`, so the
+  resync report fell into its catch-all, and `AsyncRtspClient::recv_interleaved`
+  swallowed it too. Both now treat `ClientEvent::Damage` as media-class content
+  and return it in wire order, before the frame that follows the junk (#4210).
+
 ### Added
 
 - `PlayPlan::refuse_setup` and `PlaySession::damage`: a media section whose
