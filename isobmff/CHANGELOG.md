@@ -233,6 +233,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An `imda` whose declared size cuts its identifier no longer stops the
+  reader: it is skipped and reported like any box that only locates media.
+
 - **The item reader carries the bytes it cannot frame instead of dropping
   them.** A top-level box whose size (or `largesize`) cannot hold its own
   header, a header the input cuts, and a `meta` child the input cuts are kept

@@ -1527,7 +1527,13 @@ impl Reader {
             Pending::TopLevel(range) => self.accept_top_level(range, bytes),
             Pending::Scan(range) => self.accept_scan(range, bytes),
             Pending::Imda { head, payload_end } => {
-                self.accept_imda(head.offset, payload_end, bytes)
+                match crate::segments::IdentifiedMediaDataBox::parse_identification(bytes) {
+                    Ok(identification) => {
+                        self.accept_imda(head.offset, payload_end, identification);
+                        Ok(())
+                    }
+                    Err(err) => self.skip_faulty(crate::segments::IMDA, head, err),
+                }
             }
         }
     }
@@ -2762,9 +2768,12 @@ impl Reader {
 
     /// Keep one top-level box outside `ftyp`/`moov`/`mdat` so a rewrite can
     /// reproduce it in place.
-    fn accept_imda(&mut self, head_offset: u64, payload_end: u64, bytes: &[u8]) -> Result<()> {
-        let (identifier, payload_offset) =
-            crate::segments::IdentifiedMediaDataBox::parse_identification(bytes)?;
+    fn accept_imda(
+        &mut self,
+        head_offset: u64,
+        payload_end: u64,
+        (identifier, payload_offset): (u32, usize),
+    ) {
         let start = head_offset.saturating_add(payload_offset as u64);
         self.identified_media.push(IdentifiedMediaData {
             identifier,
@@ -2773,7 +2782,6 @@ impl Reader {
                 len: payload_end.saturating_sub(start),
             },
         });
-        Ok(())
     }
 
     /// Start looking forward for the next top-level box header, bounded by the
