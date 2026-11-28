@@ -1506,7 +1506,7 @@ impl Reader {
         }
         match pending {
             Pending::Header(range) => self.accept_header(range, bytes),
-            Pending::Ftyp(_) => self.accept_ftyp(bytes),
+            Pending::Ftyp(range) => self.accept_ftyp(range, bytes),
             Pending::Moov(range) => self.accept_moov(range, bytes),
             Pending::Moof(_) => self.accept_moof(bytes),
             Pending::Index(range) => self.accept_index(range, bytes),
@@ -2852,11 +2852,11 @@ impl Reader {
         Ok(())
     }
 
-    fn accept_ftyp(&mut self, bytes: &[u8]) -> Result<()> {
+    fn accept_ftyp(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
         match FileTypeBox::parse_box(bytes) {
             Ok(brand) => self.brand = Some(brand),
             Err(err) => {
-                self.skip_faulty(*b"ftyp", ByteRange { offset: 0, len: 0 }, err)?;
+                self.skip_faulty(*b"ftyp", range, err)?;
             }
         }
         Ok(())
@@ -2986,12 +2986,8 @@ impl Reader {
             &repaired
         };
         self.report_notes(core::mem::take(&mut notes));
-        if movie.tracks.is_empty()
-            && movie.mvex.is_none()
-            && self.config.mode == Mode::Strict
-        {
-            // Nothing to play: the input states no track at all. Best effort
-            // carries what the movie does state, as the tail repair does.
+        if movie.tracks.is_empty() && movie.mvex.is_none() {
+            // Nothing to play: the input states no track at all.
             return Err(Error::InvalidInput(
                 "the movie states no track, so no sample can be played",
             ));
