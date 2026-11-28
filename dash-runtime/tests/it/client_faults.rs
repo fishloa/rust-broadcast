@@ -47,22 +47,6 @@ fn ffmpeg_expected() -> Vec<Vec<Sig>> {
     out
 }
 
-/// `segment` with its `moof` body overwritten: the top-level box framing (and
-/// so `container_probe`'s media-fragment check) survives, the fragment does
-/// not.
-fn damage_moof(segment: &[u8]) -> Vec<u8> {
-    let body = isobmff::BoxIter::new(segment)
-        .filter_map(|step| step.ok())
-        .find(|item| item.header.box_type.is(&isobmff::segments::MOOF))
-        .map(|item| item.end - item.body.len()..item.end)
-        .expect("the fixture segment carries a moof");
-    let mut damaged = segment.to_vec();
-    for byte in &mut damaged[body] {
-        *byte = u8::MAX;
-    }
-    damaged
-}
-
 fn ondemand_expected() -> Vec<Vec<Sig>> {
     let mut out = oracle(&["ondemand-sidx/v_dashinit.mp4"]);
     out.extend(oracle(&["ondemand-sidx/a_dashinit.mp4"]));
@@ -130,7 +114,7 @@ fn a_transient_segment_fault_recovers_with_every_sample() {
 #[test]
 fn a_damaged_moof_costs_only_its_own_segment() {
     let dir = "timeline-ffmpeg-quirk";
-    let damaged = damage_moof(&test_fixtures::read(&format!("dash/{dir}/{SEGMENT}")));
+    let damaged = common::damage_moof(&test_fixtures::read(&format!("dash/{dir}/{SEGMENT}")));
     let mut origin = Origin::new().fault(Fault::times(SEGMENT, FaultKind::Replace(damaged), 1));
     let run = drive(FFMPEG, cfg(), &mut origin, &mut Drive::default());
     assert!(run.ended, "{:?}", run.fatal);
