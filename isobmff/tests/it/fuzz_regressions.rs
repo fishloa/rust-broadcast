@@ -460,10 +460,7 @@ fn item_reader_zero_largesize_is_reported_and_carried() {
     let data = &ZERO_LARGESIZE_TAIL;
     let (reports, reemitted) = item_reader_over(data);
     let out = reemitted.expect("the model loads");
-    assert_eq!(
-        out, data,
-        "the unframeable tail is carried verbatim"
-    );
+    assert_eq!(out, data, "the unframeable tail is carried verbatim");
     assert!(
         reports.iter().any(|what| what == "trailing-bytes"),
         "the unframeable header is reported: {reports:?}"
@@ -506,7 +503,9 @@ fn item_reader_over(data: &[u8]) -> (Vec<String>, Option<Vec<u8>>) {
 /// header that declares a `largesize` (8 bytes of `size == 1`, no more).
 #[test]
 fn item_reader_carries_a_cut_largesize_header() {
-    let data = test_fixtures::read("fuzz/regressions/isobmff_item_reader/crash-d0cd3a9a689932169b7ccc0ff146369bdc9b00d5");
+    let data = test_fixtures::read(
+        "fuzz/regressions/isobmff_item_reader/crash-d0cd3a9a689932169b7ccc0ff146369bdc9b00d5",
+    );
     assert_eq!(
         &data[data.len() - 8..],
         &[0, 0, 0, 1, 0xff, 0x0a, 0xff, 0xff]
@@ -517,10 +516,7 @@ fn item_reader_carries_a_cut_largesize_header() {
         data,
         "the bytes the walk could not frame are carried verbatim"
     );
-    assert!(
-        !reports.is_empty(),
-        "every byte the walk could not frame is reported"
-    );
+    assert_eq!(reports, ["trailing-bytes"], "the cut header is reported");
 }
 
 /// `isobmff_damage` crash-a7c557cf: a file whose `moov` is cut short and whose
@@ -530,11 +526,16 @@ fn item_reader_carries_a_cut_largesize_header() {
 fn damage_crash_a7c557cf_reports_a_truncated_sidx_instead_of_failing() {
     use isobmff::reader::{Reader, ReaderConfig, Step};
 
-    let file = test_fixtures::read("fuzz/regressions/isobmff_damage/crash-a7c557cfddb2d67ebd8d89da620431e6a0e456da");
+    let file = test_fixtures::read(
+        "fuzz/regressions/isobmff_damage/crash-a7c557cfddb2d67ebd8d89da620431e6a0e456da",
+    );
     let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
     let mut reports = Vec::new();
     loop {
-        match reader.step().expect("an unparseable index is not a refusal") {
+        match reader
+            .step()
+            .expect("an unparseable index is not a refusal")
+        {
             Step::Need(range) => {
                 let start = usize::try_from(range.offset).expect("offset");
                 let end = usize::try_from(range.end()).expect("end");
@@ -548,7 +549,9 @@ fn damage_crash_a7c557cf_reports_a_truncated_sidx_instead_of_failing() {
         }
     }
     assert!(
-        reports.iter().any(|damage| damage.what() == "buffer-too-short"),
+        reports
+            .iter()
+            .any(|damage| damage.what() == "buffer-too-short"),
         "the cut structures are reported: {reports:?}"
     );
 }

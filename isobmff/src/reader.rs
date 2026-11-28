@@ -2046,7 +2046,12 @@ impl Reader {
     /// A box that only locates samples failed to parse: it is skipped with its
     /// fault reported, and the walk keeps the media it does not index. Only
     /// [`Mode::Strict`] refuses it.
-    fn skip_faulty(&mut self, box_type: [u8; BOX_TYPE_SIZE], range: ByteRange, err: Error) -> Result<()> {
+    fn skip_faulty(
+        &mut self,
+        box_type: [u8; BOX_TYPE_SIZE],
+        range: ByteRange,
+        err: Error,
+    ) -> Result<()> {
         if !self.tolerated() {
             return Err(err);
         }

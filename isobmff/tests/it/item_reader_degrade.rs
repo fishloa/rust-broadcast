@@ -166,3 +166,77 @@ fn a_readable_file_reports_no_degradation() {
     );
     assert_eq!(image.reemit_into(&bytes).expect("re-emit"), bytes);
 }
+
+/// Bytes kept of the cut child: its header and two body bytes.
+const CUT_CHILD_KEEP: usize = HEADER_LEN + 2;
+
+/// A real file cut inside the last child of its `meta`: the `meta` declares
+/// more than the input holds and its last child cannot be framed. Best effort
+/// carries that child's bytes verbatim with a finding naming its offset and
+/// length, and re-emits the cut input byte for byte; strict refuses it.
+#[test]
+fn a_meta_child_cut_by_the_input_is_carried_and_re_emitted() {
+    let original = fixtures::read("avif/plain.avif");
+    let meta = find_child(&original, b"meta").expect("meta");
+    let meta_size = u32::from_be_bytes(original[meta..meta + 4].try_into().expect("size")) as usize;
+    let children = meta + HEADER_LEN + 4;
+    let mut last = children;
+    let mut at = children;
+    while at < meta + meta_size {
+        last = at;
+        at += u32::from_be_bytes(original[at..at + 4].try_into().expect("size")) as usize;
+    }
+    let bytes = original[..last + CUT_CHILD_KEEP].to_vec();
+
+    let (image, damages) = load(&bytes);
+    assert!(
+        damages
+            .iter()
+            .any(|damage| damage.what() == "trailing-bytes"
+                && damage.fourcc()
+                    == Some(
+                        original[last + TYPE_OFFSET..last + HEADER_LEN]
+                            .try_into()
+                            .expect("fourcc")
+                    )),
+        "the cut child is reported: {damages:?}"
+    );
+    assert!(
+        image
+            .structure_findings()
+            .contains(&ImageFinding::TrailingBytes {
+                box_type: original[last + TYPE_OFFSET..last + HEADER_LEN]
+                    .try_into()
+                    .expect("fourcc"),
+                offset: last as u64,
+                carried: CUT_CHILD_KEEP as u64,
+            }),
+        "the finding names the cut child's offset and length: {:?}",
+        image.structure_findings()
+    );
+    assert_eq!(
+        image.reemit_into(&bytes).expect("re-emit"),
+        bytes,
+        "the cut child is carried verbatim"
+    );
+
+    let strict = ItemReaderConfig::default()
+        .with_total_len(Some(bytes.len() as u64))
+        .with_mode(isobmff::reader::Mode::Strict);
+    let mut reader = ItemReader::new(strict);
+    let refused = loop {
+        match reader.step() {
+            Ok(ItemStep::Need(range)) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                if reader.supply(range.offset, &bytes[start..end]).is_err() {
+                    break true;
+                }
+            }
+            Ok(ItemStep::Loaded(_) | ItemStep::Done) => break false,
+            Ok(_) => {}
+            Err(_) => break true,
+        }
+    };
+    assert!(refused, "strict refuses a cut meta");
+}

@@ -179,7 +179,9 @@ pub enum ReemitOp {
 enum TopLevelPayload {
     /// The file-level `meta`, written from the model; `held` is the box
     /// length the input held, which is less than declared when it was cut.
-    Meta { held: u64 },
+    Meta {
+        held: u64,
+    },
     Bytes(Vec<u8>),
     Copy(ByteRange),
 }
