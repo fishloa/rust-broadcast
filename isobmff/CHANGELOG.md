@@ -231,10 +231,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A top-level box whose `largesize` cannot hold its own header is a typed
-  error.** It used to be kept as a zero-length payload, so a re-emit dropped
-  the bytes it claimed; the `isobmff_item_reader` target's new round-trip
-  assertion found it, and the input is a regression test.
+- **The item reader carries the bytes it cannot frame instead of dropping
+  them.** A top-level box whose size (or `largesize`) cannot hold its own
+  header, a header the input cuts, and a `meta` child the input cuts are kept
+  verbatim in their source position with an `ImageFinding::TrailingBytes`
+  naming the box, offset and length, so `StillImage::reemit_into` reproduces
+  the input byte for byte; `Mode::Strict` still refuses each with a typed
+  error (`Error::BoxSizeUnderflow` for the size). A `largesize` of 0 used to
+  be kept as a zero-length payload and drop the bytes it claimed; the
+  `isobmff_item_reader` target's round-trip assertion found it.
+- **A `sidx`, `ssix` or `mfra` that cannot be parsed no longer fails a
+  best-effort read.** They index fragments and are not needed to play them:
+  the box is reported as `UnrepresentableBox` at its own byte range and the
+  walk continues; a seek that needed the `mfra` is `Error::NoIndex`.
 
 - **A second file-level `meta` box is carried, not refused.** The item reader
   uses the first; a later one keeps its file position and re-emits byte-exact,
