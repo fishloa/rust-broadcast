@@ -175,6 +175,25 @@ fn a_damaged_message_is_reported_and_the_session_continues() {
     );
     assert_eq!(reports[0].what(), "RTMP message");
 
+    // The report is in wire order: fed together with the media that follows
+    // it, it comes out before that media.
+    let mut session = publishing(broadcast_core::damage::DamagePolicy::new());
+    let mut batch = interrupted_message_then(&fixture[0]);
+    batch.extend_from_slice(&media(&fixture[1]));
+    let (_out, events) = session.handle_data(&batch).expect("the batch parses");
+    let report_at = events
+        .iter()
+        .position(|event| matches!(event, ServerEvent::Damage(_)))
+        .expect("the interrupted message is reported");
+    let media_at = events
+        .iter()
+        .position(|event| matches!(event, ServerEvent::Media { .. }))
+        .expect("the media after it is delivered");
+    assert!(
+        report_at < media_at,
+        "the report precedes the media after the gap ({report_at} < {media_at}): {events:?}"
+    );
+
     // Playback continues: a complete real fixture tag still arrives.
     for tag in &fixture {
         let (_out, events) = session.handle_data(&media(tag)).expect("next tag");

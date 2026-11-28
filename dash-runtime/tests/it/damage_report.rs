@@ -2,7 +2,7 @@
 //! report in the output order, the caller's policy decides whether it stops
 //! the presentation, and a clean presentation reports nothing.
 
-use common::loopback::{Drive, Origin, Run, drive, play};
+use common::loopback::{Drive, Fault, Origin, Run, drive, play};
 use dash_runtime::client::{FatalKind, Output, PullLimits};
 
 use crate::common;
@@ -63,6 +63,57 @@ fn a_failing_policy_stops_at_the_first_report() {
         panic!("expected a damage refusal, got {:?}", run.fatal);
     };
     assert_eq!(refused.damage().what(), "DASH EventStream");
+}
+
+/// A damaged segment reaches the player as a report, and it comes before the
+/// samples of the segment after it — never after them: a sink reading the
+/// output queue must learn about the gap before the media past it.
+#[test]
+fn a_damaged_segment_is_reported_before_the_media_after_it() {
+    use common::loopback::FaultKind;
+
+    const DAMAGED: &str = "chunk-stream0-00002.m4s";
+    const DIR: &str = "timeline-ffmpeg-quirk";
+    let damaged = common::damage_moof(&test_fixtures::read(&format!("dash/{DIR}/{DAMAGED}")));
+    let mut origin = Origin::new().fault(Fault::times(DAMAGED, FaultKind::Replace(damaged), 1));
+    let run = drive(
+        format!("http://dash.test/{DIR}/manifest.mpd").as_str(),
+        PullLimits::default(),
+        &mut origin,
+        &mut Drive::default(),
+    );
+    assert!(!run.stuck, "the client hung");
+    let report_at = run
+        .outputs
+        .iter()
+        .position(|output| matches!(
+            output,
+            Output::Damage(damage) if damage.kind() == broadcast_core::damage::DamageKind::MediaUnitDamaged
+                || damage.kind() == broadcast_core::damage::DamageKind::MediaUnitDropped
+        ))
+        .expect("a damaged segment is reported");
+    assert!(
+        run.outputs[..report_at]
+            .iter()
+            .any(|output| matches!(output, Output::Samples { .. }))
+    );
+    let after_at = run
+        .outputs
+        .iter()
+        .skip(report_at)
+        .position(|output| matches!(output, Output::Samples { .. }))
+        .map(|offset| report_at.saturating_add(offset))
+        .expect("the media after the damaged segment is emitted");
+    assert!(
+        report_at < after_at,
+        "the report precedes the samples after the gap ({report_at} < {after_at})"
+    );
+    assert!(
+        run.outputs[report_at..]
+            .iter()
+            .any(|output| matches!(output, Output::FragmentDamaged { .. })),
+        "the typed signal follows the report"
+    );
 }
 
 /// A presentation with nothing to skip reports nothing.

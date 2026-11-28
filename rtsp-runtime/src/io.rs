@@ -504,7 +504,10 @@ where
                         } => {
                             return Err(Error::SessionNotFound { method });
                         }
-                        event @ ClientEvent::MediaData { .. } => {
+                        // A damage report is media-class content: it is
+                        // queued with the frames so the player sees it in
+                        // wire order.
+                        event @ (ClientEvent::MediaData { .. } | ClientEvent::Damage(_)) => {
                             if self.pending_media.len() >= MAX_PENDING_MEDIA_FRAMES {
                                 self.pending_media.pop_front();
                             }
@@ -591,8 +594,12 @@ where
         }
     }
 
-    /// Receives the next interleaved media frame ([`ClientEvent::MediaData`]),
-    /// driving the socket until one is available (§10.12).
+    /// Receives the next interleaved media frame ([`ClientEvent::MediaData`])
+    /// or the damage report about it ([`ClientEvent::Damage`]), driving the
+    /// socket until one is available (§10.12).
+    ///
+    /// The two come in wire order, so a report for junk between frames is
+    /// returned before the frame that follows the junk.
     ///
     /// Returns `Ok(None)` if the peer closes the connection cleanly before a
     /// frame arrives. Any control responses interleaved with media are consumed
@@ -639,8 +646,13 @@ where
                         ));
                     }
                     None => return Ok(None),
-                    Some(ev @ ClientEvent::MediaData { .. }) => return Ok(Some(ev)),
-                    Some(_) => {} // control responses are applied by the session; not surfaced here
+                    // Media and the damage reports about it are returned in
+                    // wire order; control responses are applied by the session
+                    // and not surfaced here.
+                    Some(ev @ (ClientEvent::MediaData { .. } | ClientEvent::Damage(_))) => {
+                        return Ok(Some(ev));
+                    }
+                    Some(_) => {}
                 },
                 Woke::Keepalive => {
                     if let Some(req) = self

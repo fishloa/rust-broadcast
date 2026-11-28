@@ -60,7 +60,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A peer re-sending Key Material messages no longer costs one 2048-iteration PBKDF2 run per datagram: the derived KEK is cached by `(Salt, KLen)`, and at most one peer KMREQ per `KMREQ_MIN_INTERVAL` (100 ms) is processed (#2840).
 - `arq::Receiver` no longer rescans the whole loss list against every pending DROPREQ skip each time a packet advances the highest sequence number: the newly opened gap is filtered against at most `MAX_PENDING_SKIPS` coalesced ranges (a `BTreeMap`, not a `Vec`), and a DROPREQ ahead of the tracked data or already recorded costs no scan of the loss/out-of-order sets. A peer could previously pin a core at roughly 8 million comparisons per packet with the default window and pending-skip cap (#2821).
 
-### Tests
+- `SrtSocket::recv_event` publishes a damage report immediately before the
+  first payload released after its gap, never after later payloads: the
+  delivery pass previously sent every released payload first and the run's
+  report last, so a player reading the one queue could see the media past a
+  gap before the report naming it (#4210).
 - Over-limit tests for the protocol caps: a DROPREQ flood stops at `arq::Receiver`'s `MAX_PENDING_SKIPS` and `TsbpdScheduler`'s `MAX_SKIPS`, `MAX_RECENT_ACCEPTS` holds under a CONCLUSION flood, and the negotiated flow window clamps to `MAX_TRACKED_WINDOW` with a packet one past it rejected (#2860).
 
 ## [0.10.0] - 2026-11-15
