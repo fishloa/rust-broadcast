@@ -389,4 +389,72 @@ mod tests {
             "got {error:?}"
         );
     }
+
+    const DAMAGE_ROUTE: &str = "cam-rtp-damage";
+    const DAMAGE_KIND: &str = "rtp";
+    const METRIC_POLL: Duration = Duration::from_millis(10);
+    const METRIC_CEILING: Duration = Duration::from_secs(10);
+    /// Packets past a gap that exhaust the depacketiser's reorder window.
+    const DAMAGE_WINDOW_PAST_THE_GAP: u16 = 20;
+
+    /// A skipped RTP run (sequence 2 never arrives) reaches the route's damage
+    /// metric. The reorder buffer's own deadline fires on the clock, with no
+    /// datagram after the gap, so the metric must appear without one.
+    #[tokio::test]
+    async fn a_skipped_rtp_run_reaches_the_route_damage_metric() {
+        crate::prometheus::install();
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let addr = socket.local_addr().expect("local addr");
+        let route = RtpUdpRoute::with_socket(DAMAGE_ROUTE, sdp_body(), socket);
+        let handle = std::sync::Arc::new(
+            crate::route::RouteHandle::new(RouteConfig::default())
+                .with_name(DAMAGE_ROUTE)
+                .with_input_kind(DAMAGE_KIND),
+        );
+        let cancel = CancellationToken::new();
+        let run = tokio::spawn({
+            let handle = std::sync::Arc::clone(&handle);
+            let cancel = cancel.clone();
+            async move { run_rtp_udp(&route, trunk_config(), handshake(), &handle, cancel).await }
+        });
+        let _trunk = tokio::time::timeout(TRUNK_WAIT, handle.await_first_trunk())
+            .await
+            .expect("the SDP-declared programme is announced before any packet");
+
+        let sender = UdpSocket::bind("127.0.0.1:0").await.expect("bind sender");
+        let idr = [0x65u8, 0xAA, 0xBB];
+        let non = [0x41u8, 0xAA, 0xBB];
+        sender
+            .send_to(&h264_rtp_packet(1, 1000, true, &idr), addr)
+            .await
+            .expect("send RTP packet");
+        for seq in 3..=DAMAGE_WINDOW_PAST_THE_GAP {
+            sender
+                .send_to(
+                    &h264_rtp_packet(seq, u32::from(seq) * 3000, true, &non),
+                    addr,
+                )
+                .await
+                .expect("send RTP packet");
+        }
+
+        let deadline = tokio::time::Instant::now() + METRIC_CEILING;
+        loop {
+            if crate::testutil::rendered_line(
+                "multimux_source_damage_total",
+                &[("route", DAMAGE_ROUTE), ("source", DAMAGE_KIND)],
+            )
+            .is_some()
+            {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "a skipped RTP run must reach the route's damage metric"
+            );
+            tokio::time::sleep(METRIC_POLL).await;
+        }
+        cancel.cancel();
+        let _ = tokio::time::timeout(TRUNK_WAIT, run).await;
+    }
 }

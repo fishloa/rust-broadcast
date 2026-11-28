@@ -581,6 +581,12 @@ impl Mp4Demux {
             .map_or(0, broadcast_core::damage::ByteRange::start);
         // The crate's own vocabulary keeps its meaning: only a cut media tail
         // is a truncated unit, a fault in a fragment's structure is malformed.
+        // A sample of a track the init never declared is left out on its
+        // own: the unit around it is intact, so no unit is marked damaged.
+        if damage.what() == "undeclared-track" {
+            self.events.push_back(DemuxEvent::damage(damage));
+            return;
+        }
         let kind = if damage.what() == "truncated-mdat" {
             InputDegradation::TruncatedUnit { position }
         } else {

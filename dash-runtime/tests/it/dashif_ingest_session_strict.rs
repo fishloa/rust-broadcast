@@ -251,7 +251,22 @@ fn duplicate_emits_nothing_and_regression_still_emits() {
     // A LOWER number is a regression (§6.2.10/11 SHOULD, not MUST): the
     // samples are still delivered, in order.
     feed(&mut s, segment(id, 1), &segs[0]).unwrap();
-    let evs = drain(&mut s);
+    let all = drain(&mut s);
+    let reports: Vec<_> = all
+        .iter()
+        .filter_map(|e| match e {
+            SessionEvent::Damage { damage, .. } => Some(damage.kind()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        reports,
+        [broadcast_core::damage::DamageKind::MediaUnitDamaged]
+    );
+    let evs: Vec<_> = all
+        .into_iter()
+        .filter(|e| matches!(e, SessionEvent::Sample { .. }))
+        .collect();
     let want = oracle(init, &segs[0]);
     assert_eq!(evs.len(), want.len());
     for (e, w) in evs.iter().zip(&want) {

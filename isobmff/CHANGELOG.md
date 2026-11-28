@@ -24,7 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count to the shortest extent every table agrees on.
 
 ### Breaking
-
 - Best effort is now the default for **both** readers: `Mode::Permissive` is
   the default of `Reader`/`ReaderConfig` and `Mode::Strict` is the explicit
   opt-in a validator asks for. A caller that relied on strict-by-default must
@@ -42,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Reader::step` ends with `Error::InvalidInput` when a file carrying media
   states no track at all, or carries a `moov`/`moof` nowhere. A still image and
   a file of type declarations alone still finish with `Step::Done`.
+- `reader::Warning::UndeclaredTrack { track_id, offset }`: a `moof` carried a
+  `traf` for a track the `moov` never declared, so its samples are left out.
+  One warning per such `traf`, at the fragment. Previously a silent skip.
 
 - `multiview`: the multiview view-attribute boxes with a defined syntax —
   `ProfileLevelAttribute` (`prfl`/`levl`), `ViewArrayOrder` (`ilvi`/`elvi`),
@@ -230,6 +232,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error.
 
 ### Fixed
+
+- An `imda` whose declared size cuts its identifier no longer stops the
+  reader: it is skipped and reported like any box that only locates media.
 
 - **The item reader carries the bytes it cannot frame instead of dropping
   them.** A top-level box whose size (or `largesize`) cannot hold its own

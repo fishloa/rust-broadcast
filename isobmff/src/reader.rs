@@ -1054,6 +1054,14 @@ pub enum Warning {
         /// Absolute offset of the `wave` atom.
         offset: u64,
     },
+    /// A `moof` carried a `traf` for a track the `moov` never declared; its
+    /// samples were left out. One warning per such `traf`, at the fragment.
+    UndeclaredTrack {
+        /// The `tfhd` track identifier that no `trak` declares.
+        track_id: TrackId,
+        /// Absolute offset of the `moof`.
+        offset: u64,
+    },
     /// The movie header timescale was zero; it was treated as 1 so the walk can
     /// continue. Durations in the movie timescale are unknown.
     ZeroMovieTimescale {
@@ -1131,6 +1139,7 @@ impl Warning {
             Self::Resynchronised { .. } => "resynchronised",
             Self::SynthesizedBox { .. } => "synthesized-box",
             Self::UnrepresentableBox { .. } => "unrepresentable-box",
+            Self::UndeclaredTrack { .. } => "undeclared-track",
         }
     }
 }
@@ -1152,7 +1161,8 @@ impl Warning {
             | Self::TrailingBytes { offset, .. }
             | Self::Resynchronised { offset }
             | Self::SynthesizedBox { offset, .. }
-            | Self::UnrepresentableBox { offset, .. } => *offset,
+            | Self::UnrepresentableBox { offset, .. }
+            | Self::UndeclaredTrack { offset, .. } => *offset,
         }
     }
 }
@@ -1517,7 +1527,13 @@ impl Reader {
             Pending::TopLevel(range) => self.accept_top_level(range, bytes),
             Pending::Scan(range) => self.accept_scan(range, bytes),
             Pending::Imda { head, payload_end } => {
-                self.accept_imda(head.offset, payload_end, bytes)
+                match crate::segments::IdentifiedMediaDataBox::parse_identification(bytes) {
+                    Ok(identification) => {
+                        self.accept_imda(head.offset, payload_end, identification);
+                        Ok(())
+                    }
+                    Err(err) => self.skip_faulty(crate::segments::IMDA, head, err),
+                }
             }
         }
     }
@@ -2752,9 +2768,12 @@ impl Reader {
 
     /// Keep one top-level box outside `ftyp`/`moov`/`mdat` so a rewrite can
     /// reproduce it in place.
-    fn accept_imda(&mut self, head_offset: u64, payload_end: u64, bytes: &[u8]) -> Result<()> {
-        let (identifier, payload_offset) =
-            crate::segments::IdentifiedMediaDataBox::parse_identification(bytes)?;
+    fn accept_imda(
+        &mut self,
+        head_offset: u64,
+        payload_end: u64,
+        (identifier, payload_offset): (u32, usize),
+    ) {
         let start = head_offset.saturating_add(payload_offset as u64);
         self.identified_media.push(IdentifiedMediaData {
             identifier,
@@ -2763,7 +2782,6 @@ impl Reader {
                 len: payload_end.saturating_sub(start),
             },
         });
-        Ok(())
     }
 
     /// Start looking forward for the next top-level box header, bounded by the
@@ -3228,6 +3246,15 @@ impl Reader {
                 return Err(err);
             }
         };
+        for traf in &moof.traf {
+            let track_id = traf.tfhd.track_id;
+            if !self.tracks.iter().any(|info| info.track_id == track_id) {
+                self.warn(Warning::UndeclaredTrack {
+                    track_id,
+                    offset: state.offset,
+                });
+            }
+        }
         if resolved.truncated && !self.fragment_truncation_reported {
             self.fragment_truncation_reported = true;
             self.deferred_warning = Some(Warning::TruncatedFragment {

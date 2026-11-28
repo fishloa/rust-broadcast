@@ -170,12 +170,26 @@ impl SegmentStage {
         collected.drain(&mut self.demux, &self.skipped_tracks);
         let mut damage = self.init_events.damage.clone();
         damage.extend(collected.damage);
+        let mut skipped = self.init_events.skipped.clone();
+        skipped.extend(collected.skipped);
         Ok(Staged {
             tracks: collected.tracks,
             damaged: self.init_events.damaged.saturating_add(collected.damaged),
-            skipped: self.init_events.skipped.clone(),
+            skipped,
             damage,
         })
+    }
+
+    /// The reports the init segment produced, handed over once: a caller that
+    /// keeps the stage reads them here instead of again in every segment.
+    pub(crate) fn take_init_events(&mut self) -> Staged {
+        let init = std::mem::take(&mut self.init_events);
+        Staged {
+            tracks: init.tracks,
+            damaged: init.damaged,
+            skipped: init.skipped,
+            damage: init.damage,
+        }
     }
 }
 

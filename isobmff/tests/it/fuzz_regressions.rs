@@ -797,3 +797,37 @@ fn damage_crash_f63f1bbf_skips_an_unreadable_clamped_moov() {
         "an unreadable clamped moov is skipped: {refusal:?}"
     );
 }
+
+/// `isobmff_damage` crash-d7936507: the input opens with an `imda` whose size
+/// (9) cuts its 32-bit identifier. The box locates media only; it is reported
+/// and skipped, and the walk goes on.
+#[test]
+fn damage_crash_d7936507_reports_a_cut_imda_instead_of_failing() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    let file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-d793650756bbd31d5a2b3b2459084eac3a0750a7",
+    );
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let mut reports = Vec::new();
+    loop {
+        match reader.step() {
+            Ok(Step::Need(range)) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end").min(file.len());
+                reader
+                    .supply(range.offset, file.get(start..end).unwrap_or(&[]))
+                    .expect("a cut imda is not a refusal");
+            }
+            Ok(Step::Damage(damage)) => reports.push(damage),
+            Ok(Step::Done) | Err(_) => break,
+            Ok(_) => {}
+        }
+    }
+    assert!(
+        reports
+            .iter()
+            .any(|damage| damage.fourcc() == Some(*b"imda")),
+        "the cut imda is reported: {reports:?}"
+    );
+}

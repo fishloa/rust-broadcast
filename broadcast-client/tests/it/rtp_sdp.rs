@@ -104,6 +104,46 @@ fn three_access_units_yield_two_completed_samples_idr_first() {
     assert!(host.session.payload_bytes() > 0);
 }
 
+/// Packets after a gap that exhaust the depacketiser's reorder window
+/// (`DEFAULT_REORDER_DEPTH`), the point where a lost sequence number is decided.
+const WINDOW_PAST_THE_GAP: u16 = 20;
+
+fn damage_of(host: &UdpHost) -> Vec<broadcast_core::damage::Damage> {
+    host.events
+        .iter()
+        .filter_map(|t| match &t.event {
+            Event::Damage(damage) => Some(damage.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_clean_sequence_reports_no_damage() {
+    let mut host = UdpHost::open(URL, config(Some(sdp())));
+    host.datagram(&au(1, 1000, &[0x65, 0xAA, 0xBB]));
+    host.datagram(&au(2, 4000, &[0x41, 0xAA, 0xBB]));
+    host.datagram(&au(3, 7000, &[0x41, 0xCC, 0xDD]));
+    assert!(damage_of(&host).is_empty());
+}
+
+#[test]
+fn a_lost_sequence_number_is_one_report_at_the_gap_and_playback_continues() {
+    let mut host = UdpHost::open(URL, config(Some(sdp())));
+    host.datagram(&au(1, 1000, &[0x65, 0xAA, 0xBB]));
+    for seq in 3..=WINDOW_PAST_THE_GAP {
+        host.datagram(&au(seq, u32::from(seq) * 3000, &[0x41, 0xAA, 0xBB]));
+    }
+    let damage = damage_of(&host);
+    assert_eq!(damage.len(), 1, "{damage:?}");
+    assert_eq!(damage[0].what(), "RTP packet run (lost)");
+    assert_eq!(damage[0].location().ordinal(), Some(2));
+    assert!(
+        !samples(&host).is_empty(),
+        "playback continued past the gap"
+    );
+}
+
 #[test]
 fn a_payload_type_the_sdp_does_not_declare_is_ignored() {
     let mut host = UdpHost::open(URL, config(Some(sdp())));

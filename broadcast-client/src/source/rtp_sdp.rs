@@ -6,13 +6,14 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use broadcast_core::Parse;
+use broadcast_core::damage::{Damage, DamageKind, Severity};
 use broadcast_core::timescale::Timescale;
 use rtp_packet::RtpPacket;
 use rtsp_runtime::MAX_TRACKS;
 use sdp_types::Session as SdpSession;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
-use transmux::{RtpStreamDepacketiser, RtpStreamTrack, TrackId, sdp_track};
+use transmux::{RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, TrackId, sdp_track};
 
 use crate::{Error, Event};
 
@@ -114,6 +115,29 @@ impl SdpRtp {
             Ok(samples) => self.emit(track, samples),
             Err(_) => self.dropped = self.dropped.saturating_add(1),
         }
+        self.take_losses();
+    }
+
+    /// The depacketiser's own loss record, one report per loss: nothing else
+    /// says a sequence number never arrived.
+    fn take_losses(&mut self) {
+        while let Some(loss) = self.depa.poll_loss_event() {
+            let damage = match loss {
+                RtpLossEvent::SequenceGap { expected, .. } => Damage::new(
+                    DamageKind::MediaUnitDropped,
+                    Severity::Degraded,
+                    "RTP packet run (lost)",
+                )
+                .with_ordinal(u64::from(expected)),
+                RtpLossEvent::DamagedAccessUnit { .. } => Damage::new(
+                    DamageKind::MediaUnitDropped,
+                    Severity::Degraded,
+                    "access unit (lost after a sequence gap)",
+                ),
+                _ => continue,
+            };
+            self.events.push(Event::Damage(damage));
+        }
     }
 
     /// Emits the access units still held in every track's depacketiser: a partially assembled
@@ -126,6 +150,7 @@ impl SdpRtp {
                 Err(_) => self.dropped = self.dropped.saturating_add(1),
             }
         }
+        self.take_losses();
     }
 
     fn emit(&mut self, track: TrackId, samples: Vec<transmux::Sample>) {

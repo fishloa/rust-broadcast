@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   media addressable is delivered and published as `DemuxEvent::Damage` beside
   the existing `DemuxEvent::InputDegraded` view); a validator asks for
   `isobmff::Mode::Strict`.
+- The MP4 demuxer reports a fragment's `traf` for a track its init never
+  declared as one `DemuxEvent::Damage` (`MediaUnitDropped`, `Degraded`, located
+  at the track) per fragment per track, from `isobmff`'s new
+  `Warning::UndeclaredTrack`. Previously the samples were dropped silently.
 - `DemuxEvent::Damage(broadcast_core::damage::Damage)`: every skip the
   streaming demuxers tolerate reaches the caller as the workspace's one
   damage report (see `broadcast_core::damage` and

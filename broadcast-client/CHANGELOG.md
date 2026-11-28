@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An SDP-described RTP source (`udp` / `rtp` with an SDP) reports each lost RTP
+  sequence number run as one `Damage` (`MediaUnitDropped`, `Degraded`, located at
+  the first lost sequence number) and each access unit the loss dropped as one
+  more; both come from the depacketiser's own loss record, which the source
+  previously never read. A loss is decided once the depacketiser's reorder window
+  is exhausted, or at end of stream: a sender that stops right after a loss is
+  reported at the next flush, not on a clock.
+
 - `Config::damage_policy` (with `with_damage_policy`) is one policy for every
   source: each source's engine is configured from it, so HLS, DASH, Smooth,
   RTSP, SRT, RTP and UDP publish what their reader skipped as

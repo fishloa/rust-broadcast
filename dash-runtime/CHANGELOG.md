@@ -6,6 +6,22 @@ All notable changes to dash-runtime will be documented in this file.
 
 ### Added
 
+- `ingest::DashifIngestSession::with_damage_policy` (`DamagePolicy`, default
+  reports everything): the ingest session publishes a `Damage` for each skip it
+  makes through `SessionEvent::Damage`. Reported: an HLS manifest it ignores, a
+  segment that arrives out of order (delivered, flagged), a segment or aborted
+  segment body that ends mid box group, a track the init cannot set up or that
+  is encrypted, and every damage the segment reader publishes. `SessionError`
+  gains `Damage`; a `Fail` disposition stops the request with it. An identical
+  header or segment repeat and a re-sent manifest are DASH-IF §6.2.19 restarts
+  and report nothing.
+
+### Breaking
+
+- `ingest::DashifIngestSession::abort_segment` returns `Result<(), SessionError>`
+  (an aborted partial segment is reported and a `Fail` disposition can stop it).
+- `client::demux::SegmentStage`'s reader reports are coalesced by kind, and a
+  track abandoned mid-segment reaches `Output::TrackSkipped` (it was dropped).
 - `Notice::damage` (public) and one report alongside every `Output::Notice`:
   an uninterpreted extension (`EventStream`, `Preselection`,
   `PatchLocation`, low-latency addressing, a `UTCTiming` scheme) is

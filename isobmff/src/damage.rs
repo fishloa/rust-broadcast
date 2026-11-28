@@ -31,6 +31,10 @@ impl Warning {
             Self::UnrepresentableBox { reason, .. } => reason.name(),
             other => other.name(),
         };
+        let track = match &self {
+            Self::UndeclaredTrack { track_id, .. } => Some(track_id.value()),
+            _ => None,
+        };
         let (kind, severity, fourcc, range, recoverable) = match self {
             Self::ClampedBox { box_type, offset } => (
                 DamageKind::MetadataSkipped,
@@ -52,6 +56,13 @@ impl Warning {
                 Some(*b"wave"),
                 Some(DamageByteRange::new(offset, 0)),
                 true,
+            ),
+            Self::UndeclaredTrack { offset, .. } => (
+                DamageKind::MediaUnitDropped,
+                Severity::Degraded,
+                Some(*b"traf"),
+                Some(DamageByteRange::new(offset, 0)),
+                false,
             ),
             Self::ZeroMovieTimescale { offset } => (
                 DamageKind::TimelineRepaired,
@@ -122,6 +133,9 @@ impl Warning {
         }
         if let Some(fourcc) = fourcc {
             damage = damage.with_fourcc(fourcc);
+        }
+        if let Some(track) = track {
+            damage = damage.for_track(track);
         }
         damage
     }
