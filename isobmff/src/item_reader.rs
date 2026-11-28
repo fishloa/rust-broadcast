@@ -1707,10 +1707,17 @@ impl ItemReader {
                         prefix,
                         target,
                     } => {
-                        self.pending = Some(ByteRange {
-                            offset: offset.saturating_add(prefix.len() as u64),
-                            len: (target.saturating_sub(prefix.len())) as u64,
-                        });
+                        let at = offset.saturating_add(prefix.len() as u64);
+                        let wanted = target.saturating_sub(prefix.len()) as u64;
+                        let len = self
+                            .config
+                            .total_len
+                            .map_or(wanted, |total| wanted.min(total.saturating_sub(at)));
+                        if len == 0 {
+                            self.input_ended()?;
+                            continue;
+                        }
+                        self.pending = Some(ByteRange { offset: at, len });
                     }
                     Phase::Body {
                         box_start,
@@ -1791,11 +1798,18 @@ impl ItemReader {
     fn input_ended(&mut self) -> Result<()> {
         // A header the input cut is bytes no box describes: they are carried
         // verbatim in their own position, with a finding naming them.
-        if let Phase::Header { offset, prefix, .. } = &mut self.phase
-            && !prefix.is_empty()
-        {
+        if let Phase::Header { offset, prefix, .. } = &mut self.phase {
             let (at, header) = (*offset, core::mem::take(prefix));
-            self.carry(at, header, ByteRange { offset: at, len: 0 });
+            if !header.is_empty() {
+                self.carry(at, header, ByteRange { offset: at, len: 0 });
+            } else if self.config.total_len.is_some_and(|total| at < total) {
+                // The input ended before the length the caller declared.
+                self.degraded.push(ImageFinding::UnrepresentableBox {
+                    box_type: [0u8; BOX_TYPE_SIZE],
+                    offset: at,
+                    reason: crate::error::OpaqueReason::BufferTooShort,
+                });
+            }
         }
         if self.image.is_some() {
             self.phase = Phase::Loaded;

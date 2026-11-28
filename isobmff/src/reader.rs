@@ -2517,8 +2517,11 @@ impl Reader {
         } else {
             header.size
         };
+        // A size past the end of the address space overruns any known input
+        // length, and is handled as the overrun below.
         let mut end = offset
             .checked_add(size)
+            .or(self.config.total_len.map(|_| u64::MAX))
             .ok_or(Error::InvalidInput("top-level box end overflow"))?;
         if let Some(total) = self.config.total_len
             && end > total

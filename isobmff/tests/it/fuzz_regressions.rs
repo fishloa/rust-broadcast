@@ -555,3 +555,61 @@ fn damage_crash_a7c557cf_reports_a_truncated_sidx_instead_of_failing() {
         "the cut structures are reported: {reports:?}"
     );
 }
+
+/// `isobmff_damage` crash-cb356b74: the target's damage step added `0xBEF7` to
+/// the 32-bit word at byte 1932 of the artifact. The walk then met a top-level
+/// header whose `largesize` puts its end past `u64::MAX`; that is an overrun of
+/// the input like any other, not a refusal of a file with tracks.
+#[test]
+fn damage_crash_cb356b74_treats_an_end_past_u64_as_an_overrun() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    const DAMAGED_WORD: usize = 1932;
+    const ADDED: u32 = 0xBEF7;
+    let mut file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-cb356b7433a37a05e027afa7e45f363af3c6dfdf",
+    );
+    let word = u32::from_be_bytes(
+        file[DAMAGED_WORD..DAMAGED_WORD + 4]
+            .try_into()
+            .expect("word"),
+    );
+    file[DAMAGED_WORD..DAMAGED_WORD + 4].copy_from_slice(&word.wrapping_add(ADDED).to_be_bytes());
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let mut reports = Vec::new();
+    loop {
+        match reader.step().expect("an overrunning box is not a refusal") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, file.get(start..end).expect("supplied range"))
+                    .expect("an overrunning box is not a refusal");
+            }
+            Step::Damage(damage) => reports.push(damage),
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert!(!reports.is_empty(), "the overrun is reported");
+}
+
+/// `isobmff_item_reader` crash-e4167dc1: one byte follows the last complete
+/// box, fewer than a box header. The reader asks only for the bytes the input
+/// holds, so that byte is carried and reported rather than never requested.
+#[test]
+fn item_reader_carries_a_one_byte_tail() {
+    let data = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_item_reader/crash-e4167dc153aaf28b8db03c7308f94f4d24581a23",
+    );
+    let (reports, reemitted) = item_reader_over(&data);
+    assert_eq!(
+        reemitted.expect("the model loads"),
+        data,
+        "the one-byte tail is carried verbatim"
+    );
+    assert!(
+        reports.iter().any(|what| what == "trailing-bytes"),
+        "the tail is reported: {reports:?}"
+    );
+}
