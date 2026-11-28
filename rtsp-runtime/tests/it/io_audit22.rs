@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use broadcast_common::timeouts::Timeouts;
+use broadcast_core::damage::DamageKind;
 use rtsp_runtime::client::ClientEvent;
 use rtsp_runtime::server::ServerEvent;
 use rtsp_runtime::{
@@ -147,6 +148,79 @@ async fn a_stale_response_is_dropped_and_the_current_cseq_answered() {
         }
         other => panic!("expected the DESCRIBE response, got {other:?}"),
     }
+    server.await.expect("the server task");
+}
+
+#[tokio::test]
+async fn a_junk_run_seen_by_a_pusher_is_queued_before_the_frame_after_it() {
+    let (client_io, mut server_io) = duplex(64 * 1024);
+    let server = tokio::spawn(async move {
+        let request = read_request(&mut server_io).await;
+        assert!(request.starts_with("OPTIONS "), "{request}");
+        server_io
+            .write_all(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n")
+            .await
+            .expect("the OPTIONS response");
+        let first = rtsp_runtime::InterleavedFrame::new(0, vec![1u8, 2, 3])
+            .to_bytes()
+            .expect("frame");
+        let second = rtsp_runtime::InterleavedFrame::new(0, vec![4u8, 5, 6])
+            .to_bytes()
+            .expect("frame");
+        let mut wire = first;
+        wire.extend_from_slice(b"garbage!");
+        wire.extend_from_slice(&second);
+        server_io
+            .write_all(&wire)
+            .await
+            .expect("the frames a pusher reads back");
+        // The client keeps writing its frames; the stream stays open until
+        // it closes.
+        let mut sink = [0u8; 256];
+        while server_io.read(&mut sink).await.is_ok_and(|read| read > 0) {}
+    });
+
+    let mut c = client(client_io);
+    tokio::time::timeout(Duration::from_secs(5), c.options(URI))
+        .await
+        .expect("options hung")
+        .expect("the OPTIONS response");
+
+    // A pusher that never reads: its next send drains what the peer queued.
+    tokio::time::timeout(Duration::from_secs(5), c.send_interleaved(1, &[9u8]))
+        .await
+        .expect("send hung")
+        .expect("the pusher's frame");
+
+    let first = tokio::time::timeout(Duration::from_secs(2), c.recv_interleaved())
+        .await
+        .expect("the first frame hung")
+        .expect("the first frame")
+        .expect("the first frame is not the end of the stream");
+    assert!(
+        matches!(&first, ClientEvent::MediaData { data, .. } if data.as_ref() == [1, 2, 3]),
+        "the frame before the junk comes first: {first:?}"
+    );
+    let second = tokio::time::timeout(Duration::from_secs(2), c.recv_interleaved())
+        .await
+        .expect("the report hung")
+        .expect("the report")
+        .expect("the report is not the end of the stream");
+    let damage = match &second {
+        ClientEvent::Damage(damage) => damage,
+        other => panic!("the report for the junk precedes the frame after it: {other:?}"),
+    };
+    assert_eq!(damage.kind(), DamageKind::Resynchronised);
+    let third = tokio::time::timeout(Duration::from_secs(2), c.recv_interleaved())
+        .await
+        .expect("the frame after the junk hung")
+        .expect("the frame after the junk")
+        .expect("the frame after the junk is not the end of the stream");
+    assert!(
+        matches!(&third, ClientEvent::MediaData { data, .. } if data.as_ref() == [4, 5, 6]),
+        "the frame after the junk follows the report: {third:?}"
+    );
+    drop(c);
     server.await.expect("the server task");
 }
 

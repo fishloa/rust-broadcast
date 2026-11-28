@@ -54,6 +54,25 @@ fn absorb(client: &mut HlsClient, damage: &mut Vec<broadcast_core::damage::Damag
     samples
 }
 
+/// The outcome each `next_output` call gave, keeping the order the player
+/// reads them in (a report and the media around it share one queue).
+#[derive(Debug)]
+enum Seen {
+    Damage,
+    Samples,
+    Other,
+}
+
+fn absorb_ordered(client: &mut HlsClient, seen: &mut Vec<Seen>) {
+    for output in std::iter::from_fn(|| client.next_output()) {
+        seen.push(match output {
+            Output::Damage(_) => Seen::Damage,
+            Output::Samples { .. } => Seen::Samples,
+            _ => Seen::Other,
+        });
+    }
+}
+
 fn segment(msn: u64) -> ResourceId {
     ResourceId::Segment {
         msn: broadcast_hls::MediaSequence::new(msn),
@@ -94,6 +113,42 @@ fn a_damaged_packet_run_is_reported_and_playback_continues() {
             .all(|report| { report.severity() == broadcast_core::damage::Severity::Degraded })
     );
     assert!(samples > 0, "playback continued past the damaged run");
+}
+
+#[test]
+fn a_damage_report_precedes_the_media_after_the_gap() {
+    let mut client = start(broadcast_core::damage::DamagePolicy::new());
+    let mut seen = Vec::new();
+    absorb_ordered(&mut client, &mut seen);
+    client
+        .on_resource(segment(0), &test_fixtures::read(FIRST))
+        .expect("first segment");
+    absorb_ordered(&mut client, &mut seen);
+    client
+        .on_resource(segment(1), &damaged(&test_fixtures::read(SECOND)))
+        .expect("a damaged segment must not end the pull");
+    absorb_ordered(&mut client, &mut seen);
+
+    let report_at = seen
+        .iter()
+        .position(|seen| matches!(seen, Seen::Damage))
+        .expect("the damaged packet run must be reported");
+    let after_at = seen
+        .iter()
+        .skip(report_at)
+        .position(|seen| matches!(seen, Seen::Samples))
+        .map(|offset| report_at.saturating_add(offset))
+        .expect("the samples after the damaged run must be emitted");
+    assert!(
+        report_at < after_at,
+        "the report precedes the samples after the gap ({report_at} < {after_at}): {seen:?}"
+    );
+    assert!(
+        seen[..report_at]
+            .iter()
+            .any(|seen| matches!(seen, Seen::Samples)),
+        "the report comes after the clean segment's samples, not before them: {seen:?}"
+    );
 }
 
 #[test]

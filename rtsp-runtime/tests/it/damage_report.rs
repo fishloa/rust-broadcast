@@ -65,6 +65,20 @@ fn junk_between_frames_is_one_report_and_the_frames_still_decode() {
         vec![1, 2, 3, 4, 5, 6],
         "both frames decode past the resync"
     );
+    let report_at = outcome
+        .events
+        .iter()
+        .position(|event| matches!(event, ClientEvent::Damage(_)))
+        .expect("the junk run is reported");
+    let after_at = outcome
+        .events
+        .iter()
+        .position(|event| matches!(event, ClientEvent::MediaData { data, .. } if data.as_ref() == [4, 5, 6]))
+        .expect("the frame after the junk arrives");
+    assert!(
+        report_at < after_at,
+        "the report precedes the first frame after the junk ({report_at} < {after_at})"
+    );
 }
 
 #[test]

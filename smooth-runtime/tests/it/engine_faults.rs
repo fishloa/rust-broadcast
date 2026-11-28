@@ -327,6 +327,29 @@ fn a_damaged_fragment_is_dropped_and_the_next_one_still_demuxes() {
         reports[0].severity(),
         broadcast_core::damage::Severity::Degraded
     );
+
+    // ... and it comes before the first sample of the fragment after it.
+    let order = host.outputs();
+    let report_at = order
+        .iter()
+        .position(|o| matches!(o, Output::Damage(_)))
+        .expect("the damaged fragment is reported");
+    let after_at = order
+        .iter()
+        .skip(report_at)
+        .position(|o| {
+            matches!(
+                o,
+                Output::Sample { sample, .. }
+                    if sample.timing.and_then(|t| t.dts()).is_some_and(|dts| dts >= SECOND_FRAGMENT_DTS.end)
+            )
+        })
+        .map(|offset| report_at.saturating_add(offset))
+        .expect("the fragment after the damaged one is emitted");
+    assert!(
+        report_at < after_at,
+        "the report precedes the samples after the gap ({report_at} < {after_at})"
+    );
 }
 
 /// The same damage, with `Fail`: the session stops there with the report.
