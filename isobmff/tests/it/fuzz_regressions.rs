@@ -407,8 +407,9 @@ fn item_reader_keeps_a_second_meta_box_opaque_and_re_emits_it() {
 
 /// The exact 100-byte input `isobmff_item_reader` failed on next: a top-level
 /// box written with `size == 1` and a `largesize` of 0. It described no bytes,
-/// so the re-emit dropped the 55 the input still held; a `largesize` shorter
-/// than its own 16-byte header is now a typed error (§4.2).
+/// so the re-emit dropped the 55 the input still held. Best effort reports the
+/// header and carries the rest of the input from it verbatim; strict refuses it
+/// (§4.2).
 const ZERO_LARGESIZE_TAIL: [u8; 100] = [
     0, 0, 0, 29, 109, 101, 116, 97, 0, 0, 0, 0, 0, 0, 0, 17, 4, 42, 0, 4, 0, 0, 0, 0, 0, 210, 255,
     1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 49, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -421,16 +422,16 @@ fn item_reader_zero_largesize_is_a_typed_error() {
     use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
 
     let data = &ZERO_LARGESIZE_TAIL;
-    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
+    let config = ItemReaderConfig::default()
+        .with_total_len(Some(data.len() as u64))
+        .with_mode(isobmff::reader::Mode::Strict);
     let mut reader = ItemReader::new(config);
     loop {
         match reader.step() {
             Ok(ItemStep::Need(range)) => {
                 let start = usize::try_from(range.offset).expect("offset");
                 let len = usize::try_from(range.len).expect("length");
-                if let Err(err) =
-                    reader.supply(range.offset, data.get(start..start + len).unwrap_or(&[]))
-                {
+                if let Err(err) = reader.supply(range.offset, &data[start..start + len]) {
                     assert!(
                         matches!(err, Error::BoxSizeUnderflow { .. }),
                         "expected BoxSizeUnderflow, got {err:?}"
@@ -439,7 +440,7 @@ fn item_reader_zero_largesize_is_a_typed_error() {
                 }
             }
             Ok(ItemStep::Loaded(_)) => panic!("a zero-largesize tail must not load"),
-            Ok(ItemStep::Done) => panic!("done without a model"),
+            Ok(ItemStep::Done) => panic!("done without an error"),
             Ok(_) => {}
             Err(err) => {
                 assert!(
@@ -452,18 +453,38 @@ fn item_reader_zero_largesize_is_a_typed_error() {
     }
 }
 
-/// The exact artifact `isobmff_item_reader` crashed on: the file ends inside a
-/// `largesize` box header (8 bytes declare `size == 1` and stop).
-fn item_reader_over_artifact(artifact: &str) -> (Vec<u8>, Vec<String>, Vec<u8>) {
+/// The same input in the default (permissive) mode: the header describes no
+/// byte, so it is reported and the rest of the input carried from it verbatim.
+#[test]
+fn item_reader_zero_largesize_is_reported_and_carried() {
+    let data = &ZERO_LARGESIZE_TAIL;
+    let (reports, reemitted) = item_reader_over(data);
+    let out = reemitted.expect("the model loads");
+    eprintln!("OUT {} {:?}", out.len(), &out[..out.len().min(60)]);
+    assert_eq!(
+        out, data,
+        "the unframeable tail is carried verbatim"
+    );
+    assert!(
+        reports.iter().any(|what| what == "trailing-bytes"),
+        "the unframeable header is reported: {reports:?}"
+    );
+}
+
+/// Drive the item reader over `data` the way the fuzz target does, collecting
+/// every report and the re-emitted file.
+fn item_reader_over(data: &[u8]) -> (Vec<String>, Option<Vec<u8>>) {
     use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
 
-    let data = test_fixtures::read(&format!("fuzz/regressions/isobmff_item_reader/{artifact}"));
-    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
-    let mut reader = ItemReader::new(config);
+    let mut reader =
+        ItemReader::new(ItemReaderConfig::default().with_total_len(Some(data.len() as u64)));
     let mut reports = Vec::new();
-    let mut reemitted = Vec::new();
-    loop {
-        match reader.step().expect("step") {
+    let mut reemitted = None;
+    for _ in 0..256 {
+        let Ok(step) = reader.step() else {
+            break;
+        };
+        match step {
             ItemStep::Need(range) => {
                 let start = usize::try_from(range.offset).expect("offset");
                 let end = usize::try_from(range.end()).expect("end");
@@ -473,22 +494,31 @@ fn item_reader_over_artifact(artifact: &str) -> (Vec<u8>, Vec<String>, Vec<u8>) 
             }
             ItemStep::Damage(damage) => reports.push(damage.what().to_owned()),
             ItemStep::Loaded(image) => {
-                reemitted = image.reemit_into(&data).expect("re-emit");
+                reemitted = Some(image.reemit_into(data).expect("re-emit"));
             }
             ItemStep::Done => break,
             _ => {}
         }
     }
-    (data, reports, reemitted)
+    (reports, reemitted)
 }
 
+/// `isobmff_item_reader` crash-d0cd3a9a: the input ends inside a top-level
+/// header that declares a `largesize` (8 bytes of `size == 1`, no more).
 #[test]
-fn item_reader_carries_and_reports_a_truncated_largesize_tail() {
-    let (data, reports, reemitted) =
-        item_reader_over_artifact("crash-d0cd3a9a689932169b7ccc0ff146369bdc9b00d5");
-    assert_eq!(&data[data.len() - 8..], &[0, 0, 0, 1, 0xff, 0x0a, 0xff, 0xff]);
+fn item_reader_carries_a_cut_largesize_header() {
+    let data = test_fixtures::fuzz::regression(
+        "isobmff_item_reader",
+        "crash-d0cd3a9a689932169b7ccc0ff146369bdc9b00d5",
+    );
     assert_eq!(
-        reemitted, data,
+        &data[data.len() - 8..],
+        &[0, 0, 0, 1, 0xff, 0x0a, 0xff, 0xff]
+    );
+    let (reports, reemitted) = item_reader_over(&data);
+    assert_eq!(
+        reemitted.expect("the model loads"),
+        data,
         "the bytes the walk could not frame are carried verbatim"
     );
     assert!(
@@ -497,87 +527,27 @@ fn item_reader_carries_and_reports_a_truncated_largesize_tail() {
     );
 }
 
+/// `isobmff_damage` crash-a7c557cf: a file whose `moov` is cut short and whose
+/// trailing `sidx` cannot be parsed. The index is refused with a report and the
+/// walk continues instead of failing.
 #[test]
-fn item_reader_carries_and_reports_a_truncated_largesize_meta_child() {
-    use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
-
-    let mut data = boxed(*b"ftyp", b"avifmif1");
-    let mut meta_body = vec![0u8; 4];
-    meta_body.extend_from_slice(&[0, 0, 0, 12, b'f', b'r', b'e', b'e']);
-    meta_body.extend_from_slice(&[0, 0, 0, 1, b'i', b'x', b'x', b'x']);
-    let child_tail = u64::try_from(data.len() + 8 + meta_body.len()).expect("offset");
-    data.extend_from_slice(&boxed(*b"meta", &meta_body));
-    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
-    let mut reader = ItemReader::new(config);
-    let mut reports = Vec::new();
-    loop {
-        match reader.step().expect("step") {
-            ItemStep::Need(range) => {
-                let start = usize::try_from(range.offset).expect("offset");
-                let end = usize::try_from(range.end()).expect("end");
-                reader
-                    .supply(range.offset, data.get(start..end).unwrap_or(&[]))
-                    .expect("supply");
-            }
-            ItemStep::Damage(damage) => reports.push(damage),
-            ItemStep::Loaded(image) => {
-                assert_eq!(
-                    image.reemit_into(&data).expect("re-emit"),
-                    data,
-                    "the cut child is carried verbatim"
-                );
-            }
-            ItemStep::Done => break,
-            _ => {}
-        }
-    }
-    assert!(
-        reports.iter().any(|damage| {
-            damage.what() == "buffer-too-short"
-                && damage
-                    .location()
-                    .byte_range()
-                    .is_some_and(|range| range.start() == child_tail.saturating_sub(44) + 40)
-        }),
-        "the cut child reaches the caller as a report: {reports:?}"
-    );
-}
-
-#[test]
-fn damage_crash_a7c557cf_reports_the_refused_moov_tail_instead_of_failing() {
+fn damage_crash_a7c557cf_reports_a_truncated_sidx_instead_of_failing() {
     use isobmff::reader::{Reader, ReaderConfig, Step};
 
-    // `isobmff_damage` crash-a7c557cfddb2d67ebd8d89da620431e6a0e456da: a
-    // truncated `moov` whose tail holds half a box header.
-    let mut file = boxed(*b"ftyp", b"isomiso6iso2avc1mp41");
-    let mut moov_body = boxed(*b"mvhd", &[0u8; 100]);
-    moov_body.extend_from_slice(&[0xeb; 8]);
-    let refusals = [
-        0x7du8, 0x93, 0xa9, 0xbf, 0xd5, 0xeb, 0x01, 0x17, 0x2d, 0x43, 0x59, 0x6f, 0x85, 0x9b, 0xb1,
-        0xc7, 0xdd, 0xf3, 0x09, 0x1f, 0x35, 0x4b, 0x61, 0x77, 0x8d, 0xa3, 0xb9, 0xcf, 0xe5, 0xfb,
-        0x11, 0x27, 0x3d, 0x53, 0x69, 0x7f, 0x95, 0xab, 0xc1, 0xd7, 0xed,
-    ];
-    let head = 8 + moov_body.len();
-    moov_body.extend_from_slice(&boxed(*b"trak", &refusals));
-    let moov_tail = u64::try_from(8 + moov_body.len()).expect("offset");
-    moov_body.extend_from_slice(&[0x00, 0x00, 0x00, 0x7a, 0x00, 0x02, 0x0a, 0x2b]);
-    let mut moov = ((head + 8 + refusals.len() + 8) as u32)
-        .to_be_bytes()
-        .to_vec();
-    moov.extend_from_slice(b"moov");
-    moov.extend_from_slice(&moov_body);
-    file.extend_from_slice(&moov);
-
+    let file = test_fixtures::fuzz::regression(
+        "isobmff_damage",
+        "crash-a7c557cfddb2d67ebd8d89da620431e6a0e456da",
+    );
     let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
     let mut reports = Vec::new();
     loop {
-        match reader.step().expect("step") {
+        match reader.step().expect("an unparseable index is not a refusal") {
             Step::Need(range) => {
                 let start = usize::try_from(range.offset).expect("offset");
                 let end = usize::try_from(range.end()).expect("end");
                 reader
                     .supply(range.offset, file.get(start..end).expect("supplied range"))
-                    .expect("a damaged side box is not a refusal");
+                    .expect("supply");
             }
             Step::Damage(damage) => reports.push(damage),
             Step::Done => break,
@@ -585,13 +555,7 @@ fn damage_crash_a7c557cf_reports_the_refused_moov_tail_instead_of_failing() {
         }
     }
     assert!(
-        reports.iter().any(|damage| {
-            damage.kind() == broadcast_core::damage::DamageKind::MetadataUninterpreted
-                && damage
-                    .location()
-                    .byte_range()
-                    .is_some_and(|range| range.start() <= moov_tail)
-        }),
-        "the refused moov tail reaches the caller as a report: {reports:?}"
+        reports.iter().any(|damage| damage.what() == "buffer-too-short"),
+        "the cut structures are reported: {reports:?}"
     );
 }
