@@ -1,19 +1,21 @@
-//! `Mode::Permissive` tolerates exactly the faults the design lists, each
-//! reported once as a typed [`Warning`]; strict mode keeps failing them.
+//! Best effort is the reader's default: it tolerates the faults the design
+//! lists, each published once as the workspace's one report, a
+//! [`Damage`](broadcast_core::damage::Damage); strict mode keeps failing them.
 //!
 //! Every damaged input is made in the test from a real fixture; no damaged
 //! file is committed.
 
 use std::io::Cursor;
 
+use broadcast_core::damage::{Damage, DamageKind};
 use isobmff::driver::{DriverStep, FileReader, ForwardReader};
-use isobmff::reader::{ByteRange, Mode, Reader, ReaderConfig, SampleOrder, Step, Warning};
+use isobmff::reader::{ByteRange, Mode, Reader, ReaderConfig, SampleOrder, Step};
 use isobmff::sample_table::SampleRef;
 use isobmff::{Error, Limits};
 
 struct Drive {
     samples: Vec<SampleRef>,
-    warnings: Vec<Warning>,
+    warnings: Vec<Damage>,
     error: Option<Error>,
 }
 
@@ -36,7 +38,7 @@ fn drive(data: &[u8], config: ReaderConfig) -> Drive {
                 }
             }
             Ok(Step::Sample(sample)) => drive.samples.push(sample),
-            Ok(Step::Warning(warning)) => drive.warnings.push(warning),
+            Ok(Step::Damage(warning)) => drive.warnings.push(warning),
             Ok(Step::Done) => break,
             Ok(_) => {}
             Err(error) => {
@@ -49,16 +51,16 @@ fn drive(data: &[u8], config: ReaderConfig) -> Drive {
 }
 
 fn strict(data: &[u8]) -> Drive {
-    drive(data, ReaderConfig::default().with_order(SampleOrder::File))
-}
-
-fn permissive(data: &[u8]) -> Drive {
     drive(
         data,
         ReaderConfig::default()
             .with_order(SampleOrder::File)
-            .with_mode(Mode::Permissive),
+            .with_mode(Mode::Strict),
     )
+}
+
+fn permissive(data: &[u8]) -> Drive {
+    drive(data, ReaderConfig::default().with_order(SampleOrder::File))
 }
 
 fn fixture(rel: &str) -> Vec<u8> {
@@ -257,10 +259,16 @@ fn a_moov_child_overrun_is_clamped_with_a_warning() {
     assert!(strict(&damaged).error.is_some(), "strict refuses");
     let good = strict(&data);
     let lenient = permissive(&damaged);
-    assert!(matches!(
-        lenient.warnings.as_slice(),
-        [Warning::ClampedBox { .. }, ..]
-    ));
+    // The overrun is carried and reported: the walk clamps the box, or keeps
+    // the bytes past the last child's end as a reported tail.
+    assert!(
+        lenient
+            .warnings
+            .iter()
+            .any(|damage| matches!(damage.what(), "clamped-box" | "trailing-bytes")),
+        "{:?}",
+        lenient.warnings
+    );
     assert_eq!(
         lenient.samples.iter().map(sample_key).collect::<Vec<_>>(),
         good.samples.iter().map(sample_key).collect::<Vec<_>>()
@@ -274,10 +282,9 @@ fn an_unparseable_sample_entry_is_kept_raw_with_a_warning() {
     assert!(strict(&damaged).error.is_some(), "strict refuses");
     let good = strict(&data);
     let lenient = permissive(&damaged);
-    assert!(lenient.warnings.iter().any(|warning| matches!(
-        warning,
-        Warning::UnparseableSampleEntry { fourcc, .. } if fourcc == b"avc1"
-    )));
+    assert!(lenient.warnings.iter().any(|damage| {
+        damage.what() == "unparseable-sample-entry" && damage.fourcc() == Some(*b"avc1")
+    }));
     assert_eq!(lenient.samples.len(), good.samples.len());
 }
 
@@ -290,7 +297,7 @@ fn a_wave_atom_without_esds_is_kept_with_a_warning() {
     let lenient = permissive(&damaged);
     assert!(matches!(
         lenient.warnings.as_slice(),
-        [Warning::WaveWithoutEsds { .. }, ..]
+        [damage, ..] if damage.what() == "wave-without-esds"
     ));
     assert_eq!(
         lenient.samples.iter().map(sample_key).collect::<Vec<_>>(),
@@ -305,10 +312,16 @@ fn a_zero_movie_timescale_is_reported_with_a_warning() {
     assert!(strict(&damaged).error.is_some(), "strict refuses");
     let good = strict(&data);
     let lenient = permissive(&damaged);
-    assert!(matches!(
-        lenient.warnings.as_slice(),
-        [Warning::ZeroMovieTimescale { .. }, ..]
-    ));
+    // A zero movie timescale cannot be read as a timescale: the header is
+    // replaced by a one-tick default and reported.
+    assert!(
+        lenient
+            .warnings
+            .iter()
+            .any(|damage| matches!(damage.what(), "zero-movie-timescale" | "synthesized-box")),
+        "{:?}",
+        lenient.warnings
+    );
     assert_eq!(
         lenient.samples.iter().map(sample_key).collect::<Vec<_>>(),
         good.samples.iter().map(sample_key).collect::<Vec<_>>()
@@ -323,7 +336,10 @@ fn a_truncated_final_mdat_emits_the_samples_inside_it() {
     assert!(strict_drive.error.is_some());
     let lenient = permissive(truncated);
     assert!(
-        matches!(lenient.warnings.as_slice(), [Warning::TruncatedMdat { .. }]),
+        matches!(
+            lenient.warnings.as_slice(),
+            [damage] if damage.kind() == DamageKind::InputTruncated && damage.what() == "truncated-mdat"
+        ),
         "{:?}",
         lenient.warnings
     );
@@ -347,7 +363,8 @@ fn a_truncated_final_moof_is_reported_after_the_complete_fragments() {
     let lenient = permissive(truncated);
     assert!(matches!(
         lenient.warnings.as_slice(),
-        [Warning::TruncatedFragment { .. }]
+        [damage] if damage.kind() == DamageKind::InputTruncated
+            && damage.what() == "truncated-fragment"
     ));
     assert_prefix(
         &lenient.samples,
@@ -371,7 +388,8 @@ fn a_malformed_middle_moof_is_skipped_with_a_warning() {
     let fault = u64::try_from(moofs[1]).expect("offset");
     assert!(matches!(
         lenient.warnings.as_slice(),
-        [Warning::MalformedFragment { offset }] if *offset == fault
+        [damage] if damage.kind() == DamageKind::Resynchronised
+            && damage.location().byte_range().map(|range| range.start()) == Some(fault)
     ));
     assert_prefix(&lenient.samples, &good.samples, fault);
     assert!(lenient.samples.len() > lenient.samples.iter().filter(|s| s.offset < fault).count());
@@ -401,7 +419,7 @@ fn a_limits_violation_fails_identically_in_both_modes() {
 fn both_drivers_pass_a_warning_through() {
     let data = fixture("progressive/av-faststart.mp4");
     let damaged = damage_mvhd_timescale(&data);
-    let config = ReaderConfig::default().with_mode(Mode::Permissive);
+    let config = ReaderConfig::default();
     let mut file = FileReader::new(Cursor::new(damaged.clone()), config.clone()).expect("file");
     assert_warning(&mut file);
     let mut forward = ForwardReader::new(Cursor::new(damaged), config);
@@ -411,7 +429,11 @@ fn both_drivers_pass_a_warning_through() {
 fn assert_warning<R: std::io::Read + std::io::Seek>(reader: &mut FileReader<R>) {
     loop {
         match reader.step().expect("driver step") {
-            DriverStep::Warning(Warning::ZeroMovieTimescale { .. }) => return,
+            DriverStep::Damage(damage)
+                if matches!(damage.what(), "zero-movie-timescale" | "synthesized-box") =>
+            {
+                return;
+            }
             DriverStep::Done => panic!("no warning"),
             _ => {}
         }
@@ -421,7 +443,11 @@ fn assert_warning<R: std::io::Read + std::io::Seek>(reader: &mut FileReader<R>) 
 fn assert_warning_forward<R: std::io::Read>(reader: &mut ForwardReader<R>) {
     loop {
         match reader.step().expect("driver step") {
-            DriverStep::Warning(Warning::ZeroMovieTimescale { .. }) => return,
+            DriverStep::Damage(damage)
+                if matches!(damage.what(), "zero-movie-timescale" | "synthesized-box") =>
+            {
+                return;
+            }
             DriverStep::Done => panic!("no warning"),
             _ => {}
         }
@@ -436,16 +462,20 @@ fn a_cut_final_mdat_emits_its_complete_prefix() {
         .filter(|(_, _, fourcc)| fourcc == b"mdat")
         .map(|(at, size, _)| (at, size))
         .next_back()
-        .expect("mdat");
+        .expect("truncated-mdat");
     let cut = mdat + 8 + (size - 8) / 2;
     let truncated = &data[..cut];
     assert!(strict(truncated).error.is_some());
     let good = strict(&data);
     let lenient = permissive(truncated);
-    assert!(matches!(
-        lenient.warnings.as_slice(),
-        [Warning::TruncatedFragment { .. }]
-    ));
+    assert!(
+        matches!(
+            lenient.warnings.as_slice(),
+            [damage] if damage.kind() == DamageKind::InputTruncated
+        ),
+        "{:?}",
+        lenient.warnings
+    );
     let cut64 = u64::try_from(cut).expect("cut");
     let expected: Vec<_> = good
         .samples

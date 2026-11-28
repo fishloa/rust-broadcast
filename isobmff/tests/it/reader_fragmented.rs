@@ -26,6 +26,7 @@ struct Outcome {
     fragments: Vec<FragmentInfo>,
     samples: Vec<SampleRef>,
     requests: Vec<ByteRange>,
+    damages: Vec<broadcast_core::damage::Damage>,
 }
 
 fn drive(bytes: &[u8], config: ReaderConfig) -> isobmff::Result<Outcome> {
@@ -43,6 +44,7 @@ fn drive(bytes: &[u8], config: ReaderConfig) -> isobmff::Result<Outcome> {
             Step::Metadata(_) => {}
             Step::Fragment(info) => outcome.fragments.push(info),
             Step::Sample(sample) => outcome.samples.push(sample),
+            Step::Damage(damage) => outcome.damages.push(damage),
             Step::Done => break,
             _ => break,
         }
@@ -306,16 +308,57 @@ fn a_moof_larger_than_the_limit_is_a_typed_error() {
 }
 
 #[test]
-fn a_truncated_final_fragment_is_a_typed_error() {
+fn a_cut_fragment_plays_what_is_complete_and_reports_the_rest() {
     let bytes = test_fixtures::read("mp4/h264-aac-frag.mp4");
     let outcome = drive(&bytes, config(&bytes, SampleOrder::DecodeTime)).expect("full drive");
+    assert!(!outcome.samples.is_empty(), "the clean file has samples");
     let first_moof = outcome.fragments[0].moof;
-    let cut = usize::try_from(first_moof.offset + first_moof.len).expect("offset") + 8;
+    let mdat = usize::try_from(first_moof.offset + first_moof.len).expect("offset");
+    // The `mdat` header, then half its payload.
+    let cut = mdat + 8 + (bytes.len() - mdat - 8) / 8;
     let truncated = &bytes[..cut];
+    let strict = config(truncated, SampleOrder::DecodeTime).with_mode(Mode::Strict);
     assert!(
-        drive(truncated, config(truncated, SampleOrder::DecodeTime)).is_err(),
-        "a fragment whose mdat is cut short must fail, not silently yield fewer samples"
+        drive(truncated, strict).is_err(),
+        "strict refuses a fragment whose mdat is cut short"
     );
+    let lenient = drive(truncated, config(truncated, SampleOrder::DecodeTime))
+        .expect("a best-effort read carries the complete samples");
+    assert!(
+        lenient
+            .damages
+            .iter()
+            .any(|damage| damage.kind() == broadcast_core::damage::DamageKind::InputTruncated),
+        "the cut tail is reported: {:?}",
+        lenient.damages
+    );
+    let cut64 = u64::try_from(cut).expect("cut");
+    let expected: Vec<_> = outcome
+        .samples
+        .iter()
+        .filter(|sample| u64::from(sample.size).saturating_add(sample.offset) <= cut64)
+        .map(|sample| {
+            (
+                sample.track,
+                sample.index,
+                sample.decode_time,
+                sample.offset,
+            )
+        })
+        .collect();
+    let got: Vec<_> = lenient
+        .samples
+        .iter()
+        .map(|sample| {
+            (
+                sample.track,
+                sample.index,
+                sample.decode_time,
+                sample.offset,
+            )
+        })
+        .collect();
+    assert_eq!(got, expected, "every whole sample inside the cut plays");
 }
 
 /// Drive to [`Step::Tracks`], seek, and return the first material step after
@@ -702,10 +745,10 @@ fn a_run_pointing_into_the_second_mdat_after_the_moof_still_resolves() {
 // ---------------------------------------------------------------------------
 // Sequential units: an init segment followed by media segments, each closed by
 // `Reader::end_of_unit`. A damaged segment must yield its complete prefix, one
-// `Warning::TruncatedFragment`, and leave the next segment readable.
+// a truncated-fragment report, and leave the next segment readable.
 // ---------------------------------------------------------------------------
 
-use isobmff::reader::{Mode, Warning};
+use isobmff::reader::Mode;
 
 /// One damaged media segment, built from a well-formed one in the test.
 enum Damage {
@@ -790,7 +833,7 @@ fn damage(segment: &[u8], damage: &Damage) -> Vec<u8> {
 /// The result of driving one sequential input unit by unit.
 struct Units {
     samples: Vec<Vec<SampleRef>>,
-    warnings: Vec<Warning>,
+    warnings: Vec<broadcast_core::damage::Damage>,
     error: Option<isobmff::Error>,
 }
 
@@ -835,7 +878,7 @@ fn drive_units(whole: &[u8], units: &[(usize, usize)], config: ReaderConfig) -> 
                         unit.push(sample);
                     }
                 }
-                Ok(Step::Warning(warning)) => outcome.warnings.push(warning),
+                Ok(Step::Damage(warning)) => outcome.warnings.push(warning),
                 Ok(Step::Done) => return outcome,
                 Ok(_) => {}
                 Err(error) => {
@@ -850,7 +893,7 @@ fn drive_units(whole: &[u8], units: &[(usize, usize)], config: ReaderConfig) -> 
         }
         loop {
             match reader.step() {
-                Ok(Step::Warning(warning)) => outcome.warnings.push(warning),
+                Ok(Step::Damage(warning)) => outcome.warnings.push(warning),
                 Ok(Step::Sample(sample)) => {
                     if let Some(unit) = outcome.samples.last_mut() {
                         unit.push(sample);
@@ -932,7 +975,8 @@ fn end_of_unit_recovers_after_each_damage() {
                 permissive
                     .warnings
                     .iter()
-                    .any(|warning| matches!(warning, Warning::TruncatedFragment { .. })),
+                    .any(|damage| damage.kind()
+                        == broadcast_core::damage::DamageKind::InputTruncated),
                 "segment {victim} {}: a truncated-fragment warning",
                 harm.name()
             );
@@ -1214,5 +1258,68 @@ fn a_queued_moof_past_max_fragment_bytes_is_the_typed_limit() {
             }
         ),
         "got {err:?}"
+    );
+}
+
+/// One `sidx` reference entry (§8.16.3): reference word, duration, SAP word.
+const SIDX_REFERENCE_LEN: usize = 12;
+
+/// A real `sidx` with its last reference entry cut (the box shrinks, its
+/// `reference_count` does not) cannot be parsed. It indexes fragments and is
+/// not needed to play them: best effort reports it and still delivers every
+/// sample the intact file plays; strict refuses it.
+#[test]
+fn a_sidx_cut_in_its_last_reference_is_reported_and_every_sample_still_plays() {
+    let bytes = test_fixtures::read("dash/ondemand-sidx/v_dashinit.mp4");
+    let sidx = isobmff::BoxIter::clamped(&bytes)
+        .filter_map(|b| b.ok())
+        .find(|b| b.header.box_type.is(b"sidx"))
+        .expect("the fixture carries a sidx");
+    let start = sidx.start;
+    let len = sidx.bytes.len();
+    let index = SegmentIndexBox::parse(sidx.bytes).expect("sidx parses");
+    assert!(
+        !index.references.is_empty(),
+        "the sidx has a reference to cut"
+    );
+    let mut cut = bytes[..start + len - SIDX_REFERENCE_LEN].to_vec();
+    let size = u32::try_from(len - SIDX_REFERENCE_LEN).expect("size");
+    cut[start..start + 4].copy_from_slice(&size.to_be_bytes());
+    cut.extend_from_slice(&bytes[start + len..]);
+
+    let whole = drive(&bytes, config(&bytes, SampleOrder::File)).expect("intact drive");
+    let strict = config(&cut, SampleOrder::File).with_mode(Mode::Strict);
+    assert!(drive(&cut, strict).is_err(), "strict refuses the cut sidx");
+    let lenient = drive(&cut, config(&cut, SampleOrder::File)).expect("best effort reads past it");
+    assert!(
+        lenient
+            .damages
+            .iter()
+            .any(|damage| damage.fourcc() == Some(*b"sidx")
+                && damage.location().byte_range().map(|r| r.start()) == Some(start as u64)),
+        "the cut sidx is reported at its offset: {:?}",
+        lenient.damages
+    );
+    let played = |outcome: &Outcome, file: &[u8]| -> Vec<(isobmff::TrackId, u32, u64, Vec<u8>)> {
+        outcome
+            .samples
+            .iter()
+            .map(|sample| {
+                let at = usize::try_from(sample.offset).expect("offset");
+                let end = at + usize::try_from(sample.size).expect("size");
+                (
+                    sample.track,
+                    sample.index,
+                    sample.decode_time,
+                    file[at..end].to_vec(),
+                )
+            })
+            .collect()
+    };
+    assert!(!whole.samples.is_empty(), "the intact file plays");
+    assert_eq!(
+        played(&lenient, &cut),
+        played(&whole, &bytes),
+        "every sample of the intact read is delivered"
     );
 }

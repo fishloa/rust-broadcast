@@ -278,6 +278,9 @@ const SAMPLE_COUNT: std::ops::Range<usize> = 64..68;
 /// The decode-time window the second video fragment covers, in the track's
 /// 10 MHz timescale.
 const SECOND_FRAGMENT_DTS: std::ops::Range<i64> = 10_000_000..20_000_000;
+/// Byte offset of the damaged fragment's `moof`, where the reader locates the
+/// fault it reports.
+const DAMAGED_FRAGMENT_OFFSET: u64 = 8725;
 
 fn video_dts(host: &Host) -> Vec<i64> {
     host.samples()
@@ -321,11 +324,20 @@ fn a_damaged_fragment_is_dropped_and_the_next_one_still_demuxes() {
     assert_eq!(reports.len(), 1, "{reports:?}");
     assert_eq!(
         reports[0].kind(),
-        broadcast_core::damage::DamageKind::MediaUnitDropped
+        broadcast_core::damage::DamageKind::Resynchronised
     );
     assert_eq!(
         reports[0].severity(),
         broadcast_core::damage::Severity::Degraded
+    );
+    assert_eq!(reports[0].what(), "malformed-fragment");
+    assert_eq!(reports[0].fourcc(), Some(*b"moof"));
+    assert_eq!(
+        reports[0]
+            .location()
+            .byte_range()
+            .map(|range| range.start()),
+        Some(DAMAGED_FRAGMENT_OFFSET)
     );
 
     // ... and it comes before the first sample of the fragment after it.
@@ -374,7 +386,7 @@ fn the_fail_policy_ends_the_damaged_fragment_session_with_the_same_report() {
         .expect("the policy stop carries the report");
     assert_eq!(
         fatal.kind(),
-        broadcast_core::damage::DamageKind::MediaUnitDropped
+        broadcast_core::damage::DamageKind::Resynchronised
     );
     assert!(
         !host.has(|o| matches!(o, Output::Damage(_))),

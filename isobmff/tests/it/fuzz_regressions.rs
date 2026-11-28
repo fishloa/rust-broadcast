@@ -32,6 +32,47 @@ fn boxed(fourcc: [u8; 4], body: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+fn damage_crash_089c1c5f_reports_the_tail_instead_of_refusing() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+    // `isobmff_damage` crash-089c1c5f07e0bb82818801ae0ec832b2301cbc05: a real
+    // AVIF image whose damage left one byte past its last box. The artifact is
+    // that image plus the tail; the tail alone is what reaches the failing
+    // path, so the shape is built here instead of inlining 5 KiB of image.
+    let mut file = boxed(*b"ftyp", b"avifavismsf1mif1miaf");
+    file.push(0x00);
+    let tail = u64::try_from(file.len() - 1).expect("offset");
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let mut reports = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, file.get(start..end).expect("supplied range"))
+                    .expect("supply");
+            }
+            Step::Damage(damage) => reports.push(damage),
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    let reported: Vec<&broadcast_core::damage::Damage> = reports
+        .iter()
+        .filter(|damage| damage.what() == "trailing-bytes")
+        .collect();
+    assert_eq!(reported.len(), 1, "one report for the tail: {reports:?}");
+    assert_eq!(
+        reported[0]
+            .location()
+            .byte_range()
+            .map(|range| range.start()),
+        Some(tail),
+        "the report names the tail"
+    );
+}
+
+#[test]
 fn tier34_boxes_crash_9562f956_is_a_typed_error() {
     // `isobmff_tier34_boxes` crash-9562f956b504ba425d7a3788f9123182222b82f0.
     let artifact = [187u8, 255, 16, 255, 255, 79];
@@ -152,12 +193,15 @@ const META_LARGESIZE_ZERO: [u8; 29] = [
 ];
 
 #[test]
-fn item_reader_zero_largesize_child_is_a_typed_error() {
+fn item_reader_zero_sized_meta_box_stays_bounded() {
     use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
 
+    // A `meta` box whose size field is zero claims the whole input: the walk
+    // must stay bounded and either model nothing or say why.
     let data = &META_LARGESIZE_ZERO;
     let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
     let mut reader = ItemReader::new(config);
+    let mut reports = 0usize;
     loop {
         match reader.step() {
             Ok(ItemStep::Need(range)) => {
@@ -171,8 +215,13 @@ fn item_reader_zero_largesize_child_is_a_typed_error() {
                     return;
                 }
             }
-            Ok(ItemStep::Loaded(_)) => panic!("a zero largesize must not load"),
-            Ok(ItemStep::Done) => panic!("done without an error"),
+            Ok(ItemStep::Damage(_)) => reports += 1,
+            Ok(ItemStep::Loaded(image)) => {
+                assert_eq!(image.items().len(), 0, "no item is described by zero bytes");
+                assert!(reports > 0, "an empty model says why: {reports}");
+                return;
+            }
+            Ok(ItemStep::Done) => panic!("done without a model"),
             Ok(_) => {}
             Err(err) => {
                 assert!(
@@ -358,8 +407,9 @@ fn item_reader_keeps_a_second_meta_box_opaque_and_re_emits_it() {
 
 /// The exact 100-byte input `isobmff_item_reader` failed on next: a top-level
 /// box written with `size == 1` and a `largesize` of 0. It described no bytes,
-/// so the re-emit dropped the 55 the input still held; a `largesize` shorter
-/// than its own 16-byte header is now a typed error (§4.2).
+/// so the re-emit dropped the 55 the input still held. Best effort reports the
+/// header and carries the rest of the input from it verbatim; strict refuses it
+/// (§4.2).
 const ZERO_LARGESIZE_TAIL: [u8; 100] = [
     0, 0, 0, 29, 109, 101, 116, 97, 0, 0, 0, 0, 0, 0, 0, 17, 4, 42, 0, 4, 0, 0, 0, 0, 0, 210, 255,
     1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 49, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -372,7 +422,9 @@ fn item_reader_zero_largesize_is_a_typed_error() {
     use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
 
     let data = &ZERO_LARGESIZE_TAIL;
-    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
+    let config = ItemReaderConfig::default()
+        .with_total_len(Some(data.len() as u64))
+        .with_mode(isobmff::reader::Mode::Strict);
     let mut reader = ItemReader::new(config);
     loop {
         match reader.step() {
@@ -399,4 +451,349 @@ fn item_reader_zero_largesize_is_a_typed_error() {
             }
         }
     }
+}
+
+/// The same input in the default (permissive) mode: the header describes no
+/// byte, so it is reported and the rest of the input carried from it verbatim.
+#[test]
+fn item_reader_zero_largesize_is_reported_and_carried() {
+    let data = &ZERO_LARGESIZE_TAIL;
+    let (reports, reemitted) = item_reader_over(data);
+    let out = reemitted.expect("the model loads");
+    assert_eq!(out, data, "the unframeable tail is carried verbatim");
+    assert!(
+        reports.iter().any(|what| what == "trailing-bytes"),
+        "the unframeable header is reported: {reports:?}"
+    );
+}
+
+/// Drive the item reader over `data` the way the fuzz target does, collecting
+/// every report and the re-emitted file.
+fn item_reader_over(data: &[u8]) -> (Vec<String>, Option<Vec<u8>>) {
+    use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
+
+    let mut reader =
+        ItemReader::new(ItemReaderConfig::default().with_total_len(Some(data.len() as u64)));
+    let mut reports = Vec::new();
+    let mut reemitted = None;
+    for _ in 0..256 {
+        let Ok(step) = reader.step() else {
+            break;
+        };
+        match step {
+            ItemStep::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, data.get(start..end).unwrap_or(&[]))
+                    .expect("supply");
+            }
+            ItemStep::Damage(damage) => reports.push(damage.what().to_owned()),
+            ItemStep::Loaded(image) => {
+                reemitted = Some(image.reemit_into(data).expect("re-emit"));
+            }
+            ItemStep::Done => break,
+            _ => {}
+        }
+    }
+    (reports, reemitted)
+}
+
+/// `isobmff_item_reader` crash-d0cd3a9a: the input ends inside a top-level
+/// header that declares a `largesize` (8 bytes of `size == 1`, no more).
+#[test]
+fn item_reader_carries_a_cut_largesize_header() {
+    let data = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_item_reader/crash-d0cd3a9a689932169b7ccc0ff146369bdc9b00d5",
+    );
+    assert_eq!(
+        &data[data.len() - 8..],
+        &[0, 0, 0, 1, 0xff, 0x0a, 0xff, 0xff]
+    );
+    let (reports, reemitted) = item_reader_over(&data);
+    assert_eq!(
+        reemitted.expect("the model loads"),
+        data,
+        "the bytes the walk could not frame are carried verbatim"
+    );
+    assert_eq!(reports, ["trailing-bytes"], "the cut header is reported");
+}
+
+/// `isobmff_damage` crash-a7c557cf: a file whose `moov` is cut short and whose
+/// trailing `sidx` cannot be parsed. The index is refused with a report and the
+/// walk continues instead of failing.
+#[test]
+fn damage_crash_a7c557cf_reports_a_truncated_sidx_instead_of_failing() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    let file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-a7c557cfddb2d67ebd8d89da620431e6a0e456da",
+    );
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let mut reports = Vec::new();
+    loop {
+        match reader
+            .step()
+            .expect("an unparseable index is not a refusal")
+        {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, file.get(start..end).expect("supplied range"))
+                    .expect("supply");
+            }
+            Step::Damage(damage) => reports.push(damage),
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert!(
+        reports
+            .iter()
+            .any(|damage| damage.what() == "buffer-too-short"),
+        "the cut structures are reported: {reports:?}"
+    );
+}
+
+/// `isobmff_damage` crash-cb356b74: the target's damage step added `0xBEF7` to
+/// the 32-bit word at byte 1932 of the artifact. The walk then met a top-level
+/// header whose `largesize` puts its end past `u64::MAX`; that is an overrun of
+/// the input like any other, not a refusal of a file with tracks.
+#[test]
+fn damage_crash_cb356b74_treats_an_end_past_u64_as_an_overrun() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    const DAMAGED_WORD: usize = 1932;
+    const ADDED: u32 = 0xBEF7;
+    let mut file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-cb356b7433a37a05e027afa7e45f363af3c6dfdf",
+    );
+    let word = u32::from_be_bytes(
+        file[DAMAGED_WORD..DAMAGED_WORD + 4]
+            .try_into()
+            .expect("word"),
+    );
+    file[DAMAGED_WORD..DAMAGED_WORD + 4].copy_from_slice(&word.wrapping_add(ADDED).to_be_bytes());
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let mut reports = Vec::new();
+    loop {
+        match reader.step().expect("an overrunning box is not a refusal") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, file.get(start..end).expect("supplied range"))
+                    .expect("an overrunning box is not a refusal");
+            }
+            Step::Damage(damage) => reports.push(damage),
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert!(!reports.is_empty(), "the overrun is reported");
+}
+
+/// `isobmff_item_reader` crash-e4167dc1: one byte follows the last complete
+/// box, fewer than a box header. The reader asks only for the bytes the input
+/// holds, so that byte is carried and reported rather than never requested.
+#[test]
+fn item_reader_carries_a_one_byte_tail() {
+    let data = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_item_reader/crash-e4167dc153aaf28b8db03c7308f94f4d24581a23",
+    );
+    let (reports, reemitted) = item_reader_over(&data);
+    assert_eq!(
+        reemitted.expect("the model loads"),
+        data,
+        "the one-byte tail is carried verbatim"
+    );
+    assert!(
+        reports.iter().any(|what| what == "trailing-bytes"),
+        "the tail is reported: {reports:?}"
+    );
+}
+
+/// `isobmff_damage` crash-f489a461: the target's damage step zeroed bytes
+/// 6001..6020 of the artifact, whose `moov` holds no child it can frame (its
+/// first child declares a `largesize` far past the box). Nothing can be
+/// played, so the read is refused as a movie with no track, the refusal the
+/// lane allows, not as a missing `mvhd`.
+#[test]
+fn damage_crash_f489a461_refuses_an_unframeable_moov_as_no_track() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    const ZEROED: core::ops::Range<usize> = 6001..6020;
+    let mut file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-f489a461585ef08a9915189f3a934f147220c660",
+    );
+    file[ZEROED].fill(0);
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let refusal = loop {
+        let step = match reader.step() {
+            Ok(step) => step,
+            Err(err) => break err,
+        };
+        match step {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                if let Err(err) =
+                    reader.supply(range.offset, file.get(start..end).expect("supplied range"))
+                {
+                    break err;
+                }
+            }
+            Step::Done => panic!("a moov with no framed child has nothing to play"),
+            _ => {}
+        }
+    };
+    assert!(
+        matches!(&refusal, Error::InvalidInput(text) if text.contains("no track")),
+        "refused as nothing to play: {refusal:?}"
+    );
+}
+
+/// `isobmff_damage` crash-f0a67b0f: the target's damage step added `0x41DD` to
+/// the 32-bit word at byte 12, the size of the `ftyp` an `otyp` wraps, so the
+/// `otyp` cannot be parsed. It only describes the file: best effort reports it
+/// at its own range and carries it, strict refuses it.
+#[test]
+fn damage_crash_f0a67b0f_reports_an_unparseable_otyp() {
+    use isobmff::reader::{Mode, Reader, ReaderConfig, Step};
+
+    const DAMAGED_WORD: usize = 12;
+    const ADDED: u32 = 0x41DD;
+    let mut file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-f0a67b0f523a800fdd04efbaa38d9908c636591e",
+    );
+    let word = u32::from_be_bytes(
+        file[DAMAGED_WORD..DAMAGED_WORD + 4]
+            .try_into()
+            .expect("word"),
+    );
+    file[DAMAGED_WORD..DAMAGED_WORD + 4].copy_from_slice(&word.wrapping_add(ADDED).to_be_bytes());
+    let drive = |mode: Mode| -> (Vec<broadcast_core::damage::Damage>, Option<Error>) {
+        let config = ReaderConfig::default()
+            .with_total_len(Some(file.len() as u64))
+            .with_mode(mode);
+        let mut reader = Reader::new(config);
+        let mut reports = Vec::new();
+        loop {
+            match reader.step() {
+                Ok(Step::Need(range)) => {
+                    let start = usize::try_from(range.offset).expect("offset");
+                    let end = usize::try_from(range.end()).expect("end");
+                    if let Err(err) =
+                        reader.supply(range.offset, file.get(start..end).unwrap_or(&[]))
+                    {
+                        return (reports, Some(err));
+                    }
+                }
+                Ok(Step::Damage(damage)) => reports.push(damage),
+                Ok(Step::Done) => return (reports, None),
+                Ok(_) => {}
+                Err(err) => return (reports, Some(err)),
+            }
+        }
+    };
+    assert!(drive(Mode::Strict).1.is_some(), "strict refuses the otyp");
+    let (reports, refusal) = drive(Mode::Permissive);
+    assert!(
+        refusal.as_ref().is_none_or(|err| matches!(
+            err,
+            Error::InvalidInput(text) if text.contains("no moov") || text.contains("no track")
+        )),
+        "the otyp is not a structural refusal: {refusal:?}"
+    );
+    assert!(
+        reports
+            .iter()
+            .any(|damage| damage.fourcc() == Some(*b"otyp")
+                && damage.location().byte_range().map(|r| r.start()) == Some(0)),
+        "the otyp is reported at its range: {reports:?}"
+    );
+}
+
+/// `isobmff_damage` crash-39a7dc98: the target's damage step added `0xCF82` to
+/// the 32-bit word at byte 1580 of the artifact, which holds a top-level `uuid`
+/// box whose 16-byte size cannot carry its 16-byte extended type. That box
+/// frames nothing; best effort skips it and keeps the movie's tracks.
+#[test]
+fn damage_crash_39a7dc98_skips_a_uuid_too_short_for_its_type() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    const DAMAGED_WORD: usize = 1580;
+    const ADDED: u32 = 0xCF82;
+    const UUID_AT: u64 = 1277;
+    let mut file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-39a7dc9860e8ac493fb3ce5f099bb54a4990e7fe",
+    );
+    let word = u32::from_be_bytes(
+        file[DAMAGED_WORD..DAMAGED_WORD + 4]
+            .try_into()
+            .expect("word"),
+    );
+    file[DAMAGED_WORD..DAMAGED_WORD + 4].copy_from_slice(&word.wrapping_add(ADDED).to_be_bytes());
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let mut reports = Vec::new();
+    loop {
+        match reader.step().expect("a short uuid box is not a refusal") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, file.get(start..end).expect("supplied range"))
+                    .expect("a short uuid box is not a refusal");
+            }
+            Step::Damage(damage) => reports.push(damage),
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert!(
+        reports
+            .iter()
+            .any(|damage| damage.what() == "resynchronised"
+                && damage.location().byte_range().map(|r| r.start()) == Some(UUID_AT)),
+        "the walk skips the uuid box at its offset: {reports:?}"
+    );
+}
+
+/// `isobmff_damage` crash-f63f1bbf: a `moov` declaring far more bytes than the
+/// input holds is clamped by the top-level walk, and the clamped bytes cannot
+/// describe a movie (the artifact reproduces undamaged): it is skipped like any other unreadable clamped
+/// box, and the read ends as a file with no movie, not on a body-length error.
+#[test]
+fn damage_crash_f63f1bbf_skips_an_unreadable_clamped_moov() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    let file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-f63f1bbf7cd18a3887cc2691f3b938b2c3b1b0bd",
+    );
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let refusal = loop {
+        let step = match reader.step() {
+            Ok(step) => step,
+            Err(err) => break Some(err),
+        };
+        match step {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                if let Err(err) = reader.supply(range.offset, file.get(start..end).unwrap_or(&[])) {
+                    break Some(err);
+                }
+            }
+            Step::Done => break None,
+            _ => {}
+        }
+    };
+    assert!(
+        refusal.as_ref().is_none_or(|err| matches!(
+            err,
+            Error::InvalidInput(text) if text.contains("no moov") || text.contains("no track")
+        )),
+        "an unreadable clamped moov is skipped: {refusal:?}"
+    );
 }

@@ -2759,28 +2759,13 @@ impl HlsClient {
                     } => {
                         samples.entry(track_id).or_default().push(sample);
                     }
-                    DemuxEvent::InputDegraded {
-                        track,
-                        kind,
-                        provenance,
-                        ..
-                    } => {
+                    DemuxEvent::InputDegraded { kind, .. } => {
                         if matches!(
                             kind,
                             InputDegradation::MalformedUnit { .. }
                                 | InputDegradation::TruncatedUnit { .. }
                         ) {
                             damaged = damaged.saturating_add(1);
-                        }
-                        // One report per way the resource was damaged: a
-                        // segment with a thousand broken units is one report,
-                        // located at the first.
-                        let report = kind.to_damage(track, None, provenance);
-                        if !damage_reports
-                            .iter()
-                            .any(|kept| kept.kind() == report.kind())
-                        {
-                            damage_reports.push(report);
                         }
                     }
                     // The one report the reader publishes, forwarded as it
@@ -2962,20 +2947,7 @@ impl HlsClient {
                 {
                     events.push(event);
                 }
-                DemuxEvent::InputDegraded {
-                    track,
-                    kind,
-                    provenance,
-                    ..
-                } => {
-                    let report = kind.to_damage(track, None, provenance);
-                    if !damage_reports
-                        .iter()
-                        .any(|kept| kept.kind() == report.kind())
-                    {
-                        damage_reports.push(report);
-                    }
-                }
+                DemuxEvent::InputDegraded { .. } => {}
                 // The TS reader's own report: a resynchronisation, a dropped
                 // PES unit, a truncated tail, a continuity gap.
                 DemuxEvent::Damage(damage) => damage_reports.push(damage),

@@ -88,10 +88,29 @@ fn a_damaged_segment_is_reported_before_the_media_after_it() {
         .iter()
         .position(|output| matches!(
             output,
-            Output::Damage(damage) if damage.kind() == broadcast_core::damage::DamageKind::MediaUnitDamaged
+            Output::Damage(damage) if damage.kind() == broadcast_core::damage::DamageKind::Resynchronised
+                || damage.kind() == broadcast_core::damage::DamageKind::MediaUnitDamaged
                 || damage.kind() == broadcast_core::damage::DamageKind::MediaUnitDropped
         ))
         .expect("a damaged segment is reported");
+    assert_eq!(
+        run.outputs[report_at..]
+            .iter()
+            .filter(|output| matches!(output, Output::Damage(_)))
+            .count(),
+        1,
+        "the damaged segment is reported once: {:?}",
+        run.outputs
+    );
+    assert_eq!(
+        match &run.outputs[report_at] {
+            Output::Damage(damage) => Some(damage.kind()),
+            _ => None,
+        },
+        Some(broadcast_core::damage::DamageKind::Resynchronised),
+        "the report carries the reader's own kind: {:?}",
+        run.outputs[report_at]
+    );
     assert!(
         run.outputs[..report_at]
             .iter()

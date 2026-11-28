@@ -644,12 +644,24 @@ fn every_hostile_cap_bites_one_over() {
         ("sample size", Limits::default().with_max_sample_bytes(3)),
     ];
     for (what, limits) in cases {
-        let config = base_config(&bytes, SampleOrder::File).with_limits(*limits);
+        // A cap is a caller's hard bound: a validating read stops at it.
+        let config = base_config(&bytes, SampleOrder::File)
+            .with_limits(*limits)
+            .with_mode(isobmff::Mode::Strict);
         let error = drive(&bytes, config).expect_err(what);
         assert!(
             matches!(error, isobmff::Error::LimitExceeded { .. }),
             "{what}: {error:?}"
         );
+        // And a best-effort read never hands out a sample the cap refused.
+        if *what == "sample size" {
+            let config = base_config(&bytes, SampleOrder::File).with_limits(*limits);
+            let outcome = drive(&bytes, config).expect("best-effort read");
+            assert!(
+                outcome.samples.iter().all(|sample| sample.size <= 3),
+                "every sample is inside the cap: {outcome:?}"
+            );
+        }
     }
 }
 

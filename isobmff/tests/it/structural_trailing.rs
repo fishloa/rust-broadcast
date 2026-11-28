@@ -171,7 +171,7 @@ fn movie(bytes: &[u8], mode: Mode) -> Result<MovieRead, Error> {
             }
             Step::Sample(_) => read.samples += 1,
             Step::Fragment(_) => read.fragments += 1,
-            Step::Warning(warning) => read.warnings.push(warning.name().to_owned()),
+            Step::Damage(damage) => read.warnings.push(damage.what().to_owned()),
             Step::Done => break,
             _ => {}
         }

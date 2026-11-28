@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `Mp4DemuxConfig::with_mode`/`mode`: how strictly the MP4 demuxer's reader
+  treats a known fault. Best effort is the default (a fault that still leaves
+  media addressable is delivered and published as `DemuxEvent::Damage` beside
+  the existing `DemuxEvent::InputDegraded` view); a validator asks for
+  `isobmff::Mode::Strict`.
 - `DemuxEvent::Damage(broadcast_core::damage::Damage)`: every skip the
   streaming demuxers tolerate reaches the caller as the workspace's one
   damage report (see `broadcast_core::damage` and
@@ -44,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FlvMuxStage::with_metadata_body` writes a caller's body back verbatim.
 
 ### Fixed
+- `Mp4Demux` pairs every degradation it signals. A malformed or truncated
+  fragment it skips used to publish only the `InputDegraded` signal; it now
+  publishes the reader's `Damage` report for the same fault too, so one
+  fault is one report with no emitter left unpaired.
 - `StreamingTsDemux` reports a timeline break for **every** track whose
   decode timestamps stepped, not only the audio one (issue #4196). The
   `DiscontinuityKind::TimelineReanchored` event is per track by its own

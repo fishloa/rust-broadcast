@@ -194,7 +194,10 @@ pub fn decode_mp4(
     registry: &PayloadRegistry,
     emit: &mut dyn FnMut(DecodedSample<'_>),
 ) -> io::Result<()> {
-    let config = Mp4DemuxConfig::default().with_total_len(Some(len));
+    // A validator refuses what a player may carry: every fault is a finding.
+    let config = Mp4DemuxConfig::default()
+        .with_total_len(Some(len))
+        .with_mode(isobmff::Mode::Strict);
     let mut demux = Mp4Demux::seekable(config);
     let mut reporter = Reporter::new(registry, emit);
     loop {

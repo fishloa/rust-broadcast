@@ -380,14 +380,51 @@ fn mid_file_size_underflow_box_is_an_error() {
     // later fragments.
     assert!(moof_at + moof_len <= corrupt.len());
 
-    let err = test_harness::collect::media_from_mp4(
+    // A validating read refuses it: a size of 3 is a size underflow, not
+    // end-of-data.
+    let mut reader = isobmff::Reader::new(
+        isobmff::ReaderConfig::default()
+            .with_total_len(Some(corrupt.len() as u64))
+            .with_source(isobmff::Source::Seekable)
+            .with_mode(isobmff::Mode::Strict),
+    );
+    let err = loop {
+        match reader.step() {
+            Ok(isobmff::Step::Need(range)) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                if let Err(err) = reader.supply(range.offset, &corrupt[start..end]) {
+                    break err;
+                }
+            }
+            Ok(isobmff::Step::Done) => panic!("a mid-file size underflow must be rejected"),
+            Ok(_) => {}
+            Err(err) => break err,
+        }
+    };
+    assert!(
+        matches!(err, isobmff::Error::BoxSizeUnderflow { .. }),
+        "a size of 3 is a size underflow, not end-of-data; got {err:?}"
+    );
+
+    // A best-effort read resynchronises on the next header it can validate and
+    // plays the fragments after the damage, saying where it skipped.
+    let media = test_harness::collect::media_from_mp4(
         corrupt.as_slice(),
         test_harness::collect::CollectMode::Seekable,
     )
-    .expect_err("a mid-file size underflow must be rejected");
+    .expect("a resynchronising read plays the later fragments");
     assert!(
-        matches!(err, transmux::Error::BoxSizeUnderflow { .. }),
-        "a size of 3 is a size underflow, not end-of-data; got {err:?}"
+        media.tracks.iter().any(|track| !track.samples.is_empty()),
+        "the fragments after the damage play: {media:?}"
+    );
+    assert!(
+        media.damages.iter().any(|damage| {
+            damage.what() == "resynchronised"
+                && damage.location().byte_range().map(|range| range.start()) == Some(moof_at as u64)
+        }),
+        "the skipped box is reported at its offset: {:?}",
+        media.damages
     );
 }
 

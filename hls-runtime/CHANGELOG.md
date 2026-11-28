@@ -71,6 +71,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The demux path is shown to allocate nothing near `init.len() + segment.len()` for a generated four-mebibyte media segment, and a segment with a damaged `moof` is pinned to cost only itself while the next one still demuxes under the same init.
 
+### Fixed
+
+- A damaged segment reaches the player as exactly one report: the
+  streaming MP4 reader's own `DemuxEvent::Damage`, forwarded as it arrived,
+  instead of that report plus one derived from the demuxer's degradation
+  signal. The whole-segment pass and the TS path forward the TS reader's
+  report unchanged, which is already one per fault.
+
 ## [0.16.0] - 2026-11-22
 ### Breaking
 

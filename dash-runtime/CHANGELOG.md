@@ -39,6 +39,15 @@ All notable changes to dash-runtime will be documented in this file.
   which ends the presentation with `Fatal(FatalKind::Damage)` carrying the same
   report.
 
+### Fixed
+
+- A damaged media segment reaches the player as exactly one report: the
+  streaming MP4 reader's own `DemuxEvent::Damage`, forwarded as it arrived,
+  instead of that report plus one derived from the demuxer's degradation
+  signal. The report a damaged segment carries is therefore the reader's
+  specific kind (e.g. `Resynchronised` for a malformed `moof`) rather than
+  `MediaUnitDropped`.
+
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.

@@ -24,9 +24,7 @@ use std::io::{Read, Seek, SeekFrom};
 
 use crate::error::Error;
 use crate::limits::Limits;
-use crate::reader::{
-    ByteRange, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo, Warning,
-};
+use crate::reader::{ByteRange, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo};
 use crate::sample_table::SampleRef;
 
 /// Bytes discarded per read when a forward-only source must skip to the next
@@ -130,8 +128,8 @@ pub enum Advance {
     Sample(SampleRef),
     /// The movie's and tracks' metadata.
     Metadata(crate::metadata::MovieMetadata),
-    /// A tolerated fault.
-    Warning(Warning),
+    /// Content the reader skipped, or a fault it tolerated.
+    Damage(broadcast_core::damage::Damage),
     /// No more steps.
     Done,
 }
@@ -144,7 +142,7 @@ pub fn advance(step: Step<'_>) -> core::result::Result<Advance, DriverError> {
         Step::Fragment(info) => Ok(Advance::Fragment(info)),
         Step::Sample(sample) => Ok(Advance::Sample(sample)),
         Step::Metadata(metadata) => Ok(Advance::Metadata(metadata.clone())),
-        Step::Warning(warning) => Ok(Advance::Warning(warning)),
+        Step::Damage(damage) => Ok(Advance::Damage(damage)),
         Step::Done => Ok(Advance::Done),
     }
 }
@@ -166,8 +164,8 @@ pub enum DriverStep<'a> {
     /// The movie's and each track's typed metadata. Emitted once, after
     /// [`DriverStep::Tracks`], only when the file carries `udta` or `meta`.
     Metadata(&'a crate::metadata::MovieMetadata),
-    /// A fault the reader's permissive mode tolerated.
-    Warning(Warning),
+    /// Content the reader skipped, or a fault it tolerated.
+    Damage(broadcast_core::damage::Damage),
     /// No more steps.
     Done,
 }
@@ -219,7 +217,7 @@ impl<R: Read + Seek> FileReader<R> {
                 Advance::Metadata(metadata) => {
                     return Ok(DriverStep::Metadata(self.metadata.insert(metadata)));
                 }
-                Advance::Warning(warning) => return Ok(DriverStep::Warning(warning)),
+                Advance::Damage(damage) => return Ok(DriverStep::Damage(damage)),
                 Advance::Done => return Ok(DriverStep::Done),
             }
         }
@@ -350,7 +348,7 @@ impl<R: Read> ForwardReader<R> {
                 Advance::Metadata(metadata) => {
                     return Ok(DriverStep::Metadata(self.metadata.insert(metadata)));
                 }
-                Advance::Warning(warning) => return Ok(DriverStep::Warning(warning)),
+                Advance::Damage(damage) => return Ok(DriverStep::Damage(damage)),
                 Advance::Done => return Ok(DriverStep::Done),
             }
         }

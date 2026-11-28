@@ -84,7 +84,10 @@ pub fn check_container_codec(bytes: &[u8], report: &mut Report) {
         return;
     }
     let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-    let config = Mp4DemuxConfig::default().with_total_len(Some(total_len));
+    // A validator refuses what a player may carry: every fault is a finding.
+    let config = Mp4DemuxConfig::default()
+        .with_total_len(Some(total_len))
+        .with_mode(isobmff::Mode::Strict);
     let mut checker = ContainerCodecChecker::new();
     let _ = drive_mp4(bytes, config, &mut checker, report);
     if let Some(moov) = isobmff::box_types::find_box(bytes, &isobmff::init_segment::MOOV) {
@@ -540,7 +543,11 @@ mod tests {
     #[cfg(feature = "std")]
     fn test_media(bytes: &[u8]) -> Media {
         let total = u64::try_from(bytes.len()).expect("image fits u64");
-        let mut demux = Mp4Demux::seekable(Mp4DemuxConfig::default().with_total_len(Some(total)));
+        let mut demux = Mp4Demux::seekable(
+            Mp4DemuxConfig::default()
+                .with_total_len(Some(total))
+                .with_mode(isobmff::Mode::Strict),
+        );
         let mut events = Vec::new();
         loop {
             let demand = demux.demand();

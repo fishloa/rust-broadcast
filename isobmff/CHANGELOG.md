@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The reader takes a caller policy for what a report of skipped content means
+  (`ReaderConfig::with_damage_policy`, `ItemReaderConfig::with_damage_policy`,
+  `broadcast_core::damage::DamagePolicy`): the default publishes every report
+  and continues, `Disposition::Fail` stops the read with the same `Damage`
+  inside the new `Error::Damage`. `ReaderConfig::with_resync_scan_limit` bounds
+  how far the walk may scan for the next top-level box header after one declares
+  an impossible size (`None`, the default, scans to the end of the input).
+- `Reader::set_total_len`: a range-reading caller learns the input's length
+  from its first response, and a truncated input can only be reported as
+  truncated once the reader knows how long it is.
+- `CursorState::tolerant` (crate-internal) reads a track's sample tables as far
+  as they go, reporting each table it had to do without and cutting the sample
+  count to the shortest extent every table agrees on.
+
+### Breaking
+
+- Best effort is now the default for **both** readers: `Mode::Permissive` is
+  the default of `Reader`/`ReaderConfig` and `Mode::Strict` is the explicit
+  opt-in a validator asks for. A caller that relied on strict-by-default must
+  call `with_mode(Mode::Strict)` (`media-doctor` does).
+- The readers publish the workspace's one report instead of their own
+  vocabulary: `Reader::step` yields `Step::Damage(Damage)` where it used to
+  yield `Step::Warning(Warning)`, and `DriverStep::Warning`/`Advance::Warning`
+  are now `Damage`; `ItemReader::step` gains `ItemStep::Damage`.
+  `reader::Warning`, `image_brands::ImageFinding` and
+  `image_brands::BrandFinding` stay as the typed detail and convert with
+  `to_damage()`/`From`, which is where the four-character code, byte range and
+  recoverability of each report are decided.
+- `ItemReaderConfig` is no longer `Copy` (it carries a `DamagePolicy`);
+  `Clone`/`PartialEq`/`Eq` remain.
+- `Reader::step` ends with `Error::InvalidInput` when a file carrying media
+  states no track at all, or carries a `moov`/`moof` nowhere. A still image and
+  a file of type declarations alone still finish with `Step::Done`.
+
 - `multiview`: the multiview view-attribute boxes with a defined syntax —
   `ProfileLevelAttribute` (`prfl`/`levl`), `ViewArrayOrder` (`ilvi`/`elvi`),
   `RectangularViewArray` (`rtvi`), `MultiviewSceneInfoBox` (`vwdi`) and
@@ -197,10 +231,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A top-level box whose `largesize` cannot hold its own header is a typed
-  error.** It used to be kept as a zero-length payload, so a re-emit dropped
-  the bytes it claimed; the `isobmff_item_reader` target's new round-trip
-  assertion found it, and the input is a regression test.
+- **The item reader carries the bytes it cannot frame instead of dropping
+  them.** A top-level box whose size (or `largesize`) cannot hold its own
+  header, a header the input cuts, and a `meta` child the input cuts are kept
+  verbatim in their source position with an `ImageFinding::TrailingBytes`
+  naming the box, offset and length, so `StillImage::reemit_into` reproduces
+  the input byte for byte; `Mode::Strict` still refuses each with a typed
+  error (`Error::BoxSizeUnderflow` for the size). A `largesize` of 0 used to
+  be kept as a zero-length payload and drop the bytes it claimed; the
+  `isobmff_item_reader` target's round-trip assertion found it.
+- **A top-level header whose size puts its end past `u64::MAX` is an overrun
+  of the input** (clamped or skipped like any other) instead of an
+  `InvalidInput` refusal, one whose size cannot hold its own header (a `uuid`
+  box shorter than its extended type) is skipped by the resynchronising walk,
+  a `moov` clamped to the input whose bytes cannot describe a movie is skipped, and a best-effort `moov` with no child it can frame
+  is refused as a movie with no track rather than as a missing `mvhd`.
+- **A `sidx`, `ssix`, `mfra`, `ftyp`, `otyp` or `etyp` that cannot be parsed
+  no longer fails a best-effort read.** None is needed to play the samples:
+  the box is reported as `UnrepresentableBox` at its own byte range and the
+  walk continues; a seek that needed the `mfra` is `Error::NoIndex`.
 
 - **A second file-level `meta` box is carried, not refused.** The item reader
   uses the first; a later one keeps its file position and re-emits byte-exact,

@@ -48,6 +48,10 @@ Binding for every public API in the workspace. New code follows them; a lane tha
   with the same report inside the error. There is no silent setting.
 - A crate that keeps its own report enum must convert it into `broadcast_core::damage::Damage` (an
   `impl From` into `Damage` or `DamageKind`); the `damage_report` workspace guard fails otherwise.
+- **Best effort is the reader's default, never an opt-in.** A reader that has a strict mode defaults to
+  the tolerant one; a caller that validates (a conformance checker, `media-doctor`) asks for strictness
+  explicitly. A caller-supplied hostile-input cap binds in both modes — a limit hit is an error, not a
+  report — and a limit is always the caller's number, never a policy the library picks.
 - Every crate that publishes reports states, in its crate documentation (README or module docs), a
   short "what this session reports" list: what a reader reports and what it deliberately leaves an
   error, with the reason. The list is the crate's contract, so a later change that silences a skip is
