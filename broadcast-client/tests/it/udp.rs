@@ -575,6 +575,24 @@ fn a_skipped_rtp_run_reaches_the_player_as_one_report_and_playback_continues() {
             .any(|e| matches!(e.event, Event::Sample { .. })),
         "playback continued past the skipped run"
     );
+
+    // ... and the report comes before the media that follows the gap.
+    let report_at = host
+        .events
+        .iter()
+        .position(|e| matches!(&e.event, Event::Damage(d) if d.what() == "RTP packet run (reorder buffer skipped)"))
+        .expect("the reorder buffer's own report");
+    let after_at = host
+        .events
+        .iter()
+        .skip(report_at)
+        .position(|e| matches!(e.event, Event::Sample { .. }))
+        .map(|offset| report_at.saturating_add(offset))
+        .expect("the samples after the skipped run");
+    assert!(
+        report_at < after_at,
+        "the report precedes the samples after the gap ({report_at} < {after_at})"
+    );
 }
 
 /// The same run with `Fail`: the session publishes the report and stops.
