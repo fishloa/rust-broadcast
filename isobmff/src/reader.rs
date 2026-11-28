@@ -2517,6 +2517,17 @@ impl Reader {
         } else {
             header.size
         };
+        // A size that cannot hold its own header (a `uuid` box needs its
+        // extended type too, §4.2) frames nothing.
+        if size < header.header_size() as u64 {
+            if self.tolerated() {
+                return self.begin_scan(offset);
+            }
+            return Err(Error::BoxSizeUnderflow {
+                size,
+                header_size: header.header_size(),
+            });
+        }
         // A size past the end of the address space overruns any known input
         // length, and is handled as the overrun below.
         let mut end = offset

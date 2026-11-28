@@ -714,3 +714,48 @@ fn damage_crash_f0a67b0f_reports_an_unparseable_otyp() {
         "the otyp is reported at its range: {reports:?}"
     );
 }
+
+/// `isobmff_damage` crash-39a7dc98: the target's damage step added `0xCF82` to
+/// the 32-bit word at byte 1580 of the artifact, which holds a top-level `uuid`
+/// box whose 16-byte size cannot carry its 16-byte extended type. That box
+/// frames nothing; best effort skips it and keeps the movie's tracks.
+#[test]
+fn damage_crash_39a7dc98_skips_a_uuid_too_short_for_its_type() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    const DAMAGED_WORD: usize = 1580;
+    const ADDED: u32 = 0xCF82;
+    const UUID_AT: u64 = 1277;
+    let mut file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-39a7dc9860e8ac493fb3ce5f099bb54a4990e7fe",
+    );
+    let word = u32::from_be_bytes(
+        file[DAMAGED_WORD..DAMAGED_WORD + 4]
+            .try_into()
+            .expect("word"),
+    );
+    file[DAMAGED_WORD..DAMAGED_WORD + 4].copy_from_slice(&word.wrapping_add(ADDED).to_be_bytes());
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let mut reports = Vec::new();
+    loop {
+        match reader.step().expect("a short uuid box is not a refusal") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, file.get(start..end).expect("supplied range"))
+                    .expect("a short uuid box is not a refusal");
+            }
+            Step::Damage(damage) => reports.push(damage),
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert!(
+        reports
+            .iter()
+            .any(|damage| damage.what() == "resynchronised"
+                && damage.location().byte_range().map(|r| r.start()) == Some(UUID_AT)),
+        "the walk skips the uuid box at its offset: {reports:?}"
+    );
+}
