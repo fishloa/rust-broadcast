@@ -5,7 +5,9 @@
 //! §4.4): it keeps the `moov` it parsed and reads each media segment in turn,
 //! closed by [`Mp4Input::SegmentEnd`], so a damaged segment costs only itself.
 //! This module folds its [`DemuxEvent`]s into the tracks and samples the
-//! client and the origin already shaped their outputs from.
+//! client and the origin already shaped their outputs from. A fault reaches
+//! the player as the reader's one [`DemuxEvent::Damage`]; the demuxer's
+//! [`DemuxEvent::InputDegraded`] signal only marks the segment as damaged.
 
 use broadcast_common::stage::{Stage, Timestamp};
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
@@ -137,23 +139,13 @@ impl SegmentDemux {
                     Some((_, track_samples)) => track_samples.push(sample),
                     None => samples.push((track_id, vec![sample])),
                 },
-                DemuxEvent::InputDegraded {
-                    track,
-                    kind,
-                    provenance,
-                    ..
-                } => {
+                DemuxEvent::InputDegraded { kind, .. } => {
                     if matches!(
                         kind,
                         InputDegradation::MalformedUnit { .. }
                             | InputDegradation::TruncatedUnit { .. }
                     ) {
                         damaged = true;
-                    }
-                    // One report per way a fragment was damaged.
-                    let report = kind.to_damage(track, None, provenance);
-                    if !damage.iter().any(|kept| kept.kind() == report.kind()) {
-                        damage.push(report);
                     }
                 }
                 DemuxEvent::Damage(report) => damage.push(report),

@@ -33,7 +33,7 @@ use bytes::{Buf, Bytes, BytesMut};
 use core::num::NonZeroUsize;
 use isobmff::Limits;
 use isobmff::reader::{
-    ByteRange, FragmentInfo, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo,
+    ByteRange, FragmentInfo, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo, Warning,
 };
 use isobmff::sample_table::SampleRef;
 
@@ -595,19 +595,15 @@ impl Mp4Demux {
     }
 
     fn push_malformed(&mut self, position: u64) {
-        self.events.push_back(DemuxEvent::InputDegraded {
-            track: None,
-            kind: InputDegradation::MalformedUnit { position },
-            provenance: EventProvenance::default(),
-        });
+        self.push_damage(broadcast_core::damage::Damage::from(
+            Warning::MalformedFragment { offset: position },
+        ));
     }
 
     fn push_truncated(&mut self, position: u64) {
-        self.events.push_back(DemuxEvent::InputDegraded {
-            track: None,
-            kind: InputDegradation::TruncatedUnit { position },
-            provenance: EventProvenance::default(),
-        });
+        self.push_damage(broadcast_core::damage::Damage::from(
+            Warning::TruncatedFragment { offset: position },
+        ));
     }
 }
 

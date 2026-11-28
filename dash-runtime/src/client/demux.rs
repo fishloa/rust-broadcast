@@ -5,8 +5,9 @@
 //! A segment the stage refuses leaves the stage unusable, so the caller drops
 //! it ([`SegmentStage`] is recreated from the init) and the next segment of the
 //! same Representation demuxes as usual. A segment the reader merely tolerates
-//! costs only itself: its damage arrives as [`DemuxEvent::InputDegraded`] and
-//! the following segment continues under the same init.
+//! costs only itself: its fault arrives as the reader's one
+//! [`DemuxEvent::Damage`] and the following segment continues under the same
+//! init.
 
 use std::collections::BTreeSet;
 
@@ -43,16 +44,6 @@ struct Collected {
 }
 
 impl Collected {
-    /// Coalesce by kind: one segment with a thousand damaged units yields one
-    /// report per way it was damaged, not a thousand, and the first report's
-    /// location stands for the run.
-    fn push_report(&mut self, damage: broadcast_core::damage::Damage) {
-        if self.damage.iter().any(|kept| kept.kind() == damage.kind()) {
-            return;
-        }
-        self.damage.push(damage);
-    }
-
     fn drain(&mut self, demux: &mut Mp4Demux, skip: &BTreeSet<u32>) {
         while let Some(event) = demux.poll() {
             self.on_event(event, skip);
@@ -76,19 +67,13 @@ impl Collected {
             DemuxEvent::TrackAbandoned {
                 track_id, reason, ..
             } => self.skipped.push(skipped_from_reason(reason, track_id)),
-            DemuxEvent::InputDegraded {
-                track,
-                kind,
-                provenance,
-                ..
-            } => {
+            DemuxEvent::InputDegraded { kind, .. } => {
                 if matches!(
                     kind,
                     InputDegradation::MalformedUnit { .. } | InputDegradation::TruncatedUnit { .. }
                 ) {
                     self.damaged = self.damaged.saturating_add(1);
                 }
-                self.push_report(kind.to_damage(track, None, provenance));
             }
             // The one report the reader publishes; forwarded as it arrived so
             // the player sees the location, track and cause the reader knew.
