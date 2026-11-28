@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FlvMuxStage::with_metadata_body` writes a caller's body back verbatim.
 
 ### Fixed
+- `Mp4Demux` pairs every degradation it signals. A malformed or truncated
+  fragment it skips used to publish only the `InputDegraded` signal; it now
+  publishes the reader's `Damage` report for the same fault too, so one
+  fault is one report with no emitter left unpaired.
 - `StreamingTsDemux` reports a timeline break for **every** track whose
   decode timestamps stepped, not only the audio one (issue #4196). The
   `DiscontinuityKind::TimelineReanchored` event is per track by its own

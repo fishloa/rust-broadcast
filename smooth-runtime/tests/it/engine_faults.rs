@@ -333,7 +333,10 @@ fn a_damaged_fragment_is_dropped_and_the_next_one_still_demuxes() {
     assert_eq!(reports[0].what(), "malformed-fragment");
     assert_eq!(reports[0].fourcc(), Some(*b"moof"));
     assert_eq!(
-        reports[0].location().byte_range().map(|range| range.start()),
+        reports[0]
+            .location()
+            .byte_range()
+            .map(|range| range.start()),
         Some(DAMAGED_FRAGMENT_OFFSET)
     );
 

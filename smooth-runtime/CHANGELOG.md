@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default, or `Fail`, which ends the session with `Fatal(SmoothError::Damage)`
   carrying the same report.
 
+### Fixed
+
+- A damaged fragment reaches the player as exactly one report: the streaming
+  MP4 reader's own `DemuxEvent::Damage`, with its kind, box and byte offset,
+  instead of that report plus a `MediaUnitDropped` one derived from the
+  demuxer's degradation signal.
+
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.

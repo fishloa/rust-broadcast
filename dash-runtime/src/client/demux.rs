@@ -217,20 +217,21 @@ mod tests {
     }
 
     #[test]
-    fn a_degraded_unit_becomes_one_damage_report() {
+    fn a_degraded_unit_marks_the_segment_and_reports_nothing_itself() {
         let mut collected = Collected::default();
         collected.on_event(
             degraded(InputDegradation::TruncatedUnit { position: 640 }),
             &BTreeSet::new(),
         );
-        assert_eq!(collected.damage.len(), 1);
-        assert_eq!(collected.damage[0].kind(), DamageKind::InputTruncated);
-        assert_eq!(collected.damage[0].severity(), Severity::Degraded);
         assert_eq!(collected.damaged, 1);
+        assert!(
+            collected.damage.is_empty(),
+            "the report is the reader's own, never derived from the signal"
+        );
     }
 
     #[test]
-    fn a_run_of_the_same_damage_is_one_report_but_the_count_stands() {
+    fn a_run_of_the_same_damage_is_counted_once_per_unit_and_never_reported() {
         let mut collected = Collected::default();
         for position in 0..8u64 {
             collected.on_event(
@@ -238,9 +239,25 @@ mod tests {
                 &BTreeSet::new(),
             );
         }
-        assert_eq!(collected.damage.len(), 1, "coalesced by kind");
-        assert_eq!(collected.damage[0].what(), "container unit");
-        assert_eq!(collected.damaged, 8, "the extent survives as the count");
+        assert_eq!(collected.damaged, 8, "every damaged unit is counted");
+        assert!(collected.damage.is_empty(), "{:?}", collected.damage);
+    }
+
+    #[test]
+    fn one_reader_report_beside_its_signal_is_one_report() {
+        let mut collected = Collected::default();
+        collected.on_event(
+            degraded(InputDegradation::MalformedUnit { position: 640 }),
+            &BTreeSet::new(),
+        );
+        let report = Damage::new(
+            DamageKind::Resynchronised,
+            Severity::Degraded,
+            "malformed-fragment",
+        )
+        .at_byte_range(broadcast_core::damage::ByteRange::new(640, 0));
+        collected.on_event(DemuxEvent::damage(report.clone()), &BTreeSet::new());
+        assert_eq!(collected.damage, vec![report]);
     }
 
     #[test]
