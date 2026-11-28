@@ -121,7 +121,35 @@ fail=0
 checked=0
 skipped=0
 
-while IFS=$'\t' read -r pkg ex; do
+# Build every selected example ONCE, then run the binaries. `cargo run -p
+# <crate>` per example resolved features per package, unlike the workspace
+# build, and so rebuilt and relinked the dependency graph for each of the 160+
+# examples. Cargo reports each executable's path; the run below uses those.
+scope=(--workspace)
+if [ -n "$ONLY_CRATES" ]; then
+    scope=()
+    for c in $ONLY_CRATES; do scope+=(-p "$c"); done
+fi
+EXES="$WORKDIR/executables.tsv"
+if ! cargo build -q "${scope[@]}" --examples "$@" --message-format=json-render-diagnostics |
+    python3 -c '
+import json, os, sys
+for line in sys.stdin:
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    if msg.get("reason") != "compiler-artifact" or not msg.get("executable"):
+        continue
+    if "example" not in msg["target"]["kind"]:
+        continue
+    print(os.path.dirname(msg["manifest_path"]) + "\t" + msg["target"]["name"] + "\t" + msg["executable"])
+' >"$EXES"; then
+    echo "examples: build failed"
+    exit 1
+fi
+
+while IFS=$'\t' read -r pkg ex dir; do
     [ -z "$pkg" ] && continue
     if [ -n "$ONLY_CRATES" ]; then
         case "$ONLY_CRATES" in
@@ -146,7 +174,19 @@ while IFS=$'\t' read -r pkg ex; do
     checked=$((checked + 1))
     # shellcheck disable=SC2046 # deliberate word splitting: the map holds a
     # whitespace-separated argument list, not one argument.
-    out=$(cargo run -q -p "$pkg" --example "$ex" "$@" -- $(example_args "$pkg/$ex") 2>&1 | LC_ALL=C tr -d '\0')
+    exe=$(awk -F'\t' -v dir="$dir" -v ex="$ex" '$1 == dir && $2 == ex { print $3 }' "$EXES")
+    if [ -z "$exe" ]; then
+        echo "  FAIL  $pkg/$ex was not built"
+        fail=1
+        continue
+    fi
+    # Examples of the same name in different crates share one output path, so
+    # the binary there is whichever was linked last: those run through cargo.
+    if [ "$(awk -F'\t' -v exe="$exe" '$3 == exe' "$EXES" | wc -l)" -gt 1 ]; then
+        out=$(cargo run -q -p "$pkg" --example "$ex" "$@" -- $(example_args "$pkg/$ex") 2>&1 | LC_ALL=C tr -d '\0')
+    else
+        out=$(CARGO_MANIFEST_DIR="$dir" "$exe" $(example_args "$pkg/$ex") 2>&1 | LC_ALL=C tr -d '\0')
+    fi
     rc=$?
 
     if [ "$rc" -ne 0 ]; then
@@ -180,7 +220,7 @@ import json, sys
 for p in json.load(sys.stdin)["packages"]:
     for t in p["targets"]:
         if "example" in t["kind"]:
-            print(p["name"] + "\t" + t["name"])
+            print(p["name"] + "\t" + t["name"] + "\t" + p["manifest_path"].rsplit("/", 1)[0])
 ')
 
 echo "examples: $checked checked, $skipped skipped, fail=$fail"
