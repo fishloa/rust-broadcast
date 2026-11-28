@@ -2979,13 +2979,16 @@ impl Reader {
                 repaired.extend_from_slice(bytes);
                 let before_repair = self.warnings.len();
                 sanitize_moov(&mut repaired, range.offset, &mut self.warnings);
-                let clamped = self.warnings[before_repair..].iter().any(|warning| {
-                    matches!(
-                        warning,
-                        Warning::ClampedBox { box_type, offset }
-                            if *box_type == *b"moov" && *offset == range.offset
-                    )
-                });
+                let declared_past_input =
+                    BoxHeader::parse(bytes).is_ok_and(|header| header.size > range.len);
+                let clamped = declared_past_input
+                    || self.warnings[before_repair..].iter().any(|warning| {
+                        matches!(
+                            warning,
+                            Warning::ClampedBox { box_type, offset }
+                                if *box_type == *b"moov" && *offset == range.offset
+                        )
+                    });
                 let mut retry = Vec::new();
                 match self.parse_moov(&repaired, range.offset, &mut retry) {
                     Ok(movie) => {

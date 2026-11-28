@@ -243,7 +243,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A top-level header whose size puts its end past `u64::MAX` is an overrun
   of the input** (clamped or skipped like any other) instead of an
   `InvalidInput` refusal, one whose size cannot hold its own header (a `uuid`
-  box shorter than its extended type) is skipped by the resynchronising walk, and a best-effort `moov` with no child it can frame
+  box shorter than its extended type) is skipped by the resynchronising walk,
+  a `moov` clamped to the input whose bytes cannot describe a movie is skipped, and a best-effort `moov` with no child it can frame
   is refused as a movie with no track rather than as a missing `mvhd`.
 - **A `sidx`, `ssix`, `mfra`, `ftyp`, `otyp` or `etyp` that cannot be parsed
   no longer fails a best-effort read.** None is needed to play the samples:

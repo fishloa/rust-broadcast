@@ -759,3 +759,41 @@ fn damage_crash_39a7dc98_skips_a_uuid_too_short_for_its_type() {
         "the walk skips the uuid box at its offset: {reports:?}"
     );
 }
+
+/// `isobmff_damage` crash-f63f1bbf: a `moov` declaring far more bytes than the
+/// input holds is clamped by the top-level walk, and the clamped bytes cannot
+/// describe a movie (the artifact reproduces undamaged): it is skipped like any other unreadable clamped
+/// box, and the read ends as a file with no movie, not on a body-length error.
+#[test]
+fn damage_crash_f63f1bbf_skips_an_unreadable_clamped_moov() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    let file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-f63f1bbf7cd18a3887cc2691f3b938b2c3b1b0bd",
+    );
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let refusal = loop {
+        let step = match reader.step() {
+            Ok(step) => step,
+            Err(err) => break Some(err),
+        };
+        match step {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                if let Err(err) = reader.supply(range.offset, file.get(start..end).unwrap_or(&[])) {
+                    break Some(err);
+                }
+            }
+            Step::Done => break None,
+            _ => {}
+        }
+    };
+    assert!(
+        refusal.as_ref().is_none_or(|err| matches!(
+            err,
+            Error::InvalidInput(text) if text.contains("no moov") || text.contains("no track")
+        )),
+        "an unreadable clamped moov is skipped: {refusal:?}"
+    );
+}
