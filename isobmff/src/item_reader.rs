@@ -177,7 +177,9 @@ pub enum ReemitOp {
 /// Where a top-level box's payload came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TopLevelPayload {
-    Meta,
+    /// The file-level `meta`, written from the model; `held` is the box
+    /// length the input held, which is less than declared when it was cut.
+    Meta { held: u64 },
     Bytes(Vec<u8>),
     Copy(ByteRange),
 }
@@ -280,6 +282,9 @@ pub struct MetaRecord {
     /// on a rewrite (§4.2). A record a caller built carries no forms, so every
     /// child is written compact.
     forms: Vec<BoxForm>,
+    /// The body bytes after the last child that could be framed, carried
+    /// verbatim and written back after the children.
+    tail: Vec<u8>,
 }
 
 /// The header form one `meta` child was written with.
@@ -313,6 +318,7 @@ impl MetaRecord {
             flags,
             children,
             forms: Vec::new(),
+            tail: Vec::new(),
         }
     }
 
@@ -357,7 +363,8 @@ impl MetaRecord {
                 .and_then(|len| len.checked_add(self.form(index).extra_header()))
                 .ok_or(Error::InvalidInput("meta body length overflow"))?;
         }
-        Ok(len)
+        len.checked_add(self.tail.len())
+            .ok_or(Error::InvalidInput("meta body length overflow"))
     }
 
     /// Rebuild the `meta` body (FullBox word plus children), each child in the
@@ -410,6 +417,11 @@ impl MetaRecord {
                 }
             }
         }
+        let tail_end = cursor.saturating_add(self.tail.len());
+        out.get_mut(cursor..tail_end)
+            .ok_or(Error::InvalidInput("meta body length changed"))?
+            .copy_from_slice(&self.tail);
+        cursor = tail_end;
         if cursor != need {
             return Err(Error::InvalidInput("meta body length changed"));
         }
@@ -680,11 +692,6 @@ pub struct StillImage {
     handler_type: Option<[u8; BOX_TYPE_SIZE]>,
     total_len: Option<u64>,
     degraded: Vec<ImageFinding>,
-    /// Whether the file-level `meta` body the input held was carried whole.
-    meta_whole: bool,
-    /// The file-level `meta` body bytes that could not be framed as a box.
-    /// They are written back after the rebuilt body, in their source position.
-    meta_tail: Vec<u8>,
 }
 
 impl StillImage {
@@ -1159,21 +1166,13 @@ impl StillImage {
     /// the rebuilt `meta` body, and a [`ReemitOp::Copy`] for each payload the
     /// reader never read.
     pub fn reemit_plan(&self) -> Result<Vec<ReemitOp>> {
-        let mut meta_body = if self.meta_whole {
-            self.meta_tail.clone()
-        } else {
-            self.meta.to_body()?
-        };
-        if !self.meta_whole {
-            meta_body.extend_from_slice(&self.meta_tail);
-        }
+        let meta_body = self.meta.to_body()?;
         let mut ops = Vec::new();
         for top in &self.top_level {
             match &top.payload {
-                TopLevelPayload::Meta => {
-                    let declared = declared_size(&top.header)?;
+                TopLevelPayload::Meta { held } => {
                     let actual = top.header.len().saturating_add(meta_body.len());
-                    if declared.is_some_and(|size| usize::try_from(size).ok() != Some(actual)) {
+                    if usize::try_from(*held).ok() != Some(actual) {
                         return Err(Error::InvalidInput("meta body length changed"));
                     }
                     ops.push(ReemitOp::Bytes(top.header.clone()));
@@ -1222,30 +1221,6 @@ fn source_range(source: &[u8], range: ByteRange) -> Result<&[u8]> {
         .ok_or(Error::InvalidInput("byte range outside the source"))
 }
 
-fn declared_size(header: &[u8]) -> Result<Option<u64>> {
-    if header.len() < TOP_HEADER_LEN {
-        return Err(Error::InvalidInput("short box header"));
-    }
-    match u32_at(header, SIZE_OFFSET) {
-        SIZE_TO_EOF => Ok(None),
-        SIZE_INDICATES_LARGESIZE => {
-            let large = broadcast_core::wire::u64_at(header, LARGESIZE_OFFSET);
-            if large < (TOP_HEADER_LEN + LARGESIZE_SIZE) as u64 {
-                // A `largesize` shorter than its own 16-byte header cannot
-                // describe a box (§4.2); treating it as an empty payload would
-                // drop every byte it claims.
-                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
-                    field: "largesize",
-                    value: large,
-                    reason: "shorter than the 16-byte header it belongs to",
-                }));
-            }
-            Ok(Some(large))
-        }
-        size => Ok(Some(u64::from(size))),
-    }
-}
-
 impl StillImage {
     fn assemble(
         brands: Option<FileTypeBox>,
@@ -1255,7 +1230,6 @@ impl StillImage {
         total_len: Option<u64>,
         limits: &Limits,
         degraded: Vec<ImageFinding>,
-        meta_tail: Vec<u8>,
     ) -> Result<Self> {
         let mut iloc: Option<ItemLocationBox> = None;
         let mut iinf: Option<ItemInfoBox> = None;
@@ -1373,8 +1347,6 @@ impl StillImage {
             handler_type,
             total_len,
             degraded,
-            meta_whole: false,
-            meta_tail,
         })
     }
 }
@@ -1657,9 +1629,6 @@ enum Phase {
         size: u64,
         kind: BodyKind,
     },
-    /// The walk stopped at a box it could not frame. Every byte from that
-    /// point is carried, and the model states what came before it.
-    Stopped,
     Derived,
     Loaded,
     Done,
@@ -1690,16 +1659,6 @@ pub struct ItemReader {
     derived_current: Option<DerivedFetch>,
     degraded: Vec<ImageFinding>,
     reported_degraded: usize,
-    meta_tail: Vec<u8>,
-    /// Whether the file-level `meta` body the input held was carried whole, so
-    /// the model writes it instead of rebuilding it.
-    meta_whole: bool,
-    /// Whether the file-level `meta` header was read: only then can bytes the
-    /// input still holds after it belong to it.
-    meta_seen: bool,
-    /// The latest supply, from which the bytes a cut box body held are taken:
-    /// a cut body is read in one request, so they are here.
-    supplied: Vec<u8>,
 }
 
 impl ItemReader {
@@ -1724,10 +1683,6 @@ impl ItemReader {
             derived_current: None,
             degraded: Vec::new(),
             reported_degraded: 0,
-            meta_tail: Vec::new(),
-            meta_whole: false,
-            meta_seen: false,
-            supplied: Vec::new(),
         }
     }
 
@@ -1750,23 +1705,10 @@ impl ItemReader {
                         prefix,
                         target,
                     } => {
-                        let len = target.saturating_sub(prefix.len());
-                        if len == 0 {
-                            // The header ended exactly at the end of the input:
-                            // it and the bytes it declared are a cut tail.
-                            self.input_ended()?;
-                            continue;
-                        }
                         self.pending = Some(ByteRange {
                             offset: offset.saturating_add(prefix.len() as u64),
-                            len: len as u64,
+                            len: (target.saturating_sub(prefix.len())) as u64,
                         });
-                    }
-                    Phase::Stopped => {
-                        if self.finalize().is_err() {
-                            return Ok(ItemStep::Done);
-                        }
-                        continue;
                     }
                     Phase::Body {
                         box_start,
@@ -1845,49 +1787,13 @@ impl ItemReader {
     /// addressed rather than read), and a file whose `meta` never arrived has
     /// nothing to model.
     fn input_ended(&mut self) -> Result<()> {
-        // A header (or body) the input cut is bytes no box describes: they are
-        // carried verbatim, in their own position, and the finding names them.
-        if let Phase::Header { offset, prefix, .. } = &self.phase
+        // A header the input cut is bytes no box describes: they are carried
+        // verbatim in their own position, with a finding naming them.
+        if let Phase::Header { offset, prefix, .. } = &mut self.phase
             && !prefix.is_empty()
         {
-            let (at, header) = (*offset, prefix.clone());
-            let rest = self.supplied_at(at);
-            // A `meta` whose declared body the header did not fit inside: the
-            // child it declared was cut, and whatever the input still holds
-            // past that point is its.
-            let declares_more = declared_size(&header);
-            let declares_more = declares_more
-                .ok()
-                .flatten()
-                .is_some_and(|size| size > u64::try_from(header.len()).unwrap_or(0));
-            let meta = header
-                .get(core::mem::size_of::<u32>()..core::mem::size_of::<u32>() + BOX_TYPE_SIZE)
-                == Some(&META[..]);
-            if meta && declares_more && !rest.is_empty() {
-                // The rest of the input is the child this `meta`'s declaration
-                // lost: kept with the box, so the model reproduces its source.
-                self.meta = Some(MetaRecord {
-                    version: 0,
-                    flags: 0,
-                    children: Vec::new(),
-                    forms: Vec::new(),
-                });
-                self.degraded.push(ImageFinding::TrailingBytes {
-                    box_type: META,
-                    offset: at,
-                    carried: u64::try_from(rest.len()).unwrap_or(u64::MAX),
-                });
-                self.top_level.push(TopLevelBox {
-                    fourcc: META,
-                    header,
-                    payload: TopLevelPayload::Bytes(Vec::new()),
-                });
-                self.meta_tail = rest;
-                self.meta_whole = false;
-                self.phase = Phase::Stopped;
-            } else {
-                self.carry(at, header, Vec::new());
-            }
+            let (at, header) = (*offset, core::mem::take(prefix));
+            self.carry(at, header, ByteRange { offset: at, len: 0 });
         }
         if self.image.is_some() {
             self.phase = Phase::Loaded;
@@ -1897,44 +1803,25 @@ impl ItemReader {
         if self.meta.is_some() {
             return self.finalize();
         }
-        if matches!(self.phase, Phase::Stopped) {
-            return Ok(());
-        }
         Err(Error::InvalidInput(
             "the input ended before the item model was read",
         ))
     }
 
-    /// Carry a box the input cut: its header and the body bytes it held become
-    /// one opaque top-level payload in its own position, so the model
-    /// reproduces its source.
-    fn carry(&mut self, at: u64, header: Vec<u8>, body: Vec<u8>) {
-        if header.is_empty() && body.is_empty() {
-            self.phase = Phase::Stopped;
-            return;
-        }
+    /// Keep a box that cannot be framed opaque in its own position: its header
+    /// bytes, then `rest` copied from the source, reported as one finding.
+    fn carry(&mut self, at: u64, header: Vec<u8>, rest: ByteRange) {
+        let fourcc = fourcc_of(&header);
         self.degraded.push(ImageFinding::TrailingBytes {
-            box_type: fourcc_of(&header),
+            box_type: fourcc,
             offset: at,
-            carried: u64::try_from(header.len().saturating_add(body.len())).unwrap_or(u64::MAX),
+            carried: (header.len() as u64).saturating_add(rest.len),
         });
         self.top_level.push(TopLevelBox {
-            fourcc: fourcc_of(&header),
+            fourcc,
             header,
-            payload: TopLevelPayload::Bytes(body),
+            payload: TopLevelPayload::Copy(rest),
         });
-        self.phase = Phase::Stopped;
-    }
-
-    /// The bytes the latest supply held from `at` on: what a box the input cut
-    /// still claims, because the supply that carried its header carried the
-    /// rest of the input with it.
-    fn supplied_at(&self, at: u64) -> Vec<u8> {
-        usize::try_from(at)
-            .ok()
-            .and_then(|at| self.supplied.get(at..))
-            .map(<[u8]>::to_vec)
-            .unwrap_or_default()
     }
 
     /// Accept exactly the bytes the outstanding [`ItemStep::Need`] asked for.
@@ -1958,9 +1845,6 @@ impl ItemReader {
             self.pending = None;
             return self.input_ended();
         }
-        let short = got.len < expected.len;
-        self.supplied.clear();
-        self.supplied.extend_from_slice(bytes);
         let filled = match &mut self.phase {
             Phase::Header { prefix, .. } => {
                 prefix.extend_from_slice(bytes);
@@ -1975,47 +1859,6 @@ impl ItemReader {
             }
             if filled >= target {
                 self.finalize_header()?;
-            } else if short {
-                let remaining = expected.len.saturating_sub(got.len);
-                if let Some(total) = self.config.total_len
-                    && offset.saturating_add(got.len).saturating_add(remaining) > total
-                {
-                    // The bytes this header still needs are past the end of the
-                    // input: it is a cut header.
-                    let prefix = match core::mem::replace(
-                        &mut self.phase,
-                        Phase::Header {
-                            offset: 0,
-                            prefix: Vec::new(),
-                            target: TOP_HEADER_LEN,
-                        },
-                    ) {
-                        Phase::Header { prefix, .. } => prefix,
-                        phase => {
-                            self.phase = phase;
-                            Vec::new()
-                        }
-                    };
-                    self.carry(offset, prefix, Vec::new());
-                    self.input_ended()?;
-                    return Ok(());
-                }
-                let prefix = match core::mem::replace(
-                    &mut self.phase,
-                    Phase::Header {
-                        offset: 0,
-                        prefix: Vec::new(),
-                        target: TOP_HEADER_LEN,
-                    },
-                ) {
-                    Phase::Header { prefix, .. } => prefix,
-                    phase => {
-                        self.phase = phase;
-                        Vec::new()
-                    }
-                };
-                self.carry(offset, prefix, Vec::new());
-                self.input_ended()?;
             }
             return Ok(());
         }
@@ -2032,9 +1875,7 @@ impl ItemReader {
                 }
                 Ok(())
             }
-            Phase::Header { .. } | Phase::Stopped => {
-                Err(Error::InvalidInput("header supply already consumed"))
-            }
+            Phase::Header { .. } => Err(Error::InvalidInput("header supply already consumed")),
             Phase::Loaded | Phase::Done => Err(Error::InvalidInput("supply after the model")),
         }
     }
@@ -2111,47 +1952,39 @@ impl ItemReader {
             ),
             size => (u64::from(size), false),
         };
-        // A box that declares more bytes than the input holds is read to the
-        // end of the input; the cut is reported and the bytes carried are
-        // exactly the ones there.
-        let mut size = size;
-        let at = *offset;
-        let declines_past_end = if let Some(total) = self.config.total_len {
-            let end = at.saturating_add(size);
-            let held = at.saturating_add(header_len as u64);
-            end < held || end > total
-        } else {
-            false
-        };
-        if declines_past_end {
-            // The box describes no byte this header has not already read, or
-            // more than the input holds: strict refuses it, best effort reports
-            // it and carries the rest of the input from its start.
-            if self.config.mode() != crate::reader::Mode::Permissive {
+        if size < header_len as u64 {
+            // A size that cannot cover its own header frames nothing (§4.2):
+            // best effort carries the rest of the input from it verbatim.
+            let (Some(total), crate::reader::Mode::Permissive) =
+                (self.config.total_len, self.config.mode())
+            else {
                 return Err(Error::BoxSizeUnderflow {
                     size,
                     header_size: header_len,
                 });
-            }
-            let prefix = match core::mem::replace(
-                &mut self.phase,
-                Phase::Header {
-                    offset: 0,
-                    prefix: Vec::new(),
-                    target: TOP_HEADER_LEN,
-                },
-            ) {
-                Phase::Header { prefix, .. } => prefix,
-                phase => {
-                    self.phase = phase;
-                    Vec::new()
-                }
             };
-            // The rest of the input from the box's own start belongs to it.
-            let carried = self.supplied_at(at.saturating_add(header_len as u64));
-            self.carry(at, prefix, carried);
-            return self.input_ended();
+            let at = *offset;
+            let header = core::mem::take(prefix);
+            let body_at = at.saturating_add(header_len as u64);
+            self.phase = Phase::Header {
+                offset: total,
+                prefix: Vec::new(),
+                target: TOP_HEADER_LEN,
+            };
+            self.carry(
+                at,
+                header,
+                ByteRange {
+                    offset: body_at,
+                    len: total.saturating_sub(body_at),
+                },
+            );
+            return self.finalize();
         }
+        // A box that declares more bytes than the input holds is read to the
+        // end of the input; the cut is reported and the bytes carried are
+        // exactly the ones there.
+        let mut size = size;
         if let Some(total) = self.config.total_len
             && offset.saturating_add(size) > total
         {
@@ -2179,9 +2012,6 @@ impl ItemReader {
         };
         match kind {
             Some(kind) => {
-                if kind == BodyKind::Meta {
-                    self.meta_seen = true;
-                }
                 self.phase = Phase::Body {
                     box_start: *offset,
                     header,
@@ -2261,7 +2091,7 @@ impl ItemReader {
                     });
                 } else {
                     let payload_abs = box_start.saturating_add(header.len() as u64);
-                    let (record, idat, meta_tail) = parse_meta(
+                    let (record, idat) = parse_meta(
                         bytes,
                         payload_abs,
                         self.config.mode() == crate::reader::Mode::Permissive,
@@ -2271,26 +2101,11 @@ impl ItemReader {
                         self.idat = Some(idat);
                     }
                     self.meta = Some(record);
-                    if cut_child(bytes) {
-                        // A child the `meta` declared was cut: the bytes the
-                        // input still holds after the box are that child's.
-                        let held = self.supplied.get(bytes.len()..).unwrap_or(&[]).to_vec();
-                        self.meta_whole = true;
-                        self.meta_tail = bytes.to_vec();
-                        self.top_level.push(TopLevelBox {
-                            fourcc: META,
-                            header,
-                            payload: TopLevelPayload::Bytes(Vec::new()),
-                        });
-                        self.carry(next_offset, Vec::new(), held);
-                        return self.finalize();
-                    }
-                    self.meta_whole = false;
-                    self.meta_tail = meta_tail;
+                    let held = (header.len() as u64).saturating_add(bytes.len() as u64);
                     self.top_level.push(TopLevelBox {
                         fourcc: META,
                         header,
-                        payload: TopLevelPayload::Meta,
+                        payload: TopLevelPayload::Meta { held },
                     });
                 }
             }
@@ -2314,7 +2129,6 @@ impl ItemReader {
         let Some(meta) = self.meta.take() else {
             return Err(Error::InvalidInput("file-level meta box is missing"));
         };
-        let meta_whole = self.meta_whole;
         let image = StillImage::assemble(
             self.brands.clone(),
             meta,
@@ -2323,7 +2137,6 @@ impl ItemReader {
             self.config.total_len,
             &self.config.limits,
             core::mem::take(&mut self.degraded),
-            core::mem::take(&mut self.meta_tail),
         )?;
         for (index, item) in image.items.iter().enumerate() {
             if item_needs_body(item) {
@@ -2331,16 +2144,7 @@ impl ItemReader {
             }
         }
         self.image = Some(image);
-        if let Some(image) = self.image.as_mut() {
-            image.meta_whole = meta_whole;
-        }
-        // The model states what the boxes before the cut said; the cut itself
-        // was already carried and reported.
-        self.phase = if matches!(self.phase, Phase::Stopped) {
-            Phase::Stopped
-        } else {
-            Phase::Derived
-        };
+        self.phase = Phase::Derived;
         Ok(())
     }
 
@@ -2518,30 +2322,6 @@ fn unrepresentable_finding(child: crate::item::DegradedChild) -> ImageFinding {
     }
 }
 
-/// Whether one of a `meta` body's children was cut by the input (§8.11.1 a
-/// child declares its own length), and if so the bytes the input held past the
-/// body that belonged to it.
-fn cut_child(body: &[u8]) -> bool {
-    let Some(rest) = body.get(FULLBOX_EXTRA_SIZE..) else {
-        return true;
-    };
-    let mut rest = rest;
-    while !rest.is_empty() {
-        let Ok((child, used)) = parse_box(rest) else {
-            return true;
-        };
-        let declared = child
-            .header
-            .size
-            .saturating_sub(u64::try_from(child.header.header_size()).unwrap_or(u64::MAX));
-        if u64::try_from(child.payload().len()).unwrap_or(u64::MAX) < declared {
-            return true;
-        }
-        rest = rest.get(used..).unwrap_or(&[]);
-    }
-    false
-}
-
 fn fourcc_of(prefix: &[u8]) -> [u8; BOX_TYPE_SIZE] {
     let mut fourcc = [0u8; BOX_TYPE_SIZE];
     if prefix.len() >= TYPE_OFFSET + BOX_TYPE_SIZE {
@@ -2550,9 +2330,8 @@ fn fourcc_of(prefix: &[u8]) -> [u8; BOX_TYPE_SIZE] {
     fourcc
 }
 
-/// One file-level `meta` box's parse: the record, the `idat` payload, and the
-/// child tail no box describes, which is carried verbatim.
-type MetaParse = (MetaRecord, Option<(u64, usize)>, Vec<u8>);
+/// One file-level `meta` box's parse: the record and the `idat` payload.
+type MetaParse = (MetaRecord, Option<(u64, usize)>);
 
 fn parse_meta(
     body: &[u8],
@@ -2560,33 +2339,22 @@ fn parse_meta(
     tolerate: bool,
     degraded: &mut Vec<ImageFinding>,
 ) -> Result<MetaParse> {
-    let mut children = Vec::new();
-    let mut forms = Vec::new();
-    let mut idat = None;
-    let mut tail = Vec::new();
     if body.len() < FULLBOX_EXTRA_SIZE {
-        // A cut inside the `meta` box's own version/flags: nothing it
-        // described survives, and its bytes are carried verbatim.
-        degraded.push(ImageFinding::UnrepresentableBox {
-            box_type: META,
-            offset: payload_abs,
-            reason: crate::error::OpaqueReason::BufferTooShort,
-        });
-        tail.extend_from_slice(body);
-        return Ok((
-            MetaRecord {
-                version: 0,
-                flags: 0,
-                children,
-                forms,
+        return Err(Error::BufferTooShort(
+            broadcast_core::error::BufferTooShort {
+                need: FULLBOX_EXTRA_SIZE,
+                have: body.len(),
+                what: "meta body",
             },
-            idat,
-            tail,
         ));
     }
     let version = body[0];
     let flags = broadcast_core::wire::u24_at(body, crate::box_types::FULLBOX_FLAGS_OFFSET)
         & crate::box_types::FULLBOX_FLAGS_MASK;
+    let mut children = Vec::new();
+    let mut forms = Vec::new();
+    let mut idat = None;
+    let mut tail = Vec::new();
     let mut rest = &body[FULLBOX_EXTRA_SIZE..];
     let children_start = payload_abs.saturating_add(FULLBOX_EXTRA_SIZE as u64);
     let mut consumed_total = 0usize;
@@ -2594,12 +2362,12 @@ fn parse_meta(
         let (child, used) = match parse_box(rest) {
             Ok(parsed) => parsed,
             // A tail too short to be a box, or a child that overruns its
-            // parent: it is reported and carried verbatim where it stands.
+            // parent, is carried verbatim where it stands and reported.
             Err(_) if tolerate => {
-                degraded.push(ImageFinding::UnrepresentableBox {
+                degraded.push(ImageFinding::TrailingBytes {
                     box_type: fourcc_of(rest),
                     offset: children_start.saturating_add(consumed_total as u64),
-                    reason: crate::error::OpaqueReason::BufferTooShort,
+                    carried: rest.len() as u64,
                 });
                 tail = rest.to_vec();
                 break;
@@ -2723,8 +2491,8 @@ fn parse_meta(
             flags,
             children,
             forms,
+            tail,
         },
         idat,
-        tail,
     ))
 }

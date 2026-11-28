@@ -460,7 +460,6 @@ fn item_reader_zero_largesize_is_reported_and_carried() {
     let data = &ZERO_LARGESIZE_TAIL;
     let (reports, reemitted) = item_reader_over(data);
     let out = reemitted.expect("the model loads");
-    eprintln!("OUT {} {:?}", out.len(), &out[..out.len().min(60)]);
     assert_eq!(
         out, data,
         "the unframeable tail is carried verbatim"
@@ -507,10 +506,7 @@ fn item_reader_over(data: &[u8]) -> (Vec<String>, Option<Vec<u8>>) {
 /// header that declares a `largesize` (8 bytes of `size == 1`, no more).
 #[test]
 fn item_reader_carries_a_cut_largesize_header() {
-    let data = test_fixtures::fuzz::regression(
-        "isobmff_item_reader",
-        "crash-d0cd3a9a689932169b7ccc0ff146369bdc9b00d5",
-    );
+    let data = test_fixtures::read("fuzz/regressions/isobmff_item_reader/crash-d0cd3a9a689932169b7ccc0ff146369bdc9b00d5");
     assert_eq!(
         &data[data.len() - 8..],
         &[0, 0, 0, 1, 0xff, 0x0a, 0xff, 0xff]
@@ -534,10 +530,7 @@ fn item_reader_carries_a_cut_largesize_header() {
 fn damage_crash_a7c557cf_reports_a_truncated_sidx_instead_of_failing() {
     use isobmff::reader::{Reader, ReaderConfig, Step};
 
-    let file = test_fixtures::fuzz::regression(
-        "isobmff_damage",
-        "crash-a7c557cfddb2d67ebd8d89da620431e6a0e456da",
-    );
+    let file = test_fixtures::read("fuzz/regressions/isobmff_damage/crash-a7c557cfddb2d67ebd8d89da620431e6a0e456da");
     let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
     let mut reports = Vec::new();
     loop {
