@@ -1514,7 +1514,7 @@ impl Reader {
             Pending::MfraTrailer(_) => self.accept_mfra_trailer(bytes),
             Pending::Mfra(range) => self.accept_mfra(range, bytes),
             Pending::MfraForm(range) => self.accept_mfra_form(range, bytes),
-            Pending::TopLevel(_) => self.accept_top_level(bytes),
+            Pending::TopLevel(range) => self.accept_top_level(range, bytes),
             Pending::Scan(range) => self.accept_scan(range, bytes),
             Pending::Imda { head, payload_end } => {
                 self.accept_imda(head.offset, payload_end, bytes)
@@ -2831,15 +2831,19 @@ impl Reader {
         Ok(())
     }
 
-    fn accept_top_level(&mut self, bytes: &[u8]) -> Result<()> {
+    fn accept_top_level(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
         let (item, _) = parse_box(bytes)?;
+        // The file-type declarations only describe the file; one that cannot
+        // be parsed is still carried below.
         match &item.four_cc() {
-            b"etyp" => {
-                self.extended_type = Some(crate::segments::ExtendedTypeBox::parse(bytes)?);
-            }
-            b"otyp" => {
-                self.original_type = Some(crate::segments::OriginalFileTypeBox::parse(bytes)?);
-            }
+            b"etyp" => match crate::segments::ExtendedTypeBox::parse(bytes) {
+                Ok(typed) => self.extended_type = Some(typed),
+                Err(err) => self.skip_faulty(*b"etyp", range, err)?,
+            },
+            b"otyp" => match crate::segments::OriginalFileTypeBox::parse(bytes) {
+                Ok(typed) => self.original_type = Some(typed),
+                Err(err) => self.skip_faulty(*b"otyp", range, err)?,
+            },
             _ => {}
         }
         let carried = OpaqueBox {

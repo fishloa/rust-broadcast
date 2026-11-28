@@ -653,3 +653,64 @@ fn damage_crash_f489a461_refuses_an_unframeable_moov_as_no_track() {
         "refused as nothing to play: {refusal:?}"
     );
 }
+
+/// `isobmff_damage` crash-f0a67b0f: the target's damage step added `0x41DD` to
+/// the 32-bit word at byte 12, the size of the `ftyp` an `otyp` wraps, so the
+/// `otyp` cannot be parsed. It only describes the file: best effort reports it
+/// at its own range and carries it, strict refuses it.
+#[test]
+fn damage_crash_f0a67b0f_reports_an_unparseable_otyp() {
+    use isobmff::reader::{Mode, Reader, ReaderConfig, Step};
+
+    const DAMAGED_WORD: usize = 12;
+    const ADDED: u32 = 0x41DD;
+    let mut file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-f0a67b0f523a800fdd04efbaa38d9908c636591e",
+    );
+    let word = u32::from_be_bytes(
+        file[DAMAGED_WORD..DAMAGED_WORD + 4]
+            .try_into()
+            .expect("word"),
+    );
+    file[DAMAGED_WORD..DAMAGED_WORD + 4].copy_from_slice(&word.wrapping_add(ADDED).to_be_bytes());
+    let drive = |mode: Mode| -> (Vec<broadcast_core::damage::Damage>, Option<Error>) {
+        let config = ReaderConfig::default()
+            .with_total_len(Some(file.len() as u64))
+            .with_mode(mode);
+        let mut reader = Reader::new(config);
+        let mut reports = Vec::new();
+        loop {
+            match reader.step() {
+                Ok(Step::Need(range)) => {
+                    let start = usize::try_from(range.offset).expect("offset");
+                    let end = usize::try_from(range.end()).expect("end");
+                    if let Err(err) =
+                        reader.supply(range.offset, file.get(start..end).unwrap_or(&[]))
+                    {
+                        return (reports, Some(err));
+                    }
+                }
+                Ok(Step::Damage(damage)) => reports.push(damage),
+                Ok(Step::Done) => return (reports, None),
+                Ok(_) => {}
+                Err(err) => return (reports, Some(err)),
+            }
+        }
+    };
+    assert!(drive(Mode::Strict).1.is_some(), "strict refuses the otyp");
+    let (reports, refusal) = drive(Mode::Permissive);
+    assert!(
+        refusal.as_ref().is_none_or(|err| matches!(
+            err,
+            Error::InvalidInput(text) if text.contains("no moov") || text.contains("no track")
+        )),
+        "the otyp is not a structural refusal: {refusal:?}"
+    );
+    assert!(
+        reports
+            .iter()
+            .any(|damage| damage.fourcc() == Some(*b"otyp")
+                && damage.location().byte_range().map(|r| r.start()) == Some(0)),
+        "the otyp is reported at its range: {reports:?}"
+    );
+}
