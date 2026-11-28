@@ -240,8 +240,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error (`Error::BoxSizeUnderflow` for the size). A `largesize` of 0 used to
   be kept as a zero-length payload and drop the bytes it claimed; the
   `isobmff_item_reader` target's round-trip assertion found it.
-- **A `sidx`, `ssix` or `mfra` that cannot be parsed no longer fails a
-  best-effort read.** They index fragments and are not needed to play them:
+- **A `sidx`, `ssix`, `mfra` or `ftyp` that cannot be parsed no longer fails
+  a best-effort read.** None is needed to play the samples:
   the box is reported as `UnrepresentableBox` at its own byte range and the
   walk continues; a seek that needed the `mfra` is `Error::NoIndex`.
 
