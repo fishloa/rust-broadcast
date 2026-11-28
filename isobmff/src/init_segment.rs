@@ -6136,6 +6136,13 @@ impl MovieBox {
                 }
                 MovieHeaderBox::default_header()
             }
+            // Best effort reads past a damaged header, but a moov with no
+            // child it could frame states nothing to play.
+            None if notes.as_deref().is_some_and(|notes| notes.degrades()) => {
+                return Err(Error::InvalidInput(
+                    "the moov states no track, so no sample can be played",
+                ));
+            }
             None => {
                 return Err(Error::BufferTooShort(BufferTooShort {
                     need: 0,

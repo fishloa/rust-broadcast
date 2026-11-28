@@ -613,3 +613,43 @@ fn item_reader_carries_a_one_byte_tail() {
         "the tail is reported: {reports:?}"
     );
 }
+
+/// `isobmff_damage` crash-f489a461: the target's damage step zeroed bytes
+/// 6001..6020 of the artifact, whose `moov` holds no child it can frame (its
+/// first child declares a `largesize` far past the box). Nothing can be
+/// played, so the read is refused as a movie with no track, the refusal the
+/// lane allows, not as a missing `mvhd`.
+#[test]
+fn damage_crash_f489a461_refuses_an_unframeable_moov_as_no_track() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    const ZEROED: core::ops::Range<usize> = 6001..6020;
+    let mut file = test_fixtures::read(
+        "mp4/fuzz-regressions/isobmff_damage/crash-f489a461585ef08a9915189f3a934f147220c660",
+    );
+    file[ZEROED].fill(0);
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let refusal = loop {
+        let step = match reader.step() {
+            Ok(step) => step,
+            Err(err) => break err,
+        };
+        match step {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                if let Err(err) =
+                    reader.supply(range.offset, file.get(start..end).expect("supplied range"))
+                {
+                    break err;
+                }
+            }
+            Step::Done => panic!("a moov with no framed child has nothing to play"),
+            _ => {}
+        }
+    };
+    assert!(
+        matches!(&refusal, Error::InvalidInput(text) if text.contains("no track")),
+        "refused as nothing to play: {refusal:?}"
+    );
+}
